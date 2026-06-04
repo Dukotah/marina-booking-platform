@@ -15,6 +15,7 @@
     "rls": "node --experimental-strip-types scripts/apply-rls.ts",
     "seed": "node --experimental-strip-types prisma/seed.ts",
     "studio": "prisma studio",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "prisma": {
@@ -27,6 +28,7 @@
   "devDependencies": {
     "@types/node": "^22.19.19",
     "prisma": "^6.1.0",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
   }
 }

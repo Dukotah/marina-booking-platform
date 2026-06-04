@@ -21,7 +21,7 @@ booking vertical slice for the seed client (Lake Sonoma Marina) running on it.
 | 0.5 | Neon dev database connected + first migration run | ⏸️ (needs connection string) |
 | 0.6 | Seed script — Lake Sonoma Marina (19 activities, rates, fees, waiver, config) | ✅ (written; runs once DB connected) |
 | 0.7 | Auth + RBAC (Clerk operators/staff, magic link customers) | ⏸️ (needs Clerk keys) |
-| 0.8 | Cross-tenant isolation tests (must fail to access other tenants) | ⬜ |
+| 0.8 | Cross-tenant isolation tests (must fail to access other tenants) | 🟦 (8-case suite written + wired into `pnpm test`; skips w/o DATABASE_URL, auto-runs live once Neon connected) |
 | 0.9 | Auth/RBAC package (@marina/auth) — permission checks, AuthContext | ✅ |
 | 0.10 | API skeleton (Hono) — tenant-resolution middleware, RLS-scoped client per request, dev auth shim, catalog route; boots + tenant guard verified | ✅ |
 | 0.11 | Customer portal shell (apps/web, Next 14 + Tailwind) — catalog page wired to API, white-label brand var, graceful no-DB state | ✅ |
@@ -77,6 +77,14 @@ I will build against sandboxes/free tiers and flag exactly when each is needed.
 
 ## Changelog
 
+- **2026-06-04** — Resumed after interrupted session. Verified state still green
+  (typecheck 0 errors; core 69/69; web 7-route + admin 21-route + api builds all pass).
+  Wired the existing 8-case cross-tenant isolation suite into the test pipeline (added
+  `vitest` + `test` script to `@marina/database`; suite skips with a clear message when
+  `DATABASE_URL` is unset and auto-runs live once Neon is connected) — 0.8 moved ⬜→🟦.
+  Added `docs/HANDOFF.md` (living next-session brief) and `docs/BROWSER-TAKEOVER.md`
+  (copy-paste prompt for a browser-capable Claude to provision Neon/Vercel/Clerk/Square/
+  Resend, since the local agent can't create third-party accounts).
 - **2026-06-04** — Repo cloned locally. Shared-brain docs created (AGENTS.md +
   docs/CONTEXT, ARCHITECTURE, DECISIONS, ROADMAP). Decisions D-001..D-006 recorded.
   Toolchain checked (Node 24 ✓, pnpm via corepack, no Docker → Neon).

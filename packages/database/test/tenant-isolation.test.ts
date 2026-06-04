@@ -135,7 +135,20 @@ async function seedTenant(operatorId: string, suffix: string): Promise<SeededTen
 let tenantA: SeededTenant;
 let tenantB: SeededTenant;
 
-describe('cross-tenant isolation (RLS + tenant-scoped client)', () => {
+// This suite asserts on live Postgres RLS, so it only runs when a database is
+// configured. Without DATABASE_URL it is SKIPPED (not failed) so the root
+// `pnpm test` stays green pre-Neon; it auto-activates the moment the connection
+// string is in .env and the schema + prisma/rls.sql have been applied.
+const HAS_DB = Boolean(process.env.DATABASE_URL);
+if (!HAS_DB) {
+  // eslint-disable-next-line no-console
+  console.warn(
+    '[tenant-isolation] DATABASE_URL not set — skipping cross-tenant isolation suite. ' +
+      'Set DATABASE_URL (Neon), run `pnpm db:migrate && pnpm db:rls && pnpm db:seed`, then re-run.',
+  );
+}
+
+describe.skipIf(!HAS_DB)('cross-tenant isolation (RLS + tenant-scoped client)', () => {
   beforeAll(async () => {
     // Clean any leftovers from a previous run, then seed two tenants. Cleanup runs
     // through adminPrisma but must still satisfy RLS WITH CHECK / USING, so we scope
