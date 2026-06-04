@@ -21,36 +21,40 @@ to sell.
 
 ## Current state (verified green)
 
-Phase 0 + Phase 1 build sweep complete (223 files). As of last verification:
+Phase 0 + Phase 1 build sweep complete (223 files). **Now live against a real Neon
+database.** As of last verification:
 
-- Full monorepo **typecheck = 0 errors**.
-- **Tests:** `@marina/core` 69/69 pass. `@marina/database` cross-tenant isolation
-  suite (8 cases) is now wired into the test pipeline; it **skips** when
-  `DATABASE_URL` is unset and **auto-activates** once the DB is connected.
-- **Builds:** web (7 routes) + admin (21 routes) + api all build.
+- Full monorepo **typecheck = 9/9**, **build = 3/3** (web + admin + api).
+- **Database is LIVE:** Neon Postgres (US-West) connected; migration `init` applied;
+  RLS applied; LSRA seeded (operator `lsra`, 19 activities). A dedicated NOBYPASSRLS
+  `app_user` role (provisioned by `pnpm db:approle`) is what tenant queries connect
+  through — required because Neon's `neondb_owner` has BYPASSRLS (see D-010).
+- **Tests:** `@marina/core` 69/69. `@marina/database` cross-tenant isolation suite runs
+  **live against Neon RLS: 7 pass / 1 skip** (the skip = the D-010 FK-attach gap).
+- Secrets live in `.env` (gitignored). `DATABASE_URL`/`DIRECT_URL` (owner) +
+  `APP_DATABASE_URL`/`APP_DB_PASSWORD` (app_user) are set.
 
 Monorepo: pnpm + turbo. Packages: `types`, `database` (20-model Prisma + Postgres RLS
-+ `forOperator`/`withTenant` tenant client + LSRA seed), `auth` (RBAC), `core`
-(pricing/availability/zod), `ui`, `emails`. Apps: `api` (Hono — all routers wired in
-`app.ts`), `web` (Next 14 customer portal), `admin` (Next 14 operator app).
++ `app_user` role + `forOperator`/`withTenant` tenant client + LSRA seed), `auth`
+(RBAC), `core` (pricing/availability/zod), `ui`, `emails`. Apps: `api` (Hono), `web`
+(Next 14 customer portal — live at marina-web-blond.vercel.app), `admin` (Next 14
+operator app — Vercel deploy currently failing, see below).
 
-## ⚠️ Critical: it has NOT run against a live database yet
+## Reproduce the live DB from scratch
 
-UI shows graceful "not connected" states. The #1 unblocker is a **Neon Postgres**
-connection string from the owner (`DATABASE_URL` + `DIRECT_URL` → `.env`, gitignored).
-See `.env.example` for the exact shape of every secret.
+`pnpm db:migrate` → `pnpm db:rls` → `pnpm db:approle` → `pnpm db:seed`. All need the
+`.env` values exported (the scripts read `process.env`; there is no dotenv autoload).
 
 ## Next steps, in order
 
-1. **When the Neon string arrives:** `pnpm db:migrate` → `pnpm db:rls` →
-   `pnpm db:seed`, then start the API (`pnpm --filter @marina/api dev`) + apps and
-   smoke-test the booking flow end-to-end.
-2. **Prove tenant isolation:** with the DB connected, `pnpm --filter @marina/database
-   test` now runs the cross-tenant isolation suite for real (roadmap 0.8) — operator A
-   must not see/write B. It's written and waiting on the DB.
-3. **Clerk** (real auth, replaces the `x-dev-staff-id` header shim + admin dev fallback
-   to operator `lsra`/OWNER) and **Square sandbox** keys (charge a test booking),
-   **Resend** key (send confirmation email).
+1. **Clerk secret key** — `.env` has the publishable key; paste the `sk_test_...` secret
+   into `CLERK_SECRET_KEY`, then wire Clerk to replace the `x-dev-staff-id` shim (0.7).
+2. **Square sandbox keys** — developer.squareup.com was blocked for the browser agent;
+   create the app + fill `SQUARE_*` to charge a test booking (1.5).
+3. **Fix marina-admin Vercel deploy** — builds green locally; needs the actual Vercel
+   build log to diagnose (env- or Linux-specific). marina-web is already live.
+4. **0.13 hardening** — tenant-composite FKs to close the D-010 cross-tenant FK gap.
+5. Smoke-test the full booking flow end-to-end once Clerk + Square are in.
 
 ## Things only the owner / a browser can do (blocked-on-owner)
 
