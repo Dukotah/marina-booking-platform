@@ -422,13 +422,35 @@ PRODUCT_REQUIREMENTS.md- Parking: 1 vehicle included
 
 ---
 
-## 9. Competitive Feature Backlog
+## 9. Architecture Decisions Log
+
+> Decisions locked before scaffolding. Update this section as remaining decisions are resolved.
+
+| # | Decision | Choice | Rationale |
+|---|---|---|---|
+| 3 | Timeslot generation | **ScheduleTemplate model + draft/publish workflow** | FareHarbor-style bulk generation (date range × days of week × start times) with Singenuity-style named reusable templates. Agent layer drives the same flow via natural language. |
+| — | Tech stack (API) | TBD | Bun + Hono vs Node + Fastify |
+| — | Operator auth | TBD | Clerk vs Auth0 |
+| — | Double-booking prevention | TBD | TimeslotHold (10-min checkout lock) vs optimistic concurrency |
+| — | Cancellation policy | TBD | DB model vs hardcoded for MVP |
+
+### ScheduleTemplate Workflow (FareHarbor-inspired)
+1. Operator creates a named template with date range, days of week, start times, capacity, cutoff — saves as `DRAFT`
+2. System previews the exact slots it would generate (calendar view, count of slots) before anything goes live
+3. Operator hits **Publish** → status becomes `ACTIVE`, system bulk-generates `Timeslot` rows linked back to the template
+4. Template stays saved as a named, reusable object — duplicate for next season, tweak dates, republish
+5. Individual timeslots can override template defaults (e.g., bump capacity on a holiday, block a specific day)
+6. Schedule agent can drive this entire flow via natural language
+
+---
+
+## 10. Competitive Feature Backlog
 
 > Research date: June 4, 2026. Sources: FareHarbor, Peek Pro, Dockwa, RentalTide, Checkfront, Rezdy/Regiondo, Singenuity live audit. These features are **NOT in the MVP** but are logged here so nothing gets lost.
 
 ---
 
-### 9.1 Competitor Landscape Summary
+### 10.1 Competitor Landscape Summary
 
 | Platform | Strength | Key Weakness |
 |---|---|---|
@@ -440,7 +462,7 @@ PRODUCT_REQUIREMENTS.md- Parking: 1 vehicle included
 
 ---
 
-### 9.2 Features Missing from Singenuity That Competitors Have
+### 10.2 Features Missing from Singenuity That Competitors Have
 
 These are confirmed gaps in Singenuity that we will build — phased by priority.
 
@@ -477,7 +499,7 @@ These are confirmed gaps in Singenuity that we will build — phased by priority
 
 ---
 
-### 9.3 New Data Models to Add Before Scaffolding
+### 10.3 New Data Models to Add Before Scaffolding
 
 These models were identified during competitive research. None are in the current Prisma schema.
 
@@ -539,7 +561,7 @@ AffiliatePartner
 
 ---
 
-### 9.4 Our Differentiators (Features Nobody Does Well)
+### 10.4 Our Differentiators (Features Nobody Does Well)
 
 These are confirmed gaps across ALL competitors — genuine opportunities:
 

@@ -78,6 +78,7 @@ model Activity {
   updated_at            DateTime         @updatedAt
   rates                 Rate[]
   timeslots             Timeslot[]
+  schedule_templates    ScheduleTemplate[]
   fees                  Fee[]
   order_items           OrderItem[]
 }
@@ -98,18 +99,47 @@ model Rate {
   order_items      OrderItem[]
 }
 
-model Timeslot {
-  id               String      @id @default(cuid())
+model ScheduleTemplate {
+  id               String     @id @default(cuid())
+  operator_id      String
   activity_id      String
-  activity         Activity    @relation(fields: [activity_id], references: [id])
-  datetime         DateTime
+  activity         Activity   @relation(fields: [activity_id], references: [id])
+  name             String
+  status           String     @default("DRAFT")   // DRAFT | ACTIVE | ARCHIVED
+  date_from        DateTime
+  date_to          DateTime
+  days_of_week     Int[]                           // 0=Sun 1=Mon ... 6=Sat
+  start_times      String[]                        // ["09:00", "13:00", "17:00"]
+  duration_minutes Int        @default(240)
   capacity_total   Int
-  capacity_booked  Int         @default(0)
-  is_overnight     Boolean     @default(false)
-  status           String      @default("AVAILABLE")
-  created_at       DateTime    @default(now())
-  order_items      OrderItem[]
+  cutoff_minutes   Int        @default(30)         // stop online booking N min before start
+  is_overnight     Boolean    @default(false)
+  blackout_dates   DateTime[]
+  notes            String?
+  published_at     DateTime?
+  published_by     String?
+  created_at       DateTime   @default(now())
+  updated_at       DateTime   @updatedAt
+  timeslots        Timeslot[]
+  @@index([activity_id, status])
+}
+
+model Timeslot {
+  id                   String           @id @default(cuid())
+  activity_id          String
+  activity             Activity         @relation(fields: [activity_id], references: [id])
+  schedule_template_id String?
+  schedule_template    ScheduleTemplate? @relation(fields: [schedule_template_id], references: [id])
+  datetime             DateTime
+  capacity_total       Int
+  capacity_booked      Int              @default(0)
+  is_overnight         Boolean          @default(false)
+  status               String           @default("AVAILABLE")  // AVAILABLE | FILLING_UP | FULL | CANCELLED | BLOCKED
+  cutoff_minutes       Int?                                     // overrides template if set individually
+  created_at           DateTime         @default(now())
+  order_items          OrderItem[]
   @@index([activity_id, datetime])
+  @@index([schedule_template_id])
 }
 
 model Customer {
