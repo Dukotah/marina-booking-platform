@@ -43,3 +43,19 @@ END $$;
 
 -- StaffLocation is a join table with no operator_id; it is reachable only through
 -- already-scoped parents and is protected at the application layer.
+
+-- Tenant resolution bootstrap: mapping a hostname/slug to an operator id must work
+-- BEFORE any tenant scope is set (you can't scope to a tenant you haven't resolved
+-- yet). This SECURITY DEFINER function runs as the table owner, so it can read the
+-- directory while every other access path stays under RLS. It exposes only the id —
+-- nothing sensitive — for a given active slug or custom domain.
+CREATE OR REPLACE FUNCTION public.resolve_operator_id(identifier text)
+RETURNS text
+LANGUAGE sql
+SECURITY DEFINER
+STABLE
+AS $$
+  SELECT id FROM "Operator"
+  WHERE is_active AND (slug = identifier OR custom_domain = identifier)
+  LIMIT 1;
+$$;

@@ -22,6 +22,8 @@ booking vertical slice for the seed client (Lake Sonoma Marina) running on it.
 | 0.6 | Seed script — Lake Sonoma Marina (19 activities, rates, fees, waiver, config) | ✅ (written; runs once DB connected) |
 | 0.7 | Auth + RBAC (Clerk operators/staff, magic link customers) | ⏸️ (needs Clerk keys) |
 | 0.8 | Cross-tenant isolation tests (must fail to access other tenants) | ⬜ |
+| 0.9 | Auth/RBAC package (@marina/auth) — permission checks, AuthContext | ✅ |
+| 0.10 | API skeleton (Hono) — tenant-resolution middleware, RLS-scoped client per request, dev auth shim, catalog route; boots + tenant guard verified | ✅ |
 
 ## Phase 1 — MVP (sellable booking core)
 
@@ -77,3 +79,10 @@ I will build against sandboxes/free tiers and flag exactly when each is needed.
   `pnpm install` + `prisma generate` + typecheck all pass. Not yet applied to a live
   DB — waiting on Neon connection string (0.5). Note: migrate package.json#prisma to
   prisma.config.ts before Prisma 7 (deprecation warning, non-blocking).
+- **2026-06-04** — Auth + API scaffolded. `@marina/auth` (RBAC: effective
+  permissions, hasPermission/assertPermission, location scoping, AuthContext).
+  `@marina/api` (Hono): tenant-resolution middleware (host/subdomain/custom-domain →
+  operator via SECURITY DEFINER resolver), RLS-scoped Prisma client attached per
+  request, dev auth shim (header-based; swap for Clerk at 0.7), public catalog route
+  + staff-only manage route. Boots clean; /health 200; /api guarded (400 without
+  tenant). Typechecks pass. Added resolve_operator_id() to prisma/rls.sql.
