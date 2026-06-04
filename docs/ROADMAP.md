@@ -24,6 +24,8 @@ booking vertical slice for the seed client (Lake Sonoma Marina) running on it.
 | 0.8 | Cross-tenant isolation tests (must fail to access other tenants) | ⬜ |
 | 0.9 | Auth/RBAC package (@marina/auth) — permission checks, AuthContext | ✅ |
 | 0.10 | API skeleton (Hono) — tenant-resolution middleware, RLS-scoped client per request, dev auth shim, catalog route; boots + tenant guard verified | ✅ |
+| 0.11 | Customer portal shell (apps/web, Next 14 + Tailwind) — catalog page wired to API, white-label brand var, graceful no-DB state | ✅ |
+| 0.12 | Admin dashboard shell (apps/admin, Next 14 + Tailwind) — dashboard-first KPI layout + nav | ✅ |
 
 ## Phase 1 — MVP (sellable booking core)
 
@@ -86,3 +88,10 @@ I will build against sandboxes/free tiers and flag exactly when each is needed.
   request, dev auth shim (header-based; swap for Clerk at 0.7), public catalog route
   + staff-only manage route. Boots clean; /health 200; /api guarded (400 without
   tenant). Typechecks pass. Added resolve_operator_id() to prisma/rls.sql.
+- **2026-06-04** — Frontend shells scaffolded. apps/web (Next 14, App Router,
+  Tailwind): catalog page server-fetches the API by operator slug, renders
+  category-grouped activity cards with from-pricing, white-label brand CSS var, and a
+  graceful "DB not connected yet" state. apps/admin (Next 14): dashboard-first layout
+  with KPI cards + nav (placeholders until orders API). Both typecheck clean. Added
+  .gitattributes (LF normalization). Phase 0 scaffolding complete — remaining Phase 0
+  items (0.5 Neon, 0.7 Clerk, 0.8 isolation tests) need owner-provided accounts.
