@@ -1,0 +1,567 @@
+// Marina Booking Platform — Prisma schema
+//
+// MULTI-TENANT RULES (see docs/ARCHITECTURE.md § Tenant Isolation):
+//  - Every tenant-owned table carries `operator_id` (indexed, FK to Operator).
+//  - Postgres Row-Level Security (prisma/rls.sql) is the DB-level backstop.
+//  - The app talks to the DB through a tenant-scoped client (src/client.ts).
+// Money is always integer cents. Times are stored UTC; operator.timezone renders.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ===========================================================================
+// Enums
+// ===========================================================================
+
+enum ActivityCategory {
+  BOAT
+  WATERCRAFT
+  PATIO
+  LODGING
+  TOUR
+  CLASS
+  EVENT
+  EQUIPMENT
+  OTHER
+}
+
+enum ActivityStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum TimeslotStatus {
+  AVAILABLE
+  FILLING_UP
+  FULL
+  CANCELLED
+}
+
+enum OrderStatus {
+  UPCOMING
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum OrderChannel {
+  CUSTOMER
+  STAFF
+  KIOSK
+}
+
+enum OrderItemStatus {
+  UPCOMING
+  CHECKED_IN
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum PaymentMethod {
+  CARD
+  CASH
+  GIFT_CARD
+  COMP
+}
+
+enum PaymentStatus {
+  PAID
+  REFUNDED
+  PARTIAL_REFUND
+  FAILED
+  PRE_AUTHORIZED
+}
+
+enum PaymentProcessor {
+  SQUARE
+  STRIPE
+}
+
+enum FeeType {
+  PERCENT
+  FLAT
+}
+
+enum PromoType {
+  ONE_CODE
+  PER_CUSTOMER
+  AUTO
+}
+
+enum DiscountType {
+  PERCENT
+  FLAT
+}
+
+enum StaffRole {
+  OWNER
+  ADMIN
+  MANAGER
+  STAFF
+  GUIDE
+}
+
+// ===========================================================================
+// Tenant root
+// ===========================================================================
+
+model Operator {
+  id              String   @id @default(cuid())
+  slug            String   @unique // subdomain: {slug}.app-domain.com
+  custom_domain   String?  @unique
+  name_internal   String
+  name_external   String
+  location_code   String   @unique // legacy code e.g. "LSRA"
+  website         String?
+  phone           String?
+  timezone        String   @default("America/Los_Angeles")
+  country         String   @default("US")
+  // White-label branding
+  logo_dark_url   String?
+  logo_light_url  String?
+  brand_color     String   @default("#0ea5e9")
+  // Policy
+  legal_adult_age Int      @default(18)
+  // Billing (platform subscription)
+  plan            String   @default("trial")
+  is_active       Boolean  @default(true)
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  locations    Location[]
+  staff        StaffMember[]
+  activities   Activity[]
+  resources    Resource[]
+  customers    Customer[]
+  orders       Order[]
+  fees         Fee[]
+  merchandise  MerchandiseItem[]
+  promo_codes  PromoCode[]
+  waivers      Waiver[]
+  integrations Integration[]
+}
+
+// ===========================================================================
+// Locations (a site belonging to an operator; chains have many)
+// ===========================================================================
+
+model Location {
+  id          String   @id @default(cuid())
+  operator_id String
+  operator    Operator @relation(fields: [operator_id], references: [id], onDelete: Cascade)
+  name        String
+  address     String?
+  city        String?
+  state       String?
+  zip         String?
+  latitude    Float?
+  longitude   Float?
+  timezone    String?  // overrides operator timezone when set
+  is_default  Boolean  @default(false)
+  is_active   Boolean  @default(true)
+  created_at  DateTime @default(now())
+
+  activities Activity[]
+  resources  Resource[]
+  staff      StaffLocation[]
+
+  @@index([operator_id])
+}
+
+// ===========================================================================
+// Staff & RBAC
+// ===========================================================================
+
+model StaffMember {
+  id            String    @id @default(cuid())
+  operator_id   String
+  operator      Operator  @relation(fields: [operator_id], references: [id], onDelete: Cascade)
+  auth_user_id  String // Clerk user id
+  email         String
+  name          String?
+  role          StaffRole @default(STAFF)
+  // Optional per-member permission overrides on top of the role's defaults.
+  extra_permissions String[] @default([])
+  is_active     Boolean   @default(true)
+  created_at    DateTime  @default(now())
+
+  locations StaffLocation[]
+
+  @@unique([operator_id, auth_user_id])
+  @@index([operator_id])
+}
+
+// Scopes a staff member to one or more locations (empty = all locations).
+model StaffLocation {
+  staff_id    String
+  staff       StaffMember @relation(fields: [staff_id], references: [id], onDelete: Cascade)
+  location_id String
+  location    Location    @relation(fields: [location_id], references: [id], onDelete: Cascade)
+
+  @@id([staff_id, location_id])
+  @@index([location_id])
+}
+
+// ===========================================================================
+// Catalog: Activity / Rate / Timeslot / Resource
+// ===========================================================================
+
+model Activity {
+  id                    String           @id @default(cuid())
+  operator_id           String
+  operator              Operator         @relation(fields: [operator_id], references: [id], onDelete: Cascade)
+  location_id           String?
+  location              Location?        @relation(fields: [location_id], references: [id])
+  name_internal         String
+  name_external         String
+  status                ActivityStatus   @default(ACTIVE)
+  category              ActivityCategory @default(OTHER)
+  visible_online        Boolean          @default(true)
+  visible_kiosk         Boolean          @default(true)
+  visible_register      Boolean          @default(true)
+  min_participants      Int              @default(1)
+  max_participants      Int              @default(10)
+  description_html      String?
+  photo_urls            String[]
+  color                 String           @default("#0ea5e9")
+  waiver_required       Boolean          @default(true)
+  self_reschedule_hours Int              @default(48)
+  sort_index            Int              @default(0)
+  // Vertical-specific fields (lodging nights, tour meeting point, etc.) live here
+  // so the core booking engine stays category-agnostic.
+  config                Json?
+  created_at            DateTime         @default(now())
+  updated_at            DateTime         @updatedAt
+
+  rates       Rate[]
+  timeslots   Timeslot[]
+  fees        Fee[]
+  order_items OrderItem[]
+  resources   Resource[]  @relation("ActivityResources")
+
+  @@index([operator_id])
+  @@index([operator_id, category])
+}
+
+model Rate {
+  id               String      @id @default(cuid())
+  operator_id      String
+  activity_id      String
+  activity         Activity    @relation(fields: [activity_id], references: [id], onDelete: Cascade)
+  name_internal    String
+  name_external    String
+  price_cents      Int
+  duration_minutes Int         @default(240)
+  is_active        Boolean     @default(true)
+  online_only      Boolean     @default(false)
+  internal_only    Boolean     @default(false)
+  is_from_price    Boolean     @default(false)
+  sort_index       Int         @default(0)
+  order_items      OrderItem[]
+
+  @@index([operator_id])
+  @@index([activity_id])
+}
+
+model Timeslot {
+  id              String         @id @default(cuid())
+  operator_id     String
+  activity_id     String
+  activity        Activity       @relation(fields: [activity_id], references: [id], onDelete: Cascade)
+  datetime        DateTime
+  capacity_total  Int
+  capacity_booked Int            @default(0)
+  is_overnight    Boolean        @default(false)
+  status          TimeslotStatus @default(AVAILABLE)
+  created_at      DateTime       @default(now())
+  order_items     OrderItem[]
+
+  @@index([operator_id])
+  @@index([activity_id, datetime])
+}
+
+// Physical inventory (boats, rooms, equipment) that backs activity capacity.
+model Resource {
+  id                  String     @id @default(cuid())
+  operator_id         String
+  operator            Operator   @relation(fields: [operator_id], references: [id], onDelete: Cascade)
+  location_id         String?
+  location            Location?  @relation(fields: [location_id], references: [id])
+  name                String
+  seat_capacity       Int        @default(1)
+  quantity            Int        @default(1)
+  out_of_service_qty  Int        @default(0)
+  enable_timer        Boolean    @default(false)
+  is_active           Boolean    @default(true)
+  activities          Activity[] @relation("ActivityResources")
+
+  @@index([operator_id])
+}
+
+// ===========================================================================
+// Customers
+// ===========================================================================
+
+model Customer {
+  id                String   @id @default(cuid())
+  operator_id       String
+  operator          Operator @relation(fields: [operator_id], references: [id], onDelete: Cascade)
+  first_name        String
+  last_name         String
+  email             String
+  phone             String?
+  address           String?
+  city              String?
+  state             String?
+  zip               String?
+  tags              String[]
+  notes             String?
+  lifetime_value_cents Int   @default(0)
+  total_bookings    Int      @default(0)
+  last_booking_at   DateTime?
+  waiver_on_file    Boolean  @default(false)
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+  orders            Order[]
+  waiver_signatures WaiverSignature[]
+
+  @@unique([operator_id, email])
+  @@index([operator_id])
+}
+
+// ===========================================================================
+// Orders / payments
+// ===========================================================================
+
+model Order {
+  id                   String       @id @default(cuid())
+  operator_id          String
+  operator             Operator     @relation(fields: [operator_id], references: [id], onDelete: Cascade)
+  order_number         String       @unique
+  customer_id          String
+  customer             Customer     @relation(fields: [customer_id], references: [id])
+  status               OrderStatus  @default(UPCOMING)
+  created_by           OrderChannel @default(CUSTOMER)
+  subtotal_cents       Int
+  tax_cents            Int          @default(0)
+  processing_fee_cents Int          @default(0)
+  tip_cents            Int          @default(0)
+  discount_cents       Int          @default(0)
+  total_cents          Int
+  amount_paid_cents    Int          @default(0)
+  balance_due_cents    Int
+  promo_code_id        String?
+  heard_about_us       String?
+  is_returning_guest   Boolean      @default(false)
+  created_at           DateTime     @default(now())
+  updated_at           DateTime     @updatedAt
+
+  items    OrderItem[]
+  payments Payment[]
+  notes    Note[]
+  history  OrderEvent[]
+
+  @@index([operator_id])
+  @@index([operator_id, status])
+  @@index([customer_id])
+}
+
+model OrderItem {
+  id               String          @id @default(cuid())
+  operator_id      String
+  order_id         String
+  order            Order           @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  activity_id      String
+  activity         Activity        @relation(fields: [activity_id], references: [id])
+  rate_id          String
+  rate             Rate            @relation(fields: [rate_id], references: [id])
+  timeslot_id      String
+  timeslot         Timeslot        @relation(fields: [timeslot_id], references: [id])
+  quantity         Int             @default(1)
+  unit_price_cents Int
+  status           OrderItemStatus @default(UPCOMING)
+  waiver_signed    Boolean         @default(false)
+  waiver_signed_at DateTime?
+  // Participant / operator info (PII — protected by RLS).
+  driver_name      String?
+  license_number   String?
+  license_state    String?
+  date_of_birth    DateTime?
+  address          String?
+  city             String?
+  state            String?
+  zip              String?
+  has_driven_boat  Boolean?
+  created_at       DateTime        @default(now())
+  waiver_signatures WaiverSignature[]
+
+  @@index([operator_id])
+  @@index([order_id])
+  @@index([timeslot_id])
+}
+
+model Payment {
+  id                       String           @id @default(cuid())
+  operator_id              String
+  order_id                 String
+  order                    Order            @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  method                   PaymentMethod    @default(CARD)
+  status                   PaymentStatus    @default(PAID)
+  amount_cents             Int
+  refunded_cents           Int              @default(0)
+  card_last_four           String?
+  card_brand               String?
+  cardholder_name          String?
+  processor                PaymentProcessor @default(SQUARE)
+  processor_transaction_id String?
+  is_manually_keyed        Boolean          @default(false)
+  processed_at             DateTime         @default(now())
+
+  @@index([operator_id])
+  @@index([order_id])
+}
+
+model Note {
+  id          String   @id @default(cuid())
+  operator_id String
+  order_id    String
+  order       Order    @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  content     String
+  author      String
+  created_at  DateTime @default(now())
+
+  @@index([operator_id])
+  @@index([order_id])
+}
+
+model OrderEvent {
+  id          String   @id @default(cuid())
+  operator_id String
+  order_id    String
+  order       Order    @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  type        String
+  description String
+  actor       String?
+  metadata    Json?
+  created_at  DateTime @default(now())
+
+  @@index([operator_id])
+  @@index([order_id])
+}
+
+// ===========================================================================
+// Fees / merchandise / promos
+// ===========================================================================
+
+model Fee {
+  id                String    @id @default(cuid())
+  operator_id       String
+  operator          Operator  @relation(fields: [operator_id], references: [id], onDelete: Cascade)
+  activity_id       String?   // null = applies to all activities (global)
+  activity          Activity? @relation(fields: [activity_id], references: [id])
+  name              String
+  type              FeeType   @default(PERCENT)
+  value             Float
+  enabled           Boolean   @default(true)
+  ignore_tax_exempt Boolean   @default(false)
+
+  @@index([operator_id])
+}
+
+model MerchandiseItem {
+  id                String   @id @default(cuid())
+  operator_id       String
+  operator          Operator @relation(fields: [operator_id], references: [id], onDelete: Cascade)
+  name              String
+  category          String
+  cost_cents        Int      @default(0)
+  on_hand_qty       Int?
+  reorder_alert_qty Int?
+  is_active         Boolean  @default(true)
+
+  @@index([operator_id])
+}
+
+model PromoCode {
+  id              String       @id @default(cuid())
+  operator_id     String
+  operator        Operator     @relation(fields: [operator_id], references: [id], onDelete: Cascade)
+  code            String
+  name            String
+  type            PromoType    @default(ONE_CODE)
+  discount_type   DiscountType @default(PERCENT)
+  discount_value  Float
+  is_active       Boolean      @default(true)
+  valid_from      DateTime?
+  valid_until     DateTime?
+  max_redemptions Int?
+  times_redeemed  Int          @default(0)
+  activity_ids    String[]
+
+  @@unique([operator_id, code])
+  @@index([operator_id])
+}
+
+// ===========================================================================
+// Waivers
+// ===========================================================================
+
+model Waiver {
+  id                     String            @id @default(cuid())
+  operator_id            String
+  operator               Operator          @relation(fields: [operator_id], references: [id], onDelete: Cascade)
+  name                   String
+  template_html          String
+  requires_minor_signature Boolean         @default(true)
+  is_active              Boolean           @default(true)
+  created_at             DateTime          @default(now())
+  signatures             WaiverSignature[]
+
+  @@index([operator_id])
+}
+
+model WaiverSignature {
+  id            String     @id @default(cuid())
+  operator_id   String
+  waiver_id     String
+  waiver        Waiver     @relation(fields: [waiver_id], references: [id], onDelete: Cascade)
+  order_item_id String?
+  order_item    OrderItem? @relation(fields: [order_item_id], references: [id])
+  customer_id   String?
+  customer      Customer?  @relation(fields: [customer_id], references: [id])
+  signer_name   String
+  signed_at     DateTime   @default(now())
+  signature_data String    // base64 image or typed signature
+  ip_address    String?
+  is_minor      Boolean    @default(false)
+  guardian_name String?
+
+  @@index([operator_id])
+  @@index([waiver_id])
+}
+
+// ===========================================================================
+// Integrations (per-operator config; not hard-coded)
+// ===========================================================================
+
+model Integration {
+  id          String   @id @default(cuid())
+  operator_id String
+  operator    Operator @relation(fields: [operator_id], references: [id], onDelete: Cascade)
+  key         String   // e.g. "square", "quickbooks", "ga4", "mailchimp", "twilio"
+  enabled     Boolean  @default(false)
+  config      Json     @default("{}")
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  @@unique([operator_id, key])
+  @@index([operator_id])
+}

@@ -15,11 +15,11 @@ booking vertical slice for the seed client (Lake Sonoma Marina) running on it.
 | # | Item | Status |
 |---|---|---|
 | 0.1 | Shared-brain docs (this folder) | ✅ |
-| 0.2 | Monorepo scaffold (Turborepo + pnpm via corepack) | ⬜ |
-| 0.3 | Prisma schema w/ multi-tenant hardening (Operator, Location, Activity+config, Rate, Timeslot, Resource, Order, OrderItem, Payment, Customer, Role/Permission, Integration, Waiver) | ⬜ |
-| 0.4 | Postgres RLS policies + tenant-scoped Prisma client | ⬜ |
-| 0.5 | Neon dev database connected | ⏸️ (needs connection string) |
-| 0.6 | Seed script — Lake Sonoma Marina (19 activities, rates, fees, policies) | ⬜ |
+| 0.2 | Monorepo scaffold (Turborepo + pnpm) — root config, types + database packages, installs + typechecks clean | ✅ |
+| 0.3 | Prisma schema w/ multi-tenant hardening (Operator, Location, Activity+config, Rate, Timeslot, Resource, Order, OrderItem, Payment, Customer, StaffMember+RBAC, Integration, Waiver) — validates + generates | ✅ |
+| 0.4 | Postgres RLS policies (prisma/rls.sql) + tenant-scoped Prisma client (forOperator/withTenant) | ✅ (written; applies on first DB connect) |
+| 0.5 | Neon dev database connected + first migration run | ⏸️ (needs connection string) |
+| 0.6 | Seed script — Lake Sonoma Marina (19 activities, rates, fees, waiver, config) | ✅ (written; runs once DB connected) |
 | 0.7 | Auth + RBAC (Clerk operators/staff, magic link customers) | ⏸️ (needs Clerk keys) |
 | 0.8 | Cross-tenant isolation tests (must fail to access other tenants) | ⬜ |
 
@@ -71,3 +71,9 @@ I will build against sandboxes/free tiers and flag exactly when each is needed.
 - **2026-06-04** — Repo cloned locally. Shared-brain docs created (AGENTS.md +
   docs/CONTEXT, ARCHITECTURE, DECISIONS, ROADMAP). Decisions D-001..D-006 recorded.
   Toolchain checked (Node 24 ✓, pnpm via corepack, no Docker → Neon).
+- **2026-06-04** — Phase 0 foundation built: monorepo scaffold (pnpm workspaces +
+  turbo), `@marina/types` (RBAC perms, money helpers, tenant GUC), `@marina/database`
+  (full multi-tenant Prisma schema, RLS policies, tenant-scoped client, LSRA seed).
+  `pnpm install` + `prisma generate` + typecheck all pass. Not yet applied to a live
+  DB — waiting on Neon connection string (0.5). Note: migrate package.json#prisma to
+  prisma.config.ts before Prisma 7 (deprecation warning, non-blocking).

@@ -1,0 +1,25 @@
+{
+  "name": "marina-booking-platform",
+  "version": "0.0.0",
+  "private": true,
+  "packageManager": "pnpm@11.5.1",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "db:generate": "pnpm --filter @marina/database generate",
+    "db:migrate": "pnpm --filter @marina/database migrate",
+    "db:rls": "pnpm --filter @marina/database rls",
+    "db:seed": "pnpm --filter @marina/database seed",
+    "db:studio": "pnpm --filter @marina/database studio"
+  },
+  "devDependencies": {
+    "turbo": "^2.5.0",
+    "typescript": "^5.6.0"
+  }
+}
