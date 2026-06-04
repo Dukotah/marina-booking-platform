@@ -15,6 +15,7 @@
     "db:generate": "pnpm --filter @marina/database generate",
     "db:migrate": "pnpm --filter @marina/database migrate",
     "db:rls": "pnpm --filter @marina/database rls",
+    "db:approle": "pnpm --filter @marina/database approle",
     "db:seed": "pnpm --filter @marina/database seed",
     "db:studio": "pnpm --filter @marina/database studio"
   },

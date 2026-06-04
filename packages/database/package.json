@@ -13,6 +13,7 @@
     "migrate": "prisma migrate dev",
     "migrate:deploy": "prisma migrate deploy",
     "rls": "node --experimental-strip-types scripts/apply-rls.ts",
+    "approle": "node --experimental-strip-types scripts/setup-app-role.ts",
     "seed": "node --experimental-strip-types prisma/seed.ts",
     "studio": "prisma studio",
     "test": "vitest run",

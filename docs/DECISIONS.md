@@ -106,3 +106,37 @@ that actually exports the `SquareClient` API the code was written against).
 
 **Why:** Keep the large generated codebase building cleanly and honestly without
 weakening real-correctness guarantees.
+
+## D-010 — Tenant isolation: non-bypass app role; known FK-attach gap (2026-06-04) — Accepted
+
+Two findings surfaced the first time the platform ran against a live Neon database,
+both while bringing up the cross-tenant isolation suite (roadmap 0.8):
+
+1. **Neon's `neondb_owner` has `BYPASSRLS`.** Using it for tenant queries silently
+   defeated RLS (a tenant saw *all* rows). Fix: a dedicated **`app_user`** role that is
+   `NOBYPASSRLS` and is **not** a table owner, provisioned idempotently by
+   `pnpm db:approle` (packages/database/scripts/setup-app-role.ts). `forOperator` /
+   `withTenant` now connect as `app_user` via `APP_DATABASE_URL`; `adminPrisma` keeps
+   the owner connection for migrations/seed/genuine cross-tenant platform ops. This is
+   the role half of D-004's defense in depth — RLS only bites a role that can't bypass
+   it. The tenant client warns loudly if `APP_DATABASE_URL` is unset (dev fallback to
+   owner = isolation NOT enforced). Also fixed: `apply-rls.ts` split the multi-statement
+   .sql per-statement (Prisma's $executeRawUnsafe rejects multiple commands in one
+   prepared statement, 42601) and runs DDL on the direct connection.
+
+2. **Known gap — cross-tenant FK attach.** Postgres foreign-key checks are *not*
+   subject to RLS, so a tenant can create one of its **own** rows that references
+   another tenant's row by id (e.g. an A-owned `Rate` pointing at B's `activity_id`).
+   Residual risk is low: the referencing row stays owned and readable only by the
+   attacker, the referenced row remains invisible to them (RLS blocks the join), and
+   the parent id is an unguessable cuid. But it is a real integrity gap. The robust
+   fix is **tenant-composite foreign keys** — add `@@unique([operator_id, id])` to
+   parents and make intra-tenant relations reference `[operator_id, parent_id]`, so the
+   DB refuses a child whose parent lives in another tenant. Tracked as a Phase-0
+   hardening item (ROADMAP 0.13). Until it lands, the corresponding isolation assertion
+   is `it.skip`-ped with a pointer here, and app-layer create paths should validate
+   parent ownership.
+
+**Why:** Multi-tenant isolation is the product's core promise (AGENTS.md rule 2).
+Getting the role model right makes RLS actually enforce; documenting the FK gap keeps
+us honest about what RLS does and does not cover, with a concrete plan to close it.

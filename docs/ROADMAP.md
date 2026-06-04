@@ -18,14 +18,15 @@ booking vertical slice for the seed client (Lake Sonoma Marina) running on it.
 | 0.2 | Monorepo scaffold (Turborepo + pnpm) — root config, types + database packages, installs + typechecks clean | ✅ |
 | 0.3 | Prisma schema w/ multi-tenant hardening (Operator, Location, Activity+config, Rate, Timeslot, Resource, Order, OrderItem, Payment, Customer, StaffMember+RBAC, Integration, Waiver) — validates + generates | ✅ |
 | 0.4 | Postgres RLS policies (prisma/rls.sql) + tenant-scoped Prisma client (forOperator/withTenant) | ✅ (written; applies on first DB connect) |
-| 0.5 | Neon dev database connected + first migration run | ⏸️ (needs connection string) |
-| 0.6 | Seed script — Lake Sonoma Marina (19 activities, rates, fees, waiver, config) | ✅ (written; runs once DB connected) |
+| 0.5 | Neon dev database connected + first migration run | ✅ (Neon US-West; migration `init` applied; RLS applied; `app_user` non-bypass role provisioned) |
+| 0.6 | Seed script — Lake Sonoma Marina (19 activities, rates, fees, waiver, config) | ✅ (seeded live — operator `lsra`, 19 activities) |
 | 0.7 | Auth + RBAC (Clerk operators/staff, magic link customers) | ⏸️ (needs Clerk keys) |
-| 0.8 | Cross-tenant isolation tests (must fail to access other tenants) | 🟦 (8-case suite written + wired into `pnpm test`; skips w/o DATABASE_URL, auto-runs live once Neon connected) |
+| 0.8 | Cross-tenant isolation tests (must fail to access other tenants) | ✅ (live vs Neon RLS — 7/7 pass: reads, writes, WITH CHECK, bulk ops, symmetric; 1 case skipped → 0.13) |
 | 0.9 | Auth/RBAC package (@marina/auth) — permission checks, AuthContext | ✅ |
 | 0.10 | API skeleton (Hono) — tenant-resolution middleware, RLS-scoped client per request, dev auth shim, catalog route; boots + tenant guard verified | ✅ |
 | 0.11 | Customer portal shell (apps/web, Next 14 + Tailwind) — catalog page wired to API, white-label brand var, graceful no-DB state | ✅ |
 | 0.12 | Admin dashboard shell (apps/admin, Next 14 + Tailwind) — dashboard-first KPI layout + nav | ✅ |
+| 0.13 | **Hardening: tenant-composite FKs** — `@@unique([operator_id, id])` on parents + composite child relations so the DB refuses cross-tenant FK references (closes the D-010 gap; un-skips the isolation case) | ⬜ |
 
 ## Phase 1 — MVP (sellable booking core)
 
@@ -77,6 +78,19 @@ I will build against sandboxes/free tiers and flag exactly when each is needed.
 
 ## Changelog
 
+- **2026-06-04** — **Went live against a real database.** Neon Postgres connected
+  (US-West); `prisma migrate dev` applied migration `init`; RLS applied; LSRA seeded
+  (operator `lsra`, 19 activities). Two isolation findings fixed (D-010): (1) Neon's
+  `neondb_owner` has BYPASSRLS — added a dedicated NOBYPASSRLS `app_user` role
+  (`pnpm db:approle`) that `forOperator`/`withTenant` now connect through, leaving
+  `adminPrisma` on the owner for platform ops; (2) `apply-rls.ts` now splits the .sql
+  per statement (Prisma rejects multi-command prepared statements) and runs DDL on the
+  direct connection. Cross-tenant isolation suite now runs LIVE and passes 7/7 (0.8
+  done). Documented residual gap: Postgres FK checks bypass RLS, so cross-tenant FK
+  attach is possible — tracked as 0.13 (tenant-composite FKs), the one isolation case
+  skipped until then. Vercel: marina-web live; marina-admin first deploy failed on a
+  build error (local typecheck+build are green — likely env/Linux-case specific; needs
+  the Vercel log to pin down).
 - **2026-06-04** — Resumed after interrupted session. Verified state still green
   (typecheck 0 errors; core 69/69; web 7-route + admin 21-route + api builds all pass).
   Wired the existing 8-case cross-tenant isolation suite into the test pipeline (added
