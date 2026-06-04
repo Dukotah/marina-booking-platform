@@ -553,22 +553,23 @@ model BookingNotification {
 
 ## TECH STACK
 
-| Layer | Technology |
-|---|---|
-| Monorepo | Turborepo + pnpm |
-| Customer Portal | Next.js 14 App Router |
-| Admin Dashboard | Next.js 14 App Router |
-| API | Bun + Hono (or Node.js + Fastify) |
-| Database | PostgreSQL + Prisma |
-| Cache | Redis |
-| Jobs | BullMQ |
-| Payments | Square SDK |
-| Email | Resend + React Email |
-| SMS | Twilio |
-| Auth | Clerk (operators), Magic Link (customers) |
-| Storage | Cloudflare R2 |
-| Deploy | Vercel + Railway |
-| UI | Tailwind CSS + shadcn/ui |
+| Layer | Technology | Notes |
+|---|---|---|
+| Monorepo | Turborepo + pnpm | |
+| Customer Portal | Next.js 14 App Router | Vercel (free hobby tier) |
+| Admin Dashboard | Next.js 14 App Router | Same Vercel deployment |
+| API | Bun + Hono | Railway (free $5 credit/month) |
+| Database | PostgreSQL + Prisma | Neon free tier (0.5 GB) |
+| Auth | Clerk | Free up to 10k MAU — operators only |
+| Customer Auth | Magic link (Resend) | Stateless, no auth provider needed |
+| Payments | Square SDK | No monthly fee — % per transaction only |
+| Email | Resend + React Email | Free up to 3k/month |
+| Storage | Cloudflare R2 | Free up to 10 GB/month |
+| UI | Tailwind CSS + shadcn/ui | |
+| Double-booking | Optimistic concurrency | Pure Postgres — no Redis needed |
+| Cache / Jobs | Skip for MVP | Add Redis + BullMQ when needed |
+| SMS | Skip for MVP | Add Twilio when revenue justifies it |
+| Deploy | Vercel + Railway | Both free at zero traffic |
 
 ---
 

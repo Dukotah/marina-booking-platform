@@ -428,11 +428,27 @@ PRODUCT_REQUIREMENTS.md- Parking: 1 vehicle included
 
 | # | Decision | Choice | Rationale |
 |---|---|---|---|
+| 1 | API runtime + framework | **Bun + Hono** | Faster than Node + Fastify, open source, great Prisma support, zero cost |
+| 2 | Operator auth | **Clerk** | Free up to 10k MAU, best Next.js App Router DX, prebuilt UI components |
 | 3 | Timeslot generation | **ScheduleTemplate model + draft/publish workflow** | FareHarbor-style bulk generation (date range × days of week × start times) with Singenuity-style named reusable templates. Agent layer drives the same flow via natural language. |
+| 4 | Double-booking prevention | **Optimistic concurrency (Postgres-only)** | Atomic `UPDATE ... WHERE capacity_booked + qty <= capacity_total`. No Redis, no TimeslotHold model, no extra infrastructure. If 0 rows affected, spot was taken — show error. Free and simple. |
 | 5 | Cancellation policy | **CancellationPolicy + CancellationTier DB models** | Full operator customization. Tiered rules (hours_before + fee_type + fee_value). Operators create named policies; activities can override the operator default. No hardcoding. |
-| — | Tech stack (API) | TBD | Bun + Hono vs Node + Fastify |
-| — | Operator auth | TBD | Clerk vs Auth0 |
-| — | Double-booking prevention | TBD | TimeslotHold (10-min checkout lock) vs optimistic concurrency |
+
+### Hosting Stack (Free Until Revenue)
+
+| Layer | Service | Free Tier |
+|---|---|---|
+| Frontend (web + admin) | Vercel | Hobby — free |
+| API | Railway | $5/month credit — free at zero traffic |
+| Database | Neon (PostgreSQL) | 0.5 GB, 1 project — free |
+| Auth | Clerk | 10,000 MAU — free |
+| Email | Resend | 3,000 emails/month — free |
+| Storage | Cloudflare R2 | 10 GB/month — free |
+| Payments | Square | No monthly fee — percentage only |
+| Redis / queue | Skip for MVP | Postgres-based polling instead |
+| SMS | Skip for MVP | Email only until revenue |
+
+**Monthly cost at zero users: $0.** Square only charges when an operator processes a booking.
 
 ### ScheduleTemplate Workflow (FareHarbor-inspired)
 1. Operator creates a named template with date range, days of week, start times, capacity, cutoff — saves as `DRAFT`
