@@ -39,22 +39,46 @@ datasource db {
 }
 
 model Operator {
-  id               String     @id @default(cuid())
-  name_internal    String
-  name_external    String
-  location_code    String     @unique
-  website          String?
-  timezone         String     @default("America/Los_Angeles")
-  country          String     @default("US")
-  logo_dark_url    String?
-  logo_light_url   String?
-  legal_adult_age  Int        @default(18)
-  created_at       DateTime   @default(now())
-  activities       Activity[]
-  customers        Customer[]
-  orders           Order[]
-  promo_codes      PromoCode[]
-  merchandise      MerchandiseItem[]
+  id                  String     @id @default(cuid())
+  name_internal       String
+  name_external       String
+  location_code       String     @unique
+  website             String?
+  timezone            String     @default("America/Los_Angeles")
+  country             String     @default("US")
+  // Contact
+  address             String?
+  city                String?
+  state               String?
+  zip                 String?
+  phone               String?
+  support_email       String?
+  // Branding
+  logo_dark_url       String?
+  logo_light_url      String?
+  favicon_url         String?
+  primary_color       String?    // hex e.g. "#0057A8"
+  accent_color        String?
+  custom_domain       String?    // e.g. "book.lakesonoma.com"
+  // Config
+  legal_adult_age     Int        @default(18)
+  blackout_dates      DateTime[]
+  created_at          DateTime   @default(now())
+  updated_at          DateTime   @updatedAt
+  // Relations
+  activities          Activity[]
+  customers           Customer[]
+  orders              Order[]
+  promo_codes         PromoCode[]
+  merchandise         MerchandiseItem[]
+  cancellation_policies CancellationPolicy[]
+  tip_configs         TipConfig[]
+  booking_policy      BookingPolicy?
+  customer_questions  CustomerQuestion[]
+  heard_about_options HeardAboutUsOption[]
+  waivers             Waiver[]
+  resources           Resource[]
+  notifications       BookingNotification[]
 }
 
 model Activity {
@@ -63,24 +87,32 @@ model Activity {
   operator              Operator         @relation(fields: [operator_id], references: [id])
   name_internal         String
   name_external         String
-  status                String           @default("ACTIVE")
-  category              String           @default("OTHER")
-  visible_online        Boolean          @default(true)
-  min_participants      Int              @default(1)
-  max_participants      Int              @default(10)
-  description_html      String?
-  photo_urls            String[]
-  color                 String           @default("blue")
-  waiver_required       Boolean          @default(true)
-  self_reschedule_hours Int              @default(48)
-  sort_index            Int              @default(0)
-  created_at            DateTime         @default(now())
-  updated_at            DateTime         @updatedAt
-  rates                 Rate[]
-  timeslots             Timeslot[]
-  schedule_templates    ScheduleTemplate[]
-  fees                  Fee[]
-  order_items           OrderItem[]
+  status                   String           @default("ACTIVE")
+  category                 String           @default("OTHER")
+  visible_online           Boolean          @default(true)
+  visible_kiosk            Boolean          @default(true)
+  visible_register         Boolean          @default(true)
+  min_participants         Int              @default(1)
+  max_participants         Int              @default(10)
+  description_html         String?
+  photo_urls               String[]
+  color                    String           @default("blue")
+  waiver_required          Boolean          @default(true)
+  waiver_id                String?
+  self_reschedule_hours    Int              @default(48)
+  self_reschedule_enabled  Boolean          @default(true)
+  cancellation_policy_id   String?          // overrides operator default if set
+  sort_index               Int              @default(0)
+  created_at               DateTime         @default(now())
+  updated_at               DateTime         @updatedAt
+  rates                    Rate[]
+  timeslots                Timeslot[]
+  schedule_templates       ScheduleTemplate[]
+  fees                     Fee[]
+  order_items              OrderItem[]
+  tip_configs              TipConfig[]
+  customer_questions       CustomerQuestion[]
+  cancellation_policy      CancellationPolicy? @relation(fields: [cancellation_policy_id], references: [id])
 }
 
 model Rate {
@@ -293,6 +325,170 @@ model OrderEvent {
   actor       String?
   metadata    Json?
   created_at  DateTime @default(now())
+}
+
+// ─── CANCELLATION POLICY ─────────────────────────────────────────────────────
+// Operators configure their own tiered policies. Activities can override the
+// operator default via cancellation_policy_id.
+
+model CancellationPolicy {
+  id          String             @id @default(cuid())
+  operator_id String
+  operator    Operator           @relation(fields: [operator_id], references: [id])
+  name        String             // e.g. "Standard Marina Policy"
+  is_default  Boolean            @default(false)
+  created_at  DateTime           @default(now())
+  updated_at  DateTime           @updatedAt
+  tiers       CancellationTier[]
+  activities  Activity[]
+  @@index([operator_id])
+}
+
+model CancellationTier {
+  id                     String             @id @default(cuid())
+  cancellation_policy_id String
+  policy                 CancellationPolicy @relation(fields: [cancellation_policy_id], references: [id])
+  hours_before           Int                // applies when cancelling within this many hours of start
+  fee_type               String             @default("PERCENT") // PERCENT | FLAT | NONE
+  fee_value              Float              // 50 = 50%, or cents for FLAT
+  label                  String?            // "50% fee — cancels within 7 days"
+  sort_index             Int                @default(0)
+}
+
+// ─── TIP CONFIGURATION ───────────────────────────────────────────────────────
+// Operators define tip options per activity or globally. Multiple active configs
+// per activity are shown as a selector at checkout.
+
+model TipConfig {
+  id          String    @id @default(cuid())
+  operator_id String
+  operator    Operator  @relation(fields: [operator_id], references: [id])
+  activity_id String?   // null = applies to all activities for this operator
+  activity    Activity? @relation(fields: [activity_id], references: [id])
+  label       String    // "20% Gratuity"
+  type        String    @default("PERCENT") // PERCENT | FLAT
+  value       Float     // 20.0 for 20%, or cents for FLAT
+  is_default  Boolean   @default(false)
+  sort_index  Int       @default(0)
+  is_active   Boolean   @default(true)
+}
+
+// ─── BOOKING POLICY ──────────────────────────────────────────────────────────
+// One per operator. Controls global booking rules shown to customers at checkout
+// and enforced at check-in.
+
+model BookingPolicy {
+  id                       String   @id @default(cuid())
+  operator_id              String   @unique
+  operator                 Operator @relation(fields: [operator_id], references: [id])
+  checkin_window_minutes   Int      @default(30)   // arrive X min before start
+  min_operator_age         Int      @default(21)   // min age to operate a motorized vessel
+  require_photo_id         Boolean  @default(true)
+  parking_included         Boolean  @default(true)
+  parking_notes            String?
+  fuel_policy              String?  // "Fuel charged at end of visit based on usage"
+  max_advance_booking_days Int      @default(365)  // how far ahead customers can book online
+  min_advance_booking_hours Int     @default(2)    // min lead time before start (global fallback)
+  allow_same_day_booking   Boolean  @default(true)
+  terms_html               String?  // operator-authored terms displayed at checkout
+  updated_at               DateTime @updatedAt
+}
+
+// ─── CUSTOMER QUESTIONS ──────────────────────────────────────────────────────
+// Custom questions shown during checkout. Can be global or per-activity.
+
+model CustomerQuestion {
+  id          String    @id @default(cuid())
+  operator_id String
+  operator    Operator  @relation(fields: [operator_id], references: [id])
+  activity_id String?   // null = shown for all activities
+  activity    Activity? @relation(fields: [activity_id], references: [id])
+  question    String
+  field_type  String    @default("TEXT") // TEXT | SELECT | CHECKBOX | NUMBER | DATE
+  options     String[]  // for SELECT type
+  is_required Boolean   @default(false)
+  sort_index  Int       @default(0)
+  is_active   Boolean   @default(true)
+}
+
+// ─── HEARD ABOUT US ──────────────────────────────────────────────────────────
+
+model HeardAboutUsOption {
+  id          String   @id @default(cuid())
+  operator_id String
+  operator    Operator @relation(fields: [operator_id], references: [id])
+  label       String   // "Google", "Instagram", "Friend / Family", "Return Guest"
+  sort_index  Int      @default(0)
+  is_active   Boolean  @default(true)
+}
+
+// ─── WAIVERS ─────────────────────────────────────────────────────────────────
+
+model Waiver {
+  id                      String           @id @default(cuid())
+  operator_id             String
+  operator                Operator         @relation(fields: [operator_id], references: [id])
+  name                    String
+  body_html               String           // full waiver text (rich text / HTML)
+  requires_minor_guardian Boolean          @default(true)
+  is_active               Boolean          @default(true)
+  created_at              DateTime         @default(now())
+  updated_at              DateTime         @updatedAt
+  signatures              WaiverSignature[]
+}
+
+model WaiverSignature {
+  id              String   @id @default(cuid())
+  waiver_id       String
+  waiver          Waiver   @relation(fields: [waiver_id], references: [id])
+  order_item_id   String
+  customer_id     String?
+  signed_at       DateTime @default(now())
+  signature_data  String   // base64 drawn signature or typed name
+  ip_address      String?
+  user_agent      String?
+  is_minor        Boolean  @default(false)
+  guardian_name   String?
+  @@index([order_item_id])
+}
+
+// ─── RESOURCES ───────────────────────────────────────────────────────────────
+// Physical assets (individual boats, jet skis, kayaks). Linked to activities
+// for capacity enforcement and maintenance scheduling.
+
+model Resource {
+  id                   String   @id @default(cuid())
+  operator_id          String
+  operator             Operator @relation(fields: [operator_id], references: [id])
+  name                 String   // "Pontoon #3 — Blue Wave"
+  category             String   // BOAT | WATERCRAFT | EQUIPMENT | OTHER
+  seat_capacity        Int      @default(1)
+  assigned_activity_ids String[]
+  serial_number        String?
+  year                 Int?
+  make                 String?
+  model                String?
+  status               String   @default("ACTIVE") // ACTIVE | OUT_OF_SERVICE | RETIRED
+  out_of_service_reason String?
+  last_serviced_at     DateTime?
+  notes                String?
+  created_at           DateTime @default(now())
+  updated_at           DateTime @updatedAt
+}
+
+// ─── BOOKING NOTIFICATIONS ───────────────────────────────────────────────────
+// Operators configure who gets notified and for which activities.
+
+model BookingNotification {
+  id              String   @id @default(cuid())
+  operator_id     String
+  operator        Operator @relation(fields: [operator_id], references: [id])
+  channel         String   @default("EMAIL") // EMAIL | SMS
+  recipient       String   // email address or phone number
+  activity_ids    String[] // empty array = all activities
+  triggers        String[] // NEW_BOOKING | CANCELLATION | RESCHEDULE | REMINDER | REFUND
+  is_active       Boolean  @default(true)
+  created_at      DateTime @default(now())
 }
 ```
 
