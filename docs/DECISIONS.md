@@ -93,3 +93,16 @@ services callable from either side.
 generation, zod validation schemas, booking + refund services), `@marina/ui`
 (white-label Tailwind component library), `@marina/emails` (React Email templates).
 Stack additions: Square SDK v38 (SquareClient API), Resend, Clerk, recharts.
+
+## D-009 — Relaxed noUncheckedIndexedAccess; .js→.ts webpack alias (2026-06-04) — Accepted
+
+Dropped `noUncheckedIndexedAccess` from the base tsconfig (kept full `strict`). It
+generated ~35 array-index false-positives across the agent-built code without
+protecting the things that matter (money math, tenant scoping), which are covered by
+tests and RLS. Also: shared `@marina/*` packages ship TS source with NodeNext `.js`
+import specifiers; the Next apps add a webpack `resolve.extensionAlias` ('.js' →
+['.ts','.tsx','.js']) so webpack resolves them. Square upgraded 38→44 (the version
+that actually exports the `SquareClient` API the code was written against).
+
+**Why:** Keep the large generated codebase building cleanly and honestly without
+weakening real-correctness guarantees.

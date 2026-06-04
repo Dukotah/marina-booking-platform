@@ -1,52 +1,122 @@
-// Operator dashboard — the "dashboard-first" answer to Singenuity dumping operators
-// into a raw manifest. KPIs are placeholders until the orders API lands (Phase 1).
+// Operator dashboard home — the "dashboard-first" answer to Singenuity dumping
+// operators into a raw text manifest. Revenue, occupancy, alerts, and the next
+// bookings, all at a glance. Every figure is computed from real, tenant-scoped
+// queries (RLS-enforced); empty data degrades gracefully (no seed required).
 
-const KPIS = [
-  { label: 'Revenue today', value: '—' },
-  { label: 'Revenue this week', value: '—' },
-  { label: 'Occupancy', value: '—' },
-  { label: 'Upcoming bookings', value: '—' },
-];
+import { CalendarClock, DollarSign, Gauge, TrendingUp } from 'lucide-react';
+import { StatCard } from '@marina/ui';
+import { AdminShell } from '../components/shell/AdminShell';
+import { PageHeader } from '../components/shell/PageHeader';
+import {
+  AlertsList,
+  OccupancySnapshot,
+  RevenueTrendChart,
+  SectionCard,
+  UpcomingBookings,
+  getDashboardData,
+} from '../components/dashboard';
+import { getOperatorContext, getTenantDb } from '../lib/session';
+import { formatNumber, formatPercent, formatUSD } from '../lib/format';
 
-const NAV = ['Dashboard', 'Manifest', 'Orders', 'Activities', 'Customers', 'POS', 'Reports', 'Settings'];
+// KPIs reflect live data; never cache stale figures for an operations dashboard.
+export const dynamic = 'force-dynamic';
 
-export default function DashboardPage() {
+/** Resolve the operator's brand color so the trend chart stays white-label. */
+async function getBrandColor(): Promise<string> {
+  const { operatorId } = await getOperatorContext();
+  const db = await getTenantDb();
+  const operator = await db.operator.findUnique({
+    where: { id: operatorId },
+    select: { brand_color: true },
+  });
+  return operator?.brand_color || '#0ea5e9';
+}
+
+export default async function DashboardPage() {
+  const [data, brandColor] = await Promise.all([getDashboardData(), getBrandColor()]);
+
+  const { revenue, occupancy, upcomingCount, trend, upcoming, alerts } = data;
+  const totalRevenue = trend.reduce((sum, p) => sum + p.cents, 0);
+
   return (
-    <div className="flex min-h-screen">
-      <aside className="hidden w-56 shrink-0 border-r border-slate-200 bg-white p-4 md:block">
-        <div className="mb-6 text-lg font-bold">Marina Admin</div>
-        <nav className="space-y-1">
-          {NAV.map((item, i) => (
-            <a
-              key={item}
-              href="#"
-              className={`block rounded-md px-3 py-2 text-sm ${
-                i === 0 ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
-              }`}
-            >
-              {item}
-            </a>
-          ))}
-        </nav>
-      </aside>
+    <AdminShell>
+      <PageHeader title="Dashboard" description="Your business at a glance." />
 
-      <main className="flex-1 p-6">
-        <h1 className="text-2xl font-bold">Dashboard</h1>
-        <p className="mt-1 text-slate-500">Your business at a glance.</p>
+      {/* KPI row */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard
+          label="Revenue today"
+          value={formatUSD(revenue.todayCents)}
+          icon={DollarSign}
+        />
+        <StatCard
+          label="Revenue this week"
+          value={formatUSD(revenue.weekCents)}
+          icon={TrendingUp}
+        />
+        <StatCard
+          label="Revenue this month"
+          value={formatUSD(revenue.monthCents)}
+          icon={DollarSign}
+        />
+        <StatCard
+          label="Occupancy today"
+          value={formatPercent(occupancy.ratio)}
+          icon={Gauge}
+        />
+      </div>
 
-        <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {KPIS.map((kpi) => (
-            <div key={kpi.label} className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-              <div className="text-sm text-slate-500">{kpi.label}</div>
-              <div className="mt-2 text-3xl font-semibold">{kpi.value}</div>
-            </div>
-          ))}
-        </div>
+      {/* Trend + occupancy */}
+      <div className="mt-6 grid gap-6 lg:grid-cols-3">
+        <SectionCard
+          title="Revenue trend"
+          description="Last 14 days, by booking date"
+          aside={
+            <span className="text-sm font-medium text-slate-500">
+              {formatUSD(totalRevenue)}
+            </span>
+          }
+          className="lg:col-span-2"
+        >
+          <RevenueTrendChart data={trend} brandColor={brandColor} />
+        </SectionCard>
 
-        <div className="mt-8 rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-slate-500">
-          Visual Gantt manifest and live KPIs arrive in Phase 1 (see docs/ROADMAP.md).
-        </div>
-      </main>
-    </div>
+        <SectionCard
+          title="Occupancy"
+          description="Today's booked vs total capacity"
+        >
+          <OccupancySnapshot
+            capacityTotal={occupancy.capacityTotal}
+            capacityBooked={occupancy.capacityBooked}
+            ratio={occupancy.ratio}
+            slices={occupancy.slices}
+          />
+        </SectionCard>
+      </div>
+
+      {/* Upcoming + alerts */}
+      <div className="mt-6 grid gap-6 lg:grid-cols-3">
+        <SectionCard
+          title="Upcoming bookings"
+          description="The next reservations on the schedule"
+          aside={
+            <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-600">
+              <CalendarClock className="h-3.5 w-3.5" aria-hidden />
+              {formatNumber(upcomingCount)} upcoming
+            </span>
+          }
+          className="lg:col-span-2"
+        >
+          <UpcomingBookings bookings={upcoming} />
+        </SectionCard>
+
+        <SectionCard
+          title="Alerts"
+          description="Things that need attention"
+        >
+          <AlertsList alerts={alerts} />
+        </SectionCard>
+      </div>
+    </AdminShell>
   );
 }

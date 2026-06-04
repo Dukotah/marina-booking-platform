@@ -2,6 +2,24 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * White-label brand color. The default here is a neutral fallback; the active
+ * tenant's color is injected at runtime via inline style (see lib/brand.ts
+ * brandStyle()) and consumed by Tailwind's `brand` color (tailwind.config.ts)
+ * and any `var(--brand-color)` usage. Never hardcode a specific operator's
+ * brand in customer-facing UI.
+ */
 :root {
   --brand-color: #0ea5e9;
+}
+
+/* Make the page a column so footers can stick to the bottom on short pages. */
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
 }
