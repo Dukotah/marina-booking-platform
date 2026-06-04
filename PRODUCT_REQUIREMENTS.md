@@ -419,3 +419,136 @@ PRODUCT_REQUIREMENTS.md- Parking: 1 vehicle included
 
 *Analysis date: June 3, 2026*
 *Source: register.singenuity.com + manage.singenuity.com + book.singenuity.com/758 (Lake Sonoma Marina)*
+
+---
+
+## 9. Competitive Feature Backlog
+
+> Research date: June 4, 2026. Sources: FareHarbor, Peek Pro, Dockwa, RentalTide, Checkfront, Rezdy/Regiondo, Singenuity live audit. These features are **NOT in the MVP** but are logged here so nothing gets lost.
+
+---
+
+### 9.1 Competitor Landscape Summary
+
+| Platform | Strength | Key Weakness |
+|---|---|---|
+| FareHarbor (Booking Holdings) | 250+ OTA connections, abandoned cart (20% conversion), waitlist | 6% booking fee, 14s checkout lag, waivers are third-party, not marine-specific |
+| Peek Pro | AI dynamic pricing, smart upsells (16% lost-sale recovery), review automation | 6-8% fee, no marine features |
+| Dockwa | Purpose-built marina (fuel, slips, contracts), smart waitlist, unified revenue view | Not activity/rental UX focused, no OTA distribution |
+| RentalTide | GPS fleet tracking, damage deposit holds, fuel tracking, AI pricing, zero monthly fee | Newer, less proven at scale |
+| Singenuity | All-in-one claim, low processing fees, owned data | 2 separate apps, no dashboard, broken reports, anonymous booking only |
+
+---
+
+### 9.2 Features Missing from Singenuity That Competitors Have
+
+These are confirmed gaps in Singenuity that we will build — phased by priority.
+
+#### Revenue & Conversion (High ROI — build when ready)
+- **Abandoned cart recovery** — Email triggered when checkout is abandoned mid-flow. FareHarbor achieves 20% conversion; Peek Pro reports 10.2% average revenue increase. Collect email at step 1 of checkout, fire recovery email after 30 min inactivity.
+- **Waitlist** — Customer queues for a fully-booked timeslot. When a cancellation opens a spot, auto-notify waitlisted guests with one-click booking link. Dockwa calls this "smart waitlist."
+- **Smart upsells / add-ons at checkout** — Optional add-ons presented after rate selection (life vests, GoPro rental, fuel pre-pay, trip insurance). Peek Pro recaptures 16% of otherwise-lost sales via this flow.
+- **Split payment / group payment links** — Allow a group to divide the cost; primary booker sends a link to each participant to pay their share.
+- **Deposit now / balance later** — Customer pays a set amount (e.g., 50%) at booking, remainder is billed automatically X days before the trip.
+- **AI / demand-based dynamic pricing** — Adjust rates based on remaining capacity, season, day of week, or weather forecast. Peek Pro and Dockwa both offer this.
+
+#### Booking Flow (Customer-Facing)
+- **Real customer accounts** — Returning customers log in, see booking history, saved payment, saved participant info. Most platforms (including Singenuity) are anonymous-only.
+- **Post-experience review requests** — Automated email X hours after rental return, requesting a review. Peek Pro ties this to specific activities.
+- **Group / private charter booking** — Dedicated flow for private buyout of an activity. Different pricing, min/max rules, custom confirmation.
+- **Browse by date** — Pick a date first, see all available activities that day (inverse of current catalog-first flow).
+
+#### Operations (Admin / Staff)
+- **Damage pre-authorization hold** — Pre-auth a card for a damage deposit at check-in without charging it. Square supports this natively. Release automatically at return, or charge if damage reported.
+- **Fuel charges billed at end of rental** — Staff enters fuel consumed at return; system calculates charge and bills the card on file. Critical for Lake Sonoma ("Fuel: paid at end of visit").
+- **Overtime / late return charge** — Alert and auto-charge if rental runs past scheduled end time.
+- **Before/after damage inspection with photos** — Staff uploads photos at check-out and check-in; stored against the order.
+- **Weather cancellation flow** — Bulk-cancel timeslots with one action; auto-issue full refunds or store credit; notify all affected customers via email/SMS.
+- **Custom saved manifest views** — Staff can save filtered manifest views (e.g., "Jet Skis only", "My assigned activities"). FareHarbor calls these "custom manifests."
+- **Offline QR check-in** — Mobile app can scan QR codes and check guests in without an internet connection, syncing when back online.
+
+#### Distribution & Growth
+- **OTA / channel distribution** — List activities on Viator, GetYourGuide, Airbnb Experiences with live inventory sync. FareHarbor's FHDN connects to 250+ OTAs.
+- **Affiliate & partner management** — Allow referral partners to embed a booking widget and earn commissions. Time-windowed access rules.
+
+#### Marine-Specific (Differentiated)
+- **GPS fleet tracking hooks** — Integration point for GPS providers (e.g., Docklyne). Surface current boat location on manifest. Geofence alerts if a vessel leaves approved waters.
+- **Engine hour / fuel gauge monitoring** — Pull data from GPS/IoT sensors for maintenance scheduling and billing.
+
+---
+
+### 9.3 New Data Models to Add Before Scaffolding
+
+These models were identified during competitive research. None are in the current Prisma schema.
+
+```
+WaitlistEntry
+  id, timeslot_id, customer_id, operator_id,
+  status: WAITING | NOTIFIED | CONVERTED | EXPIRED,
+  notified_at, expires_at, created_at
+
+AbandonedCart
+  id, operator_id, session_id, email?,
+  items_json (snapshot of cart state),
+  recovery_sent_at, recovered_at, expires_at, created_at
+
+PreAuthorization
+  id, order_id, order_item_id,
+  amount_cents, card_last_four, card_brand,
+  processor_auth_id, status: HELD | RELEASED | CAPTURED,
+  held_at, released_at, captured_at
+
+FuelCharge
+  id, order_id, order_item_id,
+  gallons_decimal, unit_price_cents, total_cents,
+  charged_at, charged_by (staff actor)
+
+AddOn
+  id, operator_id, activity_ids[] (empty = all activities),
+  name, description, price_cents, is_active,
+  requires_quantity (bool), max_quantity, sort_index
+
+OrderItemAddOn
+  id, order_item_id, add_on_id,
+  quantity, unit_price_cents
+
+DamageReport
+  id, order_id, order_item_id,
+  description, charge_cents,
+  photo_urls[], reported_by, reported_at,
+  status: OPEN | CHARGED | WAIVED
+
+Review
+  id, operator_id, activity_id, order_id, customer_id,
+  rating (1-5), body, is_public, is_verified,
+  created_at, published_at
+
+ReviewRequest
+  id, order_id, customer_id,
+  scheduled_for, sent_at, completed_at, status
+
+ChannelListing
+  id, operator_id, activity_id,
+  channel: VIATOR | GETYOURGUIDE | AIRBNB | CUSTOM,
+  external_product_id, commission_pct, is_active
+
+AffiliatePartner
+  id, operator_id, name, slug, commission_pct,
+  booking_window_start, booking_window_end, is_active
+```
+
+---
+
+### 9.4 Our Differentiators (Features Nobody Does Well)
+
+These are confirmed gaps across ALL competitors — genuine opportunities:
+
+| Differentiator | Why Nobody Has Done It Well |
+|---|---|
+| One app, one login (admin + register + POS) | Everyone splits it: FareHarbor dashboard ≠ mobile manifest; Singenuity is literally 2 separate apps |
+| Visual Gantt manifest + drag-to-reschedule | All competitors use text lists or flat date strips |
+| Inline waiver signing at checkout (no redirect) | FareHarbor outsources to Smartwaiver/Wherewolf (redirect to third-party app) |
+| Real customer accounts with history + self-reschedule | Most platforms, including Singenuity, are anonymous-only |
+| Full white-label (zero platform branding) | FareHarbor, Peek Pro, and Singenuity all show platform branding on customer pages |
+| Guided operator onboarding wizard | Nobody does this; operators drown in 18+ settings pages |
+| Integrated review collection tied to specific activity | Peek Pro does post-experience emails but generically; tying to the exact boat/activity is better |
