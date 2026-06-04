@@ -70,3 +70,26 @@ sandbox/free tier until go-live.
 
 **Why:** Least friction for a hands-off owner; avoids installing/maintaining Docker;
 keeps the owner out of the loop until production switches must be flipped.
+
+## D-007 — Data access split: API for customer/integrations, direct DB for admin (2026-06-04) — Accepted
+
+The Hono API (apps/api) owns the customer-facing booking/payment surface, POS, and
+external integrations/webhooks. The admin app (apps/admin) uses server
+components/actions that call `@marina/database` directly (tenant-scoped via
+`forOperator(operatorId)` from the Clerk session → StaffMember). Both share business
+rules through `@marina/core` (pricing, availability, validation) so logic is not
+duplicated.
+
+**Why:** Building the entire admin surface through an HTTP API client would roughly
+double the work and integration surface. Direct, tenant-scoped DB access from
+server-rendered admin is a standard Next pattern and keeps the build fast, while the
+single source of truth for *rules* stays in @marina/core. Transactional writes that
+both customer + staff perform (orders, payments, refunds) live in @marina/core
+services callable from either side.
+
+## D-008 — Shared packages: @marina/core, @marina/ui, @marina/emails (2026-06-04) — Accepted
+
+`@marina/core` (pricing/tax/fee/tip math in integer cents, availability, order-number
+generation, zod validation schemas, booking + refund services), `@marina/ui`
+(white-label Tailwind component library), `@marina/emails` (React Email templates).
+Stack additions: Square SDK v38 (SquareClient API), Resend, Clerk, recharts.

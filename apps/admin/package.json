@@ -11,10 +11,22 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@clerk/nextjs": "^6.0.0",
+    "@marina/auth": "workspace:*",
+    "@marina/core": "workspace:*",
+    "@marina/database": "workspace:*",
     "@marina/types": "workspace:*",
+    "@marina/ui": "workspace:*",
+    "clsx": "^2.1.1",
+    "date-fns": "^4.1.0",
+    "lucide-react": "^0.453.0",
     "next": "^14.2.15",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "react-hook-form": "^7.53.0",
+    "recharts": "^2.13.0",
+    "tailwind-merge": "^2.5.0",
+    "zod": "^3.23.0"
   },
   "devDependencies": {
     "@types/node": "^22.19.19",
