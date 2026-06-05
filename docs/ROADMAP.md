@@ -73,6 +73,7 @@ channel/OTA + affiliate management · accounting exports (QuickBooks/Xero).
 |---|---|---|
 | 3.x | **Multi-location roll-up reporting (backend)** — `GET /reports/by-location` (+`.csv`): item-level location attribution (gross = unit×qty), per-location volume + a chain roll-up total (D-020) | 🟦 backend live-verified 3/3. Admin dashboards on top of it (+ per-location filtering of `/revenue`,`/bookings`, per-location net) are follow-ups |
 | 3.x | **Accounting export (backend)** — `GET /reports/transactions` (+`.csv`): payment-level journal keyed by cash date, net-of-refunds per row, per-tender reconciliation + totals (QuickBooks/Xero import) (D-021) | 🟦 backend live-verified 3/3. Direct QuickBooks/Xero API sync (OAuth + GL account mapping) is a later gated follow-up |
+| 3.x | **Resource/asset management (backend)** — staff CRUD `/api/resources` + activity assignment (ActivityResources m2m); fields seat_capacity/quantity/out_of_service_qty, derived availableQty; tenant-validated refs (D-023) | 🟦 catalog + assignment live-verified 7/7. **Resource-backed availability** (assets constrain capacity across the activities they back) is the high-value follow-up |
 
 ## Go-live checklist (before selling)
 

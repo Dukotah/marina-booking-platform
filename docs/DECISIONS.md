@@ -589,3 +589,38 @@ waiver in teardown. Held locally, not pushed (Vercel quota).
 **Why:** a waiver is a legal record — its history must be tamper-evident. Modeling "edit" as an
 append-only new version (never an in-place mutation) makes that a structural guarantee, not a
 discipline, while a single transactionally-switched active version keeps the signing path simple.
+
+## D-023 — Resource/asset management: catalog + activity assignment (capacity-backing deferred) (2026-06-05) — Accepted
+
+Started the Phase-3 "resource/asset management" pillar (the moat for complex operators —
+multi-asset inventory: boats, jet skis, kayaks, patios). The `Resource` model + the
+`ActivityResources` m2m have existed since Phase 0 (ARCHITECTURE § 3) but had no API. Added staff
+CRUD + the activity assignment: `GET/GET:id/POST/PATCH/DELETE /api/resources`.
+
+- **Catalog now; capacity-backing later (deliberate).** This slice manages the asset records
+  (name, `seat_capacity`, `quantity`, `out_of_service_qty`, `enable_timer`, location) and *which
+  activities each backs* (the m2m). It does NOT yet make availability/capacity derive from
+  resources — today capacity lives on `Timeslot.capacity_total`. Resource-backed availability (a
+  boat can only be in one place at once → it constrains every activity that uses it) is the high-
+  value follow-up; cataloguing + assignment is the necessary foundation and is useful standalone
+  (operators can inventory assets and tag usage). `availableQty = quantity − out_of_service_qty` is
+  surfaced as the derived in-service count that capacity will later draw on.
+- **Permissions = the activity tier.** A resource is part of the bookable-catalog configuration, so
+  reads require `activity:read` and writes `activity:write` (MANAGER+), consistent with activities/
+  merchandise. Verified live a GUIDE (activity:read only) gets 403 on write.
+- **Tenant-safe references + invariants.** `locationId`/`activityIds` are pre-validated against the
+  RLS client (a cross-tenant id is invisible → clean 400 rather than a Prisma connect error), and
+  `out_of_service_qty > quantity` is refused (checked against the merged state on PATCH). PATCH
+  *replaces* the activity set (`set`), POST connects. Soft-delete (deactivate) by default to
+  preserve assignments; `?hard=true` removes the row (m2m join rows cascade; activities untouched).
+- **No schema/RLS change.** `Resource` was already in `rls.sql` and the `app_user` grants are
+  table-wide, so this is a pure code slice.
+
+Verified: typecheck 9/9, **api +7 live cases** (create+assign+derived availableQty, list+count+
+search, detail, patch-replaces-set + oos>qty 400, unknown activity/location 400, soft-then-hard
+delete, 401-anon + 403-GUIDE). Held locally, not pushed (Vercel quota).
+
+**Why:** complex multi-asset operators are an explicit target (D-002), and asset inventory is the
+substrate real capacity management is built on. Shipping the catalog + assignment first — with the
+derived in-service count already exposed — lets the resource-backed-availability follow-up be a
+focused capacity change rather than a model-and-API change at once.
