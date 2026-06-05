@@ -78,14 +78,15 @@ I will build against sandboxes/free tiers and flag exactly when each is needed.
 
 ## Changelog
 
-- **2026-06-04** — **Booking path verified live against Neon (first Phase-1 `🧪`→live).**
-  Added `apps/api` vitest + an integration suite that runs the real `createBooking` /
-  `cancelBooking` services against the seeded LSRA tenant: asserts server-recomputed
-  pricing matches `@marina/core`, the full order graph is written (item + OrderEvent +
-  customer), capacity decrements, overbooking past remaining capacity is refused, and
-  cancel restores capacity. **3/3 pass live; no bugs found** in the sweep code. Suite
-  skips without `DATABASE_URL` so `pnpm test` stays green. Test totals now: core 69 +
-  isolation 8 + booking 3.
+- **2026-06-04** — **Booking funnel verified live against Neon (first Phase-1 `🧪`→live).**
+  Added `apps/api` vitest + two integration suites against the seeded LSRA tenant:
+  **booking** (`createBooking` server-recomputed pricing matches `@marina/core`, full
+  order graph written, capacity decrements, overbooking refused, `cancelBooking` restores
+  capacity) and **availability** (`generateTimeslotsForRange` creates evenly-spaced slots
+  + is idempotent, `getDayAvailability` rolls up capacity/status, and a booking shows up
+  in the slot on the next read). **6/6 pass live; no bugs found** in the sweep code.
+  Suites skip without `DATABASE_URL` so `pnpm test` stays green. Test totals now: core 69
+  + isolation 8 + api 6 (booking 3 + availability 3).
 - **2026-06-04** — **0.7 (staff half) — Clerk auth wired behind a switch (D-012).**
   Replaced the dev auth shims with real Clerk auth for operators/staff, gated by a single
   `REQUIRE_CLERK_AUTH` flag (default off = dev fallback stays, so nothing locks out).
