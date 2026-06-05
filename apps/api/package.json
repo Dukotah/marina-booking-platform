@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@clerk/backend": "^2.33.5",
     "@hono/node-server": "^1.13.0",
     "@marina/auth": "workspace:*",
     "@marina/core": "workspace:*",

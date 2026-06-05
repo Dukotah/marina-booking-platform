@@ -48,11 +48,13 @@ operator app — Vercel deploy currently failing, see below).
 
 ## Next steps, in order
 
-1. **Wire Clerk (0.7)** — both keys are now in `.env` (`CLERK_SECRET_KEY` filled this
-   session). Build the Clerk middleware + sign-in/sign-up pages and replace the
-   `x-dev-staff-id` dev shim end-to-end (api `requireStaff`, admin `lib/session`). Do
-   NOT add Clerk keys to Vercel until those pages exist or the admin app will bounce to a
-   nonexistent login.
+1. **Turn Clerk on (0.7, staff half DONE — D-012).** Clerk is fully wired for staff:
+   admin `middleware.ts` + `/sign-in`,`/sign-up`, API bearer verification — all gated by
+   `REQUIRE_CLERK_AUTH` (default off, dev fallback still active). To go live: in the Clerk
+   dashboard set sign-in URLs (`/sign-in`,`/sign-up`) + allowed origins, create your staff
+   user (its Clerk id must equal a `StaffMember.auth_user_id`), then set
+   `REQUIRE_CLERK_AUTH=true` on admin (Vercel) + API (Railway). **Remaining 0.7:**
+   magic-link/OTP **customer** auth on web (today an order-number+email stub).
 2. **Square sandbox keys** — developer.squareup.com was blocked for the browser agent;
    create the app + fill `SQUARE_*` to charge a test booking (1.5).
 3. **marina-admin Vercel runtime** — build is fixed and it deploys; it needs the DB env

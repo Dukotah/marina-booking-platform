@@ -29,9 +29,17 @@ export interface OperatorContext {
   auth: AuthContext;
 }
 
-/** True when Clerk is actually configured for this deployment. */
+/**
+ * True when real Clerk auth should be enforced for this deployment. Gated by
+ * REQUIRE_CLERK_AUTH so that merely having the keys in `.env` doesn't flip the app
+ * off the dev fallback before the Clerk dashboard is configured (see middleware.ts
+ * and D-012). When false, every request resolves to the dev OWNER context below.
+ */
 function clerkConfigured(): boolean {
-  return Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && process.env.CLERK_SECRET_KEY);
+  return (
+    process.env.REQUIRE_CLERK_AUTH === 'true' &&
+    Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY && process.env.CLERK_SECRET_KEY)
+  );
 }
 
 /** A deterministic OWNER context for local development when Clerk is absent. */

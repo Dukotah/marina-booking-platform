@@ -173,3 +173,36 @@ Implemented the D-010(2) fix (ROADMAP 0.13). Migration `tenant_composite_fks`:
 **Why:** closes the one known integrity hole in D-010 with a DB-enforced guarantee,
 making cross-tenant attach impossible rather than merely unlikely — the product's core
 isolation promise now holds at the schema level, not just via RLS + app discipline.
+
+## D-012 — Clerk staff auth behind a single REQUIRE_CLERK_AUTH switch (2026-06-04) — Accepted
+
+Wired real Clerk auth for operators/staff (ROADMAP 0.7), replacing the dev shims —
+but gated so it can't lock the owner out before the Clerk dashboard is set up.
+
+- **One switch, both apps:** `REQUIRE_CLERK_AUTH=true` (AND keys present) turns on real
+  auth in the **admin app** (`middleware.ts` clerkMiddleware + `auth.protect()`, plus
+  `/sign-in` and `/sign-up` catch-all routes) and the **API** (`requireStaff` verifies a
+  Clerk session token from `Authorization: Bearer …` via `@clerk/backend`). Default/unset
+  = the dev OWNER fallback (admin `lib/session`) and the `x-dev-staff-id` shim (API) stay
+  active, so everything is usable with no login.
+- **Why a flag instead of "keys present" (the old `lib/session` heuristic):** the owner's
+  `sk_test_…` key now lives in `.env`, so a keys-present check would have silently flipped
+  admin into requiring a login that can't succeed until the Clerk dashboard has sign-in
+  URLs + a staff user. The flag decouples "keys exist" from "enforce", matching the
+  graceful-degradation posture used elsewhere (D-007 admin, marina-admin deploy notice).
+- **Middleware is conditional:** no publishable key → passthrough (so a keyless deploy,
+  e.g. the current marina-admin, doesn't crash); keys present → clerkMiddleware always
+  runs so `auth()` has context, but only `protect()`s when the flag is on.
+- **API enforcement is production-safe:** when enforced, ONLY a verified bearer token is
+  accepted — the `x-dev-staff-id` header shim is disabled, so it can't be used to
+  impersonate staff in production.
+
+**To go live:** configure the Clerk dashboard (sign-in URLs `/sign-in` `/sign-up`, allowed
+origins), create your staff user with `auth_user_id` matching its Clerk id (or invite via
+the staff UI), then set `REQUIRE_CLERK_AUTH=true` on the admin (Vercel) + API (Railway)
+envs. **Still pending for 0.7:** magic-link/OTP auth for *customers* on the web app
+(today an order-number + email stub).
+
+**Why:** real staff auth is required to sell, but flipping it on is a one-way door for
+usability until external setup is done — so build it fully, verify it, and ship it dark
+behind a switch the owner flips when ready.

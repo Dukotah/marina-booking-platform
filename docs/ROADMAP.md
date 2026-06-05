@@ -20,7 +20,7 @@ booking vertical slice for the seed client (Lake Sonoma Marina) running on it.
 | 0.4 | Postgres RLS policies (prisma/rls.sql) + tenant-scoped Prisma client (forOperator/withTenant) | ✅ (written; applies on first DB connect) |
 | 0.5 | Neon dev database connected + first migration run | ✅ (Neon US-West; migration `init` applied; RLS applied; `app_user` non-bypass role provisioned) |
 | 0.6 | Seed script — Lake Sonoma Marina (19 activities, rates, fees, waiver, config) | ✅ (seeded live — operator `lsra`, 19 activities) |
-| 0.7 | Auth + RBAC (Clerk operators/staff, magic link customers) | ⏸️ (needs Clerk keys) |
+| 0.7 | Auth + RBAC (Clerk operators/staff, magic link customers) | 🟦 (staff/operator Clerk **wired + verified** — admin middleware + /sign-in,/sign-up + API bearer verification, gated behind `REQUIRE_CLERK_AUTH`; flip on after Clerk dashboard setup, see D-012. Magic-link **customer** auth on web still pending) |
 | 0.8 | Cross-tenant isolation tests (must fail to access other tenants) | ✅ (live vs Neon — now **8/8**: reads, writes, WITH CHECK, bulk ops, symmetric, **+ cross-tenant FK attach** un-skipped after 0.13) |
 | 0.9 | Auth/RBAC package (@marina/auth) — permission checks, AuthContext | ✅ |
 | 0.10 | API skeleton (Hono) — tenant-resolution middleware, RLS-scoped client per request, dev auth shim, catalog route; boots + tenant guard verified | ✅ |
@@ -78,6 +78,16 @@ I will build against sandboxes/free tiers and flag exactly when each is needed.
 
 ## Changelog
 
+- **2026-06-04** — **0.7 (staff half) — Clerk auth wired behind a switch (D-012).**
+  Replaced the dev auth shims with real Clerk auth for operators/staff, gated by a single
+  `REQUIRE_CLERK_AUTH` flag (default off = dev fallback stays, so nothing locks out).
+  Admin: `middleware.ts` (clerkMiddleware, conditional passthrough when keyless) +
+  `/sign-in` & `/sign-up` catch-all routes; `lib/session` now honors the flag. API:
+  `requireStaff` verifies a Clerk session token (`Authorization: Bearer`) via
+  `@clerk/backend` when enforced, else the `x-dev-staff-id` shim. Added the Clerk
+  URL/flag envs to `.env.example`. Verified: typecheck 9/9, build 3/3 (admin gains the 2
+  routes + middleware), core 69/69. To go live: configure the Clerk dashboard + set
+  `REQUIRE_CLERK_AUTH=true`. Magic-link **customer** auth (web) still pending for 0.7.
 - **2026-06-04** — **0.13 tenant-composite FKs — Phase 0 hardening complete (D-011).**
   Closed the D-010 cross-tenant FK-attach gap: added `@@unique([operator_id, id])` to
   parent tables (Activity, Rate, Timeslot, Order, Customer, Waiver) and rewrote the
