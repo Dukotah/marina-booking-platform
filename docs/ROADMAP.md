@@ -61,6 +61,7 @@ customer self-service reschedule.
 | 2.2 | **Gift cards (backend)** — `GiftCard` + `GiftCardTransaction` models (signed ledger, tenant-composite FK) + `issueGiftCard`/`redeemGiftCard`/`getGiftCardByCode` service (atomic, overspend-safe conditional decrement) + staff `POST /giftcards` (issue) · `GET /giftcards` (list) · `POST /giftcards/:code/redeem` + public `GET /giftcards/:code/balance` | ✅ backend live-verified 6/6 (D-014). Admin UI is a follow-up |
 | 2.3 | **Gift card as tender** — `applyGiftCardToOrder` service (one atomic tx: overspend-safe card draw-down + `Payment{GIFT_CARD}` + order balance update + signed ledger entry stamped with the order id + audit event) + staff `POST /payments/gift-card` | ✅ backend live-verified 5/5 (D-015). Needs no Stripe (stored value). Customer-checkout tender (ties into customer auth) is the follow-up |
 | 2.4 | **Reports + CSV export** — staff (`report:read`) `GET /reports/revenue` + `/reports/bookings` (date-range filtered; gross/discount/tax/tip/refund/net + per-day breakdown; status + top-activity counts) and `.csv` downloads | ✅ backend live-verified 15/15 |
+| 2.5 | **Gift card payment refund** — `refundGiftCardPayment` service (one atomic tx: credit the originating card back via the payment's linked ledger entry + positive `REFUND` entry + advance Payment status + roll order back) wired into a now-tender-polymorphic `POST /payments/:id/refund` (GIFT_CARD → card credit, no Stripe; card → Stripe) | ✅ backend live-verified (D-016). Closes the stored-value money loop (issue → tender → refund) |
 
 ## Phase 3 — Power features (the moat for complex customers)
 
@@ -85,6 +86,18 @@ I will build against sandboxes/free tiers and flag exactly when each is needed.
 
 ## Changelog
 
+- **2026-06-05** — **Gift card payment refund (2.5, D-016) — closes the money loop.** New
+  `refundGiftCardPayment` service (one tenant tx): resolves the originating card via the
+  Payment's linked ledger entry (`processor_transaction_id` → REDEEM `GiftCardTransaction` →
+  card), credits the card balance back with a positive `REFUND` ledger entry (stamped with
+  the order id), advances the Payment's `refunded_cents`/`status`, and rolls the order's
+  amount_paid/balance_due back. `POST /api/payments/:id/refund` is now **polymorphic by
+  tender** — a GIFT_CARD payment credits the card (stored value, no Stripe gate); a card
+  payment still settles through Stripe. Stored-value loop is now complete: issue (D-014) →
+  redeem/tender (D-015) → refund (D-016). Live test added to the tender suite (full refund
+  credits the card + rolls the order back + positive REFUND entry + double-refund refused).
+  api suite **116 → 117**; grand total **193 → 194 green**. typecheck 9/9. Held locally, not
+  pushed (Vercel quota).
 - **2026-06-05** — **Gift-card tender + Reports/CSV + public-catalog verification.** Lean
   parallel round (2 background Sonnet agents on safe independent work; the money path
   authored directly + reviewed). (1) **Gift card as tender (2.3, D-015):** new

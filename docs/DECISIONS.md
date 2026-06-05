@@ -331,3 +331,38 @@ refusal, already-settled refusal, 401-without-staff).
 the order's money story uniform across tender types — card, cash, comp, gift card all land
 as `Payment` rows that sum to `amount_paid_cents` — while the single-tx draw-down preserves
 the D-014 guarantees (reconcilable ledger, no overspend) across the order boundary.
+
+## D-016 — Gift-card payment refund: polymorphic refund endpoint, card credit (2026-06-05) — Accepted
+
+Completes the stored-value loop opened by D-014/D-015 (issue → tender → **refund**). When a
+gift-card-paid order is cancelled or adjusted, the tender must go back onto the card.
+
+- **One refund endpoint, branched by tender.** `POST /api/payments/:id/refund` now loads the
+  Payment first and branches on `method`: a `GIFT_CARD` payment routes to
+  `refundGiftCardPayment` (credits the card, no Stripe); anything else keeps the existing
+  Stripe path. This keeps a single staff refund action (`order:refund`) regardless of how the
+  order was paid, and means gift-card refunds work even with payments unconfigured.
+- **Reverse of the tender, same atomicity.** `refundGiftCardPayment` runs in one tenant tx:
+  resolves the originating card via the Payment's linked ledger entry
+  (`processor_transaction_id` → the REDEEM `GiftCardTransaction` → `gift_card_id`), increments
+  the card balance, appends a **positive** `REFUND` ledger entry (stamped with the order id),
+  advances the Payment's `refunded_cents`/`status` (PARTIAL_REFUND vs REFUNDED), rolls the
+  order's amount_paid/balance_due back, and logs an OrderEvent. Supports partial refunds and
+  refuses over-refunding (`EXCEEDS_REFUNDABLE`) or double refunds (`ALREADY_REFUNDED`).
+- **Linking choice.** The card is found through the Payment→ledger link rather than a direct
+  `Payment.gift_card_id` column — no schema change, and the REDEEM/REFUND entries already form
+  the audit chain. (If gift-card analytics ever need to query payments by card directly, add a
+  nullable `gift_card_id` then; not worth a migration now.)
+- **Auto-refund-on-cancel deferred.** Cancelling an order still does NOT auto-refund its
+  payments (card or gift card) — refunds stay an explicit staff action, matching the card
+  model and avoiding surprise auto-credits where an operator may charge a cancellation fee.
+  Auto-credit-to-gift-card on cancel can be layered on later as an operator policy.
+
+Verified: typecheck 9/9, **194 tests green** (core 69 + isolation 8 + api 117, incl. a live
+gift-card refund case — full refund credits the card + rolls the order back + positive REFUND
+ledger entry + double-refund refused).
+
+**Why:** an operator must be able to make a gift-card customer whole, and stored value should
+return to where it came from. Branching the existing refund endpoint (rather than a separate
+one) keeps the staff mental model uniform, while the single-tx reverse mirrors D-015 so the
+ledger stays reconcilable in both directions.

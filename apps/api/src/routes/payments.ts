@@ -30,7 +30,7 @@ import {
   StripeNotConfiguredError,
   StripePaymentError,
 } from '../services/stripe.js';
-import { applyGiftCardToOrder, GiftCardError } from '../services/giftcards.js';
+import { applyGiftCardToOrder, refundGiftCardPayment, GiftCardError } from '../services/giftcards.js';
 
 export const payments = new Hono<Env>();
 
@@ -221,16 +221,14 @@ payments.post('/gift-card', requireStaff, async (c) => {
 });
 
 /**
- * POST /api/payments/:id/refund — staff (order:refund). Refunds a Payment fully
- * or partially via Square, updates the Payment's refunded_cents + status, rolls
- * the order's amount_paid / balance_due back, and logs an OrderEvent.
+ * POST /api/payments/:id/refund — staff (order:refund). Refunds a Payment fully or
+ * partially, updates its refunded_cents + status, rolls the order's amount_paid /
+ * balance_due back, and logs an OrderEvent. Polymorphic by tender: a GIFT_CARD
+ * payment credits the originating gift card back (stored value, no Stripe — see
+ * services/giftcards.refundGiftCardPayment); a card payment settles through Stripe.
  */
 payments.post('/:id/refund', requireStaff, async (c) => {
   assertPermission(c.var.auth, 'order:refund');
-
-  if (!isStripeConfigured()) {
-    return c.json({ error: 'payments not configured' }, 501);
-  }
 
   const paymentId = c.req.param('id');
   const body = await c.req.json().catch(() => ({}));
@@ -242,6 +240,28 @@ payments.post('/:id/refund', requireStaff, async (c) => {
   const payment = await c.var.db.payment.findUnique({ where: { id: paymentId } });
   if (!payment) {
     return c.json({ error: 'Payment not found' }, 404);
+  }
+
+  // Gift-card tender refunds back to the originating card (stored value — no Stripe).
+  if (payment.method === 'GIFT_CARD') {
+    try {
+      const result = await refundGiftCardPayment(c.var.operatorId, paymentId, {
+        amountCents: parsed.data.amountCents,
+        reason: parsed.data.reason,
+        actor: c.var.auth.userId,
+      });
+      return c.json(result);
+    } catch (err) {
+      if (err instanceof GiftCardError) {
+        return c.json({ error: err.message, code: err.code }, err.status as 400);
+      }
+      throw err;
+    }
+  }
+
+  // Card payments settle through Stripe.
+  if (!isStripeConfigured()) {
+    return c.json({ error: 'payments not configured' }, 501);
   }
   if (payment.processor !== 'STRIPE' || !payment.processor_transaction_id) {
     return c.json({ error: 'Payment is not a refundable Stripe transaction' }, 400);

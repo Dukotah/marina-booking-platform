@@ -9,7 +9,10 @@
  *     order to a zero balance, amount_paid == total);
  *   - refuses an amount larger than the order's outstanding balance (400);
  *   - refuses to apply to an already-settled order (400 NOTHING_DUE);
- *   - requires a staff identity (401 without the dev-staff shim).
+ *   - requires a staff identity (401 without the dev-staff shim);
+ *   - refunds a GIFT_CARD payment back to the originating card (credits the card,
+ *     appends a positive REFUND ledger entry, rolls the order back, and refuses a
+ *     double refund).
  *
  * Skips without DATABASE_URL. Creates its own slot + booking + gift card and deletes
  * everything it made in afterAll.
@@ -209,5 +212,51 @@ describe.skipIf(!HAS_DB)('gift card as tender (live HTTP vs Neon, LSRA seed)', (
     expect(res.status).toBe(400);
     const body = (await res.json()) as { code: string };
     expect(body.code).toBe('NOTHING_DUE');
+  });
+
+  it('refunds a gift-card payment back to the originating card (and rolls the order back)', async () => {
+    // The partial 1,000-cent gift-card payment recorded earlier in the run.
+    const payment = await adminPrisma.payment.findFirst({
+      where: { order_id: orderId, method: 'GIFT_CARD', amount_cents: 1_000 },
+    });
+    expect(payment).toBeTruthy();
+    const cardBefore = await adminPrisma.giftCard.findUnique({ where: { id: cardId } });
+    const orderBefore = await adminPrisma.order.findUnique({ where: { id: orderId } });
+
+    const res = await app.request(`/api/payments/${payment!.id}/refund`, {
+      method: 'POST',
+      headers: staffHeaders,
+      body: JSON.stringify({}), // full refund of this payment
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      refund: { amountCents: number; giftCardBalanceCents: number };
+      payment: { status: string; refundedCents: number };
+      order: { amountPaidCents: number; balanceDueCents: number };
+    };
+    expect(body.refund.amountCents).toBe(1_000);
+    expect(body.payment.status).toBe('REFUNDED');
+    expect(body.payment.refundedCents).toBe(1_000);
+    // Card credited back; order amount_paid rolled back by the same amount.
+    expect(body.refund.giftCardBalanceCents).toBe(cardBefore!.balance_cents + 1_000);
+    expect(body.order.amountPaidCents).toBe(orderBefore!.amount_paid_cents - 1_000);
+
+    // A positive REFUND ledger entry stamped with the order id.
+    const refundTxn = await adminPrisma.giftCardTransaction.findFirst({
+      where: { gift_card_id: cardId, type: 'REFUND', order_id: orderId },
+      orderBy: { created_at: 'desc' },
+    });
+    expect(refundTxn!.amount_cents).toBe(1_000);
+    expect(refundTxn!.balance_after_cents).toBe(cardBefore!.balance_cents + 1_000);
+
+    // Refunding the same payment again is refused.
+    const again = await app.request(`/api/payments/${payment!.id}/refund`, {
+      method: 'POST',
+      headers: staffHeaders,
+      body: JSON.stringify({}),
+    });
+    expect(again.status).toBe(400);
+    const againBody = (await again.json()) as { code: string };
+    expect(againBody.code).toBe('ALREADY_REFUNDED');
   });
 });

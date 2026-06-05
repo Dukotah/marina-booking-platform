@@ -360,3 +360,141 @@ export async function applyGiftCardToOrder(
     };
   });
 }
+
+export interface RefundGiftCardPaymentOptions {
+  /** Amount to refund, integer cents. Defaults to the payment's full refundable. */
+  amountCents?: number;
+  reason?: string;
+  actor?: string;
+}
+
+/**
+ * Refund a `GIFT_CARD` Payment back to the originating card — the reverse of
+ * `applyGiftCardToOrder`, used when a gift-card-paid order is cancelled or adjusted.
+ * Stored value, so it needs no Stripe; everything happens in one tenant transaction:
+ *   - validates the Payment is a gift-card tender with something still refundable;
+ *   - resolves the originating card via the Payment's linked ledger entry
+ *     (`processor_transaction_id` points at the REDEEM `GiftCardTransaction`);
+ *   - credits the card balance back and appends a positive `REFUND` ledger entry
+ *     (stamped with the order id);
+ *   - advances the Payment's `refunded_cents`/`status`, rolls the order's
+ *     amount_paid/balance_due back, and logs an OrderEvent.
+ */
+export async function refundGiftCardPayment(
+  operatorId: string,
+  paymentId: string,
+  options: RefundGiftCardPaymentOptions = {},
+) {
+  return withTenant(operatorId, async (tx) => {
+    const payment = await tx.payment.findFirst({ where: { id: paymentId } });
+    if (!payment) {
+      throw new GiftCardError('PAYMENT_NOT_FOUND', 'Payment not found', 404);
+    }
+    if (payment.method !== 'GIFT_CARD') {
+      throw new GiftCardError('NOT_GIFT_CARD', 'This payment is not a gift card tender', 400);
+    }
+
+    const refundable = payment.amount_cents - payment.refunded_cents;
+    if (refundable <= 0) {
+      throw new GiftCardError('ALREADY_REFUNDED', 'This payment has already been fully refunded', 400);
+    }
+
+    const amount = options.amountCents != null ? Math.trunc(options.amountCents) : refundable;
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new GiftCardError('INVALID_AMOUNT', 'Refund amount must be a positive number of cents');
+    }
+    if (amount > refundable) {
+      throw new GiftCardError(
+        'EXCEEDS_REFUNDABLE',
+        `Refund exceeds the refundable amount (${refundable} cent(s))`,
+      );
+    }
+
+    // Resolve the card the tender drew from, via the Payment's linked ledger entry.
+    let card = null;
+    if (payment.processor_transaction_id) {
+      const origTxn = await tx.giftCardTransaction.findFirst({
+        where: { id: payment.processor_transaction_id },
+        select: { gift_card_id: true },
+      });
+      if (origTxn) {
+        card = await tx.giftCard.findFirst({ where: { id: origTxn.gift_card_id } });
+      }
+    }
+    if (!card) {
+      throw new GiftCardError(
+        'GIFT_CARD_NOT_FOUND',
+        'Could not resolve the gift card this payment drew from',
+        404,
+      );
+    }
+
+    const newCardBalance = card.balance_cents + amount;
+    await tx.giftCard.update({
+      where: { id: card.id },
+      data: { balance_cents: { increment: amount } },
+    });
+    const gcTxn = await tx.giftCardTransaction.create({
+      data: {
+        operator_id: operatorId,
+        gift_card_id: card.id,
+        type: 'REFUND',
+        amount_cents: amount, // positive: credits the balance back up
+        balance_after_cents: newCardBalance,
+        order_id: payment.order_id,
+        actor: options.actor ?? null,
+        note: options.reason ?? `Refund of payment ${payment.id}`,
+      },
+    });
+
+    const newRefunded = payment.refunded_cents + amount;
+    const newStatus = newRefunded >= payment.amount_cents ? 'REFUNDED' : 'PARTIAL_REFUND';
+    await tx.payment.update({
+      where: { id: payment.id },
+      data: { refunded_cents: newRefunded, status: newStatus },
+    });
+
+    // Roll the order balance back (load inside the tx for a consistent read).
+    const order = await tx.order.findFirst({ where: { id: payment.order_id } });
+    let orderSummary: { amountPaidCents: number; balanceDueCents: number } | null = null;
+    if (order) {
+      const newAmountPaid = Math.max(0, order.amount_paid_cents - amount);
+      const newBalanceDue = order.total_cents - newAmountPaid;
+      await tx.order.update({
+        where: { id: order.id },
+        data: { amount_paid_cents: newAmountPaid, balance_due_cents: newBalanceDue },
+      });
+      orderSummary = { amountPaidCents: newAmountPaid, balanceDueCents: newBalanceDue };
+    }
+
+    await tx.orderEvent.create({
+      data: {
+        operator_id: operatorId,
+        order_id: payment.order_id,
+        type: 'REFUND',
+        description: `Refunded ${(amount / 100).toFixed(2)} USD to gift card ${card.code}${
+          options.reason ? ` — ${options.reason}` : ''
+        }`,
+        actor: options.actor ?? null,
+        metadata: {
+          paymentId: payment.id,
+          giftCardId: card.id,
+          giftCardTransactionId: gcTxn.id,
+          amountCents: amount,
+          reason: options.reason ?? null,
+        } as Prisma.InputJsonValue,
+      },
+    });
+
+    return {
+      refund: { amountCents: amount, giftCardCode: card.code, giftCardBalanceCents: newCardBalance },
+      payment: {
+        id: payment.id,
+        status: newStatus,
+        amountCents: payment.amount_cents,
+        refundedCents: newRefunded,
+      },
+      order: orderSummary,
+    };
+  });
+}
