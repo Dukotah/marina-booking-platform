@@ -29,6 +29,7 @@ import {
   sendBookingConfirmation,
   sendStaffNewBooking,
 } from '../services/notifications.js';
+import { customerIdentityFromHeader } from '../services/customer-auth.js';
 
 export const orders = new Hono<Env>();
 
@@ -261,8 +262,11 @@ orders.post('/:id/reschedule', requireStaff, async (c) => {
 // --- POST /:orderNumber/self-reschedule : customer self-service -------------
 
 const selfRescheduleSchema = z.object({
-  /** Identity check (magic-link stub): must match the order's customer email. */
-  email: z.string().trim().toLowerCase().email('A valid email is required'),
+  /**
+   * Identity: must match the order's customer email. Optional when a valid customer
+   * session token (Authorization: Bearer) is supplied — its email takes precedence.
+   */
+  email: z.string().trim().toLowerCase().email('A valid email is required').optional(),
   timeslotId: z.string().min(1, 'timeslotId is required'),
   orderItemId: z.string().min(1).optional(),
 });
@@ -274,13 +278,21 @@ orders.post('/:orderNumber/self-reschedule', async (c) => {
     return c.json({ error: 'Invalid request', issues: parsed.error.issues }, 400);
   }
 
+  // Identity comes from a verified customer token (preferred) or the email in the
+  // body (the original lightweight gate). A token-authenticated email can't be spoofed.
+  const identity = await customerIdentityFromHeader(c.req.header('authorization'), c.var.operatorId);
+  const email = identity?.email ?? parsed.data.email;
+  if (!email) {
+    return c.json({ error: 'Sign in or provide the booking email to reschedule' }, 401);
+  }
+
   // Resolve the order by number (RLS-scoped) and verify the email matches before
   // touching anything — the lightweight identity gate for the self-service flow.
   const found = await c.var.db.order.findFirst({
     where: { order_number: orderNumber },
     select: { id: true, customer: { select: { email: true } } },
   });
-  if (!found || found.customer.email.toLowerCase() !== parsed.data.email) {
+  if (!found || found.customer.email.toLowerCase() !== email) {
     // Same response whether the order is missing or the email is wrong — don't leak
     // which order numbers exist.
     return c.json({ error: 'We could not find a booking matching those details' }, 404);

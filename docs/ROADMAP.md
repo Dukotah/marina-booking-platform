@@ -20,7 +20,7 @@ booking vertical slice for the seed client (Lake Sonoma Marina) running on it.
 | 0.4 | Postgres RLS policies (prisma/rls.sql) + tenant-scoped Prisma client (forOperator/withTenant) | ✅ (written; applies on first DB connect) |
 | 0.5 | Neon dev database connected + first migration run | ✅ (Neon US-West; migration `init` applied; RLS applied; `app_user` non-bypass role provisioned) |
 | 0.6 | Seed script — Lake Sonoma Marina (19 activities, rates, fees, waiver, config) | ✅ (seeded live — operator `lsra`, 19 activities) |
-| 0.7 | Auth + RBAC (Clerk operators/staff, magic link customers) | 🟦 (staff/operator Clerk **wired + verified** — admin middleware + /sign-in,/sign-up + API bearer verification, gated behind `REQUIRE_CLERK_AUTH`; flip on after Clerk dashboard setup, see D-012. Magic-link **customer** auth on web still pending) |
+| 0.7 | Auth + RBAC (Clerk operators/staff, magic link customers) | 🟦 (staff/operator Clerk **wired + verified** (D-012). **Customer email-OTP auth — backend DONE + live-verified** (D-017): `CustomerOtp` model, `POST /auth/customer/request`+`/verify`, HS256 session token, wired into self-reschedule; 5/5 live. Remaining: customer **web UI** (login screen on apps/web) to flip 0.7 fully ✅) |
 | 0.8 | Cross-tenant isolation tests (must fail to access other tenants) | ✅ (live vs Neon — now **8/8**: reads, writes, WITH CHECK, bulk ops, symmetric, **+ cross-tenant FK attach** un-skipped after 0.13) |
 | 0.9 | Auth/RBAC package (@marina/auth) — permission checks, AuthContext | ✅ |
 | 0.10 | API skeleton (Hono) — tenant-resolution middleware, RLS-scoped client per request, dev auth shim, catalog route; boots + tenant guard verified | ✅ |
@@ -86,6 +86,21 @@ I will build against sandboxes/free tiers and flag exactly when each is needed.
 
 ## Changelog
 
+- **2026-06-05** — **Customer email-OTP auth — backend (0.7, D-017).** Passwordless guest
+  login: `CustomerOtp` model (sha256 of the code only, 10-min expiry, attempt cap; migration
+  `20260605140000_customer_otp` applied live + RLS/grants). Service `customer-auth.ts`:
+  `requestLoginCode` (crypto 6-digit, invalidates prior codes, best-effort email with a
+  non-prod `devCode` fallback when delivery doesn't happen), `verifyLoginCode` (single-use,
+  expiry + brute-force cap → issues an **HS256 JWT** via `hono/jwt`), `verifyCustomerToken`.
+  Routes: public `POST /api/auth/customer/request` + `/verify`. Wired into self-reschedule
+  (a verified token's email is the identity; body email now optional, can't be spoofed).
+  Secret from `CUSTOMER_AUTH_SECRET` (fails closed in prod, dev fallback otherwise). **Bug
+  caught + fixed while testing:** the wrong-code attempt increment shared the rejection's
+  transaction, so the `throw` rolled it back and the brute-force cap never persisted — moved
+  the increment to its own committed tx. Live suite 5/5 (devCode issuance, wrong-code 401 +
+  attempt bump, correct-code → verifiable single-use token, token-authenticated reschedule,
+  cross-email rejection). api **117 → 122**; grand total **194 → 199 green**. typecheck 9/9,
+  build 3/3. Remaining for 0.7: the customer web login UI. Held locally, not pushed.
 - **2026-06-05** — **Notification flows wired (1.7 integrated).** The transactional-email
   send path existed but was never *called*. Wired it: booking-create (`POST /orders`, and the
   `/bookings` alias) fires `sendBookingConfirmation` + `sendStaffNewBooking`; both refund

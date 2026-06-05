@@ -366,3 +366,43 @@ ledger entry + double-refund refused).
 return to where it came from. Branching the existing refund endpoint (rather than a separate
 one) keeps the staff mental model uniform, while the single-tx reverse mirrors D-015 so the
 ledger stays reconcilable in both directions.
+
+## D-017 — Customer auth: passwordless email-OTP + stateless HS256 token (2026-06-05) — Accepted
+
+The remaining 0.7 gap was customer (guest) auth — needed for customer self-service and
+customer-checkout gift-card tender. Chose **email OTP** over magic-link or reusing Clerk.
+
+- **Why email OTP (not magic-link / not Clerk):** OTP is the simplest to build and verify
+  headlessly, reuses the existing Resend wiring, and needs no landing-page round-trip or
+  Clerk-dashboard setup (which is blocked-on-owner). Magic-link is a later UX upgrade; Clerk
+  stays staff-only (the guest flow wants a lightweight, self-service identity, not a managed
+  user record per booker).
+- **Mechanism:** `CustomerOtp` stores only `sha256(code)` (never the raw code), a 10-minute
+  expiry, and an attempt counter; a new request invalidates a tenant's prior unconsumed codes.
+  `verifyLoginCode` is single-use (consumes on success) and capped at 5 attempts. On success
+  it mints a **stateless HS256 JWT** (`hono/jwt`, no new dep) carrying `{ operatorId, email,
+  customerId }`, mirroring the staff Clerk-bearer model — verified per request, scoped to the
+  resolved operator. No server-side session table to manage.
+- **Secret + graceful degradation:** the token secret is `CUSTOMER_AUTH_SECRET` — REQUIRED in
+  production (fails closed) with a clearly-insecure dev fallback so local/test stays runnable.
+  When email isn't actually delivered (no Resend key, or a send failure) AND we're not in
+  production, `requestLoginCode` returns the code in the response (`devCode`) so the flow is
+  completable headlessly — the same posture as D-012 (Clerk) / D-013 (Stripe). Never exposed
+  once email truly sends or in production.
+- **Integration:** self-reschedule now derives identity from a verified token first, falling
+  back to the email-in-body stub (kept for backward compat); a token's email can't be spoofed,
+  and body email became optional. This is the template for token-gating future customer
+  endpoints (customer-checkout gift-card tender next).
+- **Transaction correctness (bug found + fixed):** the wrong-code attempt increment originally
+  shared the same `withTenant` transaction as the rejection `throw` — which rolled the
+  increment back, so the brute-force cap never actually counted. Fixed by committing the
+  increment in its own transaction before throwing. General lesson recorded: a side effect
+  that must survive a rejection cannot live in the transaction we abort by throwing.
+
+Verified: typecheck 9/9, build 3/3, **199 tests green** (core 69 + isolation 8 + api 122),
+incl. a 5/5 live OTP suite. Migration `20260605140000_customer_otp` applied live; `CustomerOtp`
+added to RLS + app_user grants.
+
+**Why:** customer auth is the foundation under self-service and customer-paid gift cards;
+email-OTP + a stateless signed token is the least-moving-parts design that's secure (hashed,
+single-use, rate-capped, fail-closed secret) and testable without owner-provisioned accounts.

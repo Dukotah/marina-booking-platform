@@ -438,6 +438,46 @@ export async function sendReminder(input: {
 }
 
 /**
+ * Send a one-time login code to a customer (magic-link/OTP auth). Plain, branded
+ * transactional email — no React template needed for a 6-digit code. Tenant-scoped
+ * branding via the operator record. Never throws; no-ops without a Resend key (the
+ * auth service surfaces the code via its dev fallback when email is unconfigured).
+ */
+export async function sendLoginCode(input: {
+  operatorId: string;
+  email: string;
+  code: string;
+  /** Minutes until the code expires, for the copy. */
+  expiresInMinutes?: number;
+}): Promise<NotificationResult> {
+  try {
+    if (!isEmailConfigured()) return skipped('email not configured');
+    const db = forOperator(input.operatorId);
+    const operator = await db.operator.findFirst({
+      where: { id: input.operatorId },
+      select: { name_external: true, brand_color: true, logo_light_url: true, logo_dark_url: true },
+    });
+    if (!operator) return skipped('operator not found');
+
+    const brand = brandFromOperator(operator);
+    const mins = input.expiresInMinutes ?? 10;
+    const html =
+      `<div style="font-family:system-ui,sans-serif;max-width:480px;margin:0 auto">` +
+      `<h2 style="color:${brand.brandColor}">Your ${brand.brandName} login code</h2>` +
+      `<p>Enter this code to sign in. It expires in ${mins} minutes.</p>` +
+      `<p style="font-size:32px;font-weight:700;letter-spacing:6px;margin:24px 0">${input.code}</p>` +
+      `<p style="color:#666;font-size:13px">If you didn't request this, you can ignore this email.</p>` +
+      `</div>`;
+    const text = `Your ${brand.brandName} login code is ${input.code}. It expires in ${mins} minutes.`;
+
+    return dispatch({ brandName: brand.brandName, to: input.email, subject: `Your ${brand.brandName} login code: ${input.code}`, html, text });
+  } catch (err) {
+    console.error('[notifications] sendLoginCode failed:', err);
+    return skipped('unexpected failure');
+  }
+}
+
+/**
  * Send a refund receipt to the customer. Call from the payments/refund slice
  * after a refund is recorded on a Payment row.
  */

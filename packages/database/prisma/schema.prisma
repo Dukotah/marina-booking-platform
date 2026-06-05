@@ -156,9 +156,10 @@ model Operator {
   fees         Fee[]
   merchandise  MerchandiseItem[]
   promo_codes  PromoCode[]
-  waivers      Waiver[]
-  integrations Integration[]
-  gift_cards   GiftCard[]
+  waivers       Waiver[]
+  integrations  Integration[]
+  gift_cards    GiftCard[]
+  customer_otps CustomerOtp[]
 }
 
 // ===========================================================================
@@ -622,6 +623,24 @@ model GiftCard {
   @@unique([operator_id, code])
   @@unique([operator_id, id])
   @@index([operator_id])
+}
+
+// One-time login codes for customer (magic-link/OTP) auth. A customer requests a
+// code by email; we store only its hash + expiry and issue a short-lived signed
+// token on a correct, unexpired, unconsumed match (see services/customer-auth.ts).
+model CustomerOtp {
+  id          String    @id @default(cuid())
+  operator_id String
+  operator    Operator  @relation(fields: [operator_id], references: [id], onDelete: Cascade)
+  email       String
+  code_hash   String // sha256(code) — the raw code is never stored
+  expires_at  DateTime
+  consumed_at DateTime?
+  attempts    Int       @default(0)
+  created_at  DateTime  @default(now())
+
+  @@index([operator_id])
+  @@index([operator_id, email])
 }
 
 model GiftCardTransaction {

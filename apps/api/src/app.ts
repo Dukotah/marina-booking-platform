@@ -17,6 +17,7 @@ import { pos } from './routes/pos.js';
 import { reports } from './routes/reports.js';
 import { operator } from './routes/operator.js';
 import { webhooks } from './routes/webhooks.js';
+import { auth } from './routes/auth.js';
 
 export const app = new Hono<Env>();
 
@@ -33,6 +34,7 @@ app.route('/webhooks', webhooks);
 // Everything under /api is tenant-scoped.
 const api = new Hono<Env>();
 api.use('*', tenantMiddleware);
+api.route('/auth', auth);
 api.route('/activities', activities);
 api.route('/availability', availability);
 api.route('/orders', orders);
