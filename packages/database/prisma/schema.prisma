@@ -48,6 +48,16 @@ enum TimeslotStatus {
   CANCELLED
 }
 
+// How a Resource's units are consumed by a booking (D-026).
+//  - SHARED_SEATS: a booking of N people draws N seats from seat_capacity × units
+//    (shared seating — kayak fleet, group-tour benches).
+//  - WHOLE_UNIT:   a booking reserves a whole unit regardless of party size (exclusive
+//    charter — a chartered pontoon is unavailable to anyone else for that window).
+enum ResourceAllocationMode {
+  SHARED_SEATS
+  WHOLE_UNIT
+}
+
 enum OrderStatus {
   UPCOMING
   COMPLETED
@@ -319,6 +329,7 @@ model Resource {
   seat_capacity       Int        @default(1)
   quantity            Int        @default(1)
   out_of_service_qty  Int        @default(0)
+  allocation_mode     ResourceAllocationMode @default(SHARED_SEATS)
   enable_timer        Boolean    @default(false)
   is_active           Boolean    @default(true)
   activities          Activity[] @relation("ActivityResources")

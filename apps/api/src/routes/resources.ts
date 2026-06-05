@@ -29,6 +29,8 @@ const resourceInputSchema = z.object({
   quantity: z.number().int().nonnegative().default(1),
   /** Units currently out of service (maintenance) — never more than `quantity`. */
   outOfServiceQty: z.number().int().nonnegative().default(0),
+  /** How a booking consumes this resource: shared seating vs whole-unit charter (D-026). */
+  allocationMode: z.enum(['SHARED_SEATS', 'WHOLE_UNIT']).default('SHARED_SEATS'),
   enableTimer: z.boolean().default(false),
   /** Optional home location; must belong to the tenant. */
   locationId: z.string().min(1).nullable().optional(),
@@ -47,6 +49,7 @@ interface ResourceRow {
   seat_capacity: number;
   quantity: number;
   out_of_service_qty: number;
+  allocation_mode: 'SHARED_SEATS' | 'WHOLE_UNIT';
   enable_timer: boolean;
   is_active: boolean;
   location_id: string | null;
@@ -62,6 +65,7 @@ function serialize(r: ResourceRow) {
     outOfServiceQty: r.out_of_service_qty,
     /** In-service units available to back capacity. */
     availableQty: Math.max(0, r.quantity - r.out_of_service_qty),
+    allocationMode: r.allocation_mode,
     enableTimer: r.enable_timer,
     isActive: r.is_active,
     locationId: r.location_id,
@@ -155,6 +159,7 @@ resources.post('/', async (c) => {
       seat_capacity: d.seatCapacity,
       quantity: d.quantity,
       out_of_service_qty: d.outOfServiceQty,
+      allocation_mode: d.allocationMode,
       enable_timer: d.enableTimer,
       is_active: d.isActive,
       location_id: d.locationId ?? null,
@@ -198,6 +203,7 @@ resources.patch('/:id', async (c) => {
       ...(d.seatCapacity !== undefined ? { seat_capacity: d.seatCapacity } : {}),
       ...(d.quantity !== undefined ? { quantity: d.quantity } : {}),
       ...(d.outOfServiceQty !== undefined ? { out_of_service_qty: d.outOfServiceQty } : {}),
+      ...(d.allocationMode !== undefined ? { allocation_mode: d.allocationMode } : {}),
       ...(d.enableTimer !== undefined ? { enable_timer: d.enableTimer } : {}),
       ...(d.isActive !== undefined ? { is_active: d.isActive } : {}),
       ...(d.locationId !== undefined ? { location_id: d.locationId } : {}),

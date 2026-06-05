@@ -706,3 +706,36 @@ distinct, strictly-increasing sequences sharing the prefix) + the full booking s
 500-ing the second booking) on the most common real pattern — several reservations for one day — is a
 launch-blocker. Counting by the prefix the number already commits to makes the sequence correct by
 construction, and the retry turns the residual race into a self-healing path rather than a 500.
+
+## D-026 — Resource allocation mode: shared seating vs whole-unit charter (2026-06-05) — Accepted
+
+Completed the resource pillar with the per-resource allocation policy the shared-seat-only model
+(D-024) couldn't express — and which was an actual correctness gap. With only shared seating, a
+2-person charter on a 10-seat boat consumed just 2 of the pool's seats, leaving the system willing to
+sell that same boat to 8 more people for a *different* activity at the same time — i.e. double-booking
+a chartered asset. Added a `ResourceAllocationMode` enum + `Resource.allocation_mode`
+(migration `resource_allocation_mode`, additive column default `SHARED_SEATS`, applied live to Neon;
+no RLS change — `Resource` is already covered).
+
+- **SHARED_SEATS (default, unchanged):** pool = `seat_capacity × availableQty`; a booking of N draws N
+  seats (kayak fleet, group-tour benches).
+- **WHOLE_UNIT (new):** a booking reserves a whole unit regardless of party size; the pool is the unit
+  count and each overlapping booking consumes one unit. A chartered boat is unavailable to everyone
+  else for its window even if only 2 of 10 seats sold.
+- **Uniform caller contract.** `getResourceConstraints` still returns `remaining` normalised to
+  PARTICIPANTS, so the booking guard / POS / reschedule / availability reads compare it to a quantity
+  exactly as before — only the per-resource math branches on the mode (whole-unit ⇒ remaining is the
+  unit's `seat_capacity` when ≥1 unit is free, else 0). No call-site changes.
+- **API surface.** `/api/resources` accepts + returns `allocationMode` (zod enum, default
+  `SHARED_SEATS`); pure additive.
+
+Verified: typecheck 9/9, **api +1 live case** (a 2-of-10-seat booking on a WHOLE_UNIT charter drives
+remaining 0 and a second concurrent booking is refused `INSUFFICIENT_RESOURCE_CAPACITY`, where the
+shared model would have left 8) + full suite green. api **166 → 167**; grand total **243 → 244**.
+This closes the last D-024 follow-up — the resource pillar is now complete. Held locally, not pushed
+(Vercel quota).
+
+**Why:** charter / exclusive-use rentals are a first-class marina vertical (whole-boat, whole-patio),
+and modeling them as shared seats silently permits double-booking the exact physical asset the feature
+exists to protect. A one-column policy keeps the common shared-seat path the zero-config default while
+making exclusive allocation a correct, explicit opt-in.

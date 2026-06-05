@@ -174,7 +174,18 @@ describe.skipIf(!HAS_DB)('resource-backed availability (live vs Neon, LSRA seed)
   afterAll(async () => {
     if (bookedOrderId) await adminPrisma.order.deleteMany({ where: { id: bookedOrderId } });
     // Orders referencing the slots must go before the slots (composite FK).
-    const slotIds = [fx.slotA, fx.slotBConcurrent, fx.slotBLater, fx.slotFree].filter(Boolean);
+    // TAG-driven sweep: clean every slot/order under any TAG activity (covers slots
+    // created by individual tests, not just the fixed fixture set), in FK-safe order.
+    const tagActivities = await adminPrisma.activity.findMany({
+      where: { operator_id: OP, name_internal: { startsWith: TAG } },
+      select: { id: true },
+    });
+    const tagActivityIds = tagActivities.map((a) => a.id);
+    const tagSlots = await adminPrisma.timeslot.findMany({
+      where: { activity_id: { in: tagActivityIds } },
+      select: { id: true },
+    });
+    const slotIds = tagSlots.map((s) => s.id);
     const items = await adminPrisma.orderItem.findMany({
       where: { timeslot_id: { in: slotIds } },
       select: { order_id: true },
@@ -183,7 +194,7 @@ describe.skipIf(!HAS_DB)('resource-backed availability (live vs Neon, LSRA seed)
     if (orderIds.length) await adminPrisma.order.deleteMany({ where: { id: { in: orderIds } } });
     await adminPrisma.timeslot.deleteMany({ where: { id: { in: slotIds } } });
     await adminPrisma.rate.deleteMany({ where: { operator_id: OP, name_internal: { startsWith: TAG } } });
-    await adminPrisma.resource.deleteMany({ where: { id: fx.resourceId } });
+    await adminPrisma.resource.deleteMany({ where: { operator_id: OP, name: { startsWith: TAG } } });
     await adminPrisma.activity.deleteMany({ where: { operator_id: OP, name_internal: { startsWith: TAG } } });
     await adminPrisma.customer.deleteMany({ where: { operator_id: OP, email: TEST_EMAIL } });
     if (createdStaff) {
@@ -362,5 +373,69 @@ describe.skipIf(!HAS_DB)('resource-backed availability (live vs Neon, LSRA seed)
     expect(day!.capacityTotal).toBe(20);
     expect(day!.capacityRemaining).toBe(0);
     expect(day!.signal).toBe('red');
+  });
+
+  it('WHOLE_UNIT (charter): one booking reserves the whole unit regardless of party size', async () => {
+    // A fresh activity backed by a 1-unit, 10-seat WHOLE_UNIT resource (a chartered boat).
+    const c = await makeActivity('CHARTER');
+    const resource = await adminPrisma.resource.create({
+      data: {
+        operator_id: OP,
+        name: `${TAG} CharterBoat`,
+        seat_capacity: 10,
+        quantity: 1,
+        out_of_service_qty: 0,
+        allocation_mode: 'WHOLE_UNIT',
+        is_active: true,
+        activities: { connect: [{ id: c.activityId }] },
+      },
+      select: { id: true },
+    });
+    const at = new Date(Date.now() + 42 * 24 * 60 * 60 * 1000);
+    at.setUTCHours(18, 0, 0, 0);
+    const slot = await forOperator(OP).timeslot.create({
+      data: { operator_id: OP, activity_id: c.activityId, datetime: at, capacity_total: 10, capacity_booked: 0, status: 'AVAILABLE' },
+      select: { id: true },
+    });
+
+    const db = forOperator(OP);
+    // Empty: the whole unit is available → remaining == the unit's seat_capacity (10).
+    const before = await getResourceConstraint(db, { activityId: c.activityId, slotStart: at, durationMs: 60 * 60_000 });
+    expect(before.remaining).toBe(10);
+
+    // Book just 2 of 10 seats. In a shared model 8 would remain; as a WHOLE_UNIT charter
+    // the single unit is now taken, so the resource is fully committed.
+    const order = await createBooking(
+      OP,
+      {
+        activityId: c.activityId,
+        rateId: c.rateId,
+        timeslotId: slot.id,
+        quantity: 2,
+        customer: { first_name: 'Charter', last_name: 'Itest', email: TEST_EMAIL },
+        participants: [],
+      },
+      { channel: 'STAFF' },
+    );
+    expect(order.id).toBeTruthy();
+
+    const after = await getResourceConstraint(db, { activityId: c.activityId, slotStart: at, durationMs: 60 * 60_000 });
+    expect(after.remaining).toBe(0); // whole unit consumed by one booking, 8 seats notwithstanding
+
+    // A second booking on the same slot is refused — the charter unit is taken.
+    await expect(
+      createBooking(
+        OP,
+        {
+          activityId: c.activityId,
+          rateId: c.rateId,
+          timeslotId: slot.id,
+          quantity: 1,
+          customer: { first_name: 'Charter2', last_name: 'Itest', email: TEST_EMAIL },
+          participants: [],
+        },
+        { channel: 'STAFF' },
+      ),
+    ).rejects.toMatchObject({ code: 'INSUFFICIENT_RESOURCE_CAPACITY' });
   });
 });

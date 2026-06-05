@@ -8,12 +8,16 @@
  * any overlapping time. Per-timeslot `capacity_total` alone cannot express this — it is
  * scoped to a single activity and is blind to siblings sharing the same asset.
  *
- * The seat pool a resource provides at any instant is
- *   poolTotal = seat_capacity × (quantity − out_of_service_qty)
- * and a booking of N participants draws N seats from it. An activity backed by several
- * resources is bound by the scarcest (the min remaining across them). An activity backed
- * by NO active resource is unconstrained here (`remaining: null`) — only its timeslot's
- * own capacity applies, exactly as before.
+ * A resource's `allocation_mode` decides how a booking consumes it (D-026):
+ *   - SHARED_SEATS: the pool is `seat_capacity × (quantity − out_of_service_qty)` seats
+ *     and a booking of N participants draws N seats (kayak fleet, group-tour benches).
+ *   - WHOLE_UNIT: a booking reserves a whole unit regardless of party size (exclusive
+ *     charter — a chartered pontoon is unavailable to anyone else for the window); the
+ *     pool is the unit count and each overlapping booking consumes one unit.
+ * Either way the returned `remaining` is normalised to PARTICIPANTS so callers compare it
+ * to a booking quantity uniformly. An activity backed by several resources is bound by the
+ * scarcest (the min remaining across them). An activity backed by NO active resource is
+ * unconstrained here (`remaining: null`) — only its timeslot's own capacity applies.
  *
  * How long a booking holds the asset is the **Rate**'s `duration_minutes` (the schema's
  * source of truth — a "2-hour rental" and a "4-hour rental" are two rates on one
@@ -53,6 +57,7 @@ interface ResourceRow {
   seat_capacity: number;
   quantity: number;
   out_of_service_qty: number;
+  allocation_mode: 'SHARED_SEATS' | 'WHOLE_UNIT';
   activities: Array<{ id: string }>;
 }
 interface OccupyingItem {
@@ -110,6 +115,7 @@ export async function getResourceConstraints(
       seat_capacity: true,
       quantity: true,
       out_of_service_qty: true,
+      allocation_mode: true,
       activities: { select: { id: true } },
     },
   });
@@ -151,7 +157,9 @@ export async function getResourceConstraints(
 
   const resourceMembers = resources.map((r) => ({
     name: r.name,
-    poolTotal: r.seat_capacity * Math.max(0, r.quantity - r.out_of_service_qty),
+    mode: r.allocation_mode,
+    seatCapacity: r.seat_capacity,
+    availableQty: Math.max(0, r.quantity - r.out_of_service_qty),
     members: new Set(r.activities.map((a) => a.id)),
   }));
 
@@ -169,11 +177,23 @@ export async function getResourceConstraints(
     let minRemaining = Infinity;
     let bindingResourceName: string | null = null;
     for (const r of resourceMembers) {
-      let used = 0;
-      for (const it of overlapping) {
-        if (r.members.has(it.activity_id)) used += it.quantity;
+      // Remaining is always expressed in PARTICIPANTS, so callers compare it to a
+      // booking's quantity uniformly regardless of the resource's allocation mode.
+      let remaining: number;
+      if (r.mode === 'WHOLE_UNIT') {
+        // Each overlapping booking reserves a whole unit, irrespective of party size.
+        let usedUnits = 0;
+        for (const it of overlapping) if (r.members.has(it.activity_id)) usedUnits += 1;
+        const freeUnits = r.availableQty - usedUnits;
+        // A free unit can hold up to seat_capacity people (the next single booking);
+        // none free ⇒ nothing more bookable here for the contended window.
+        remaining = freeUnits >= 1 ? r.seatCapacity : 0;
+      } else {
+        // SHARED_SEATS: a booking of N draws N seats from the shared seat pool.
+        let usedSeats = 0;
+        for (const it of overlapping) if (r.members.has(it.activity_id)) usedSeats += it.quantity;
+        remaining = r.seatCapacity * r.availableQty - usedSeats;
       }
-      const remaining = r.poolTotal - used;
       if (remaining < minRemaining) {
         minRemaining = remaining;
         bindingResourceName = r.name;

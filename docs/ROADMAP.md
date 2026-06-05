@@ -74,7 +74,7 @@ channel/OTA + affiliate management · accounting exports (QuickBooks/Xero).
 | 3.x | **Multi-location roll-up reporting (backend)** — `GET /reports/by-location` (+`.csv`): item-level location attribution (gross = unit×qty), per-location volume + a chain roll-up total (D-020) | 🟦 backend live-verified 3/3. Admin dashboards on top of it (+ per-location filtering of `/revenue`,`/bookings`, per-location net) are follow-ups |
 | 3.x | **Accounting export (backend)** — `GET /reports/transactions` (+`.csv`): payment-level journal keyed by cash date, net-of-refunds per row, per-tender reconciliation + totals (QuickBooks/Xero import) (D-021) | 🟦 backend live-verified 3/3. Direct QuickBooks/Xero API sync (OAuth + GL account mapping) is a later gated follow-up |
 | 3.x | **Resource/asset management (backend)** — staff CRUD `/api/resources` + activity assignment (ActivityResources m2m); fields seat_capacity/quantity/out_of_service_qty, derived availableQty; tenant-validated refs (D-023) | ✅ catalog + assignment live-verified 7/7 |
-| 3.x | **Resource-backed availability** — shared assets constrain capacity across every activity they back; OrderItem-level time-overlap by rate duration; enforced in **`createBooking` + POS sale + `rescheduleBooking`** (`INSUFFICIENT_RESOURCE_CAPACITY`) + overlaid on **both** `getDayAvailability` (`resourceConstrained`) **and** `getRangeAvailability` (month calendar day signals) (D-024) | 🟦 live-verified 9/9 across all three write paths + both reads. Follow-up: whole-unit (exclusive-charter) allocation policy |
+| 3.x | **Resource-backed availability** — shared assets constrain capacity across every activity they back; OrderItem-level time-overlap by rate duration; enforced in **`createBooking` + POS sale + `rescheduleBooking`** (`INSUFFICIENT_RESOURCE_CAPACITY`) + overlaid on **both** `getDayAvailability` (`resourceConstrained`) **and** `getRangeAvailability` (month calendar day signals); **per-resource allocation mode** SHARED_SEATS / WHOLE_UNIT charter (D-024, D-026) | ✅ live-verified 10/10 — all three write paths, both reads, both allocation modes. Pillar complete |
 
 ## Go-live checklist (before selling)
 
@@ -93,6 +93,16 @@ I will build against sandboxes/free tiers and flag exactly when each is needed.
 
 ## Changelog
 
+- **2026-06-05** — **Resource allocation mode: shared seating vs whole-unit charter (D-026).** Closed
+  the last D-024 follow-up + a real correctness gap: with shared-seats-only, a 2-of-10-seat charter
+  booking left 8 seats sellable to others for a concurrent activity → double-booking the chartered
+  asset. Added `ResourceAllocationMode` enum + `Resource.allocation_mode` (migration applied live to
+  Neon, additive, default SHARED_SEATS; no RLS change). WHOLE_UNIT ⇒ a booking reserves a whole unit
+  regardless of party size. `getResourceConstraints` still returns `remaining` in participants so the
+  guard/POS/reschedule/reads are unchanged; only the per-resource math branches. `/api/resources`
+  accepts+returns `allocationMode`. +1 live case (whole-unit charter: one 2-seat booking → remaining 0,
+  second refused). api **166 → 167**; grand total **243 → 244 green**. typecheck 9/9. **Resource pillar
+  complete.** Held locally, not pushed (Vercel quota).
 - **2026-06-05** — **Resource overlay extended to the month-range calendar (D-024 cont).** Closed the
   last availability follow-up: `getRangeAvailability` now folds each slot's EFFECTIVE remaining
   (own-capacity vs shared-resource pool, whichever is tighter) into the day rollup, so the month
