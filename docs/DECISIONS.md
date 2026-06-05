@@ -521,3 +521,36 @@ report:read 401-without-staff, CSV carries the TOTAL row). Held locally, not pus
 site doing" — and the honest, unambiguous version of that is item-level attribution. Building it
 on the existing reports route keeps it a small, consistent slice while realizing a core
 differentiator at the data layer.
+
+## D-021 — Accounting export = a payment-level journal keyed by cash date (2026-06-05) — Accepted
+
+Phase 3 lists accounting exports (QuickBooks/Xero). A real business won't buy software it can't
+reconcile against its books, so added a transactions export: `GET /api/reports/transactions`
+(+ `.csv`), report:read-gated, date-range filtered — extending the reports route (D-2.4 pattern,
+no schema change, no external account needed for a downloadable file).
+
+- **One row per Payment, net of its own refunds.** The schema has no standalone refund-transaction
+  entity — a refund advances `refunded_cents` on the originating Payment (D-016) — so the faithful
+  representation is one journal row per payment carrying `gross`, `refunded`, and `net = gross −
+  refunded`, plus method/processor/processor_transaction_id/order#/customer/manually-keyed. This is
+  the universal shape a bookkeeper maps into QuickBooks/Xero.
+- **Keyed by `processed_at` (cash-movement date), not order creation.** Unlike `/revenue` and
+  `/bookings` (which key by `Order.created_at`), the accounting journal keys by when money actually
+  moved — that's what reconciles to a bank statement. A deliberate, documented difference.
+- **Per-tender reconciliation breakdown + totals.** Groups by `method` (CARD/CASH/GIFT_CARD/COMP)
+  with count/gross/refunded/net, and a grand total — so an operator can tie the export's card line
+  to the Stripe payout and the cash line to the till. Row sums equal the totals by construction
+  (a tested invariant).
+- **Scope (deliberate).** This is a flat transaction journal, not double-entry journal entries with
+  GL account mapping — that mapping is operator-specific and belongs in a later integration slice.
+  The CSV is the lowest-common-denominator import that every accounting package accepts. Direct
+  QuickBooks/Xero API sync (OAuth, account mapping) is a future Phase-3 item gated on those accounts.
+
+Verified: typecheck 9/9, **api +3 live cases** (a partially-refunded CARD + a CASH payment on one
+order → exact per-row net, row-sum == per-method-sum == totals invariant, report:read
+401-without-staff, CSV carries the TOTAL line). Held locally, not pushed (Vercel quota).
+
+**Why:** "can I get my money into my accountant's system" is table stakes for selling to a real
+operator. A payment-level journal keyed by cash date, with a tender reconciliation, is the honest
+minimum that's immediately useful and import-ready — without committing to a GL-mapping model
+before we know each customer's chart of accounts.

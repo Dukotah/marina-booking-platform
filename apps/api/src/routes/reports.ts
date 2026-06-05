@@ -7,6 +7,8 @@
  *   GET /api/reports/bookings.csv     Same data as CSV download
  *   GET /api/reports/by-location      JSON per-location roll-up (multi-location chains)
  *   GET /api/reports/by-location.csv  Same data as CSV download
+ *   GET /api/reports/transactions     JSON payment journal (accounting export)
+ *   GET /api/reports/transactions.csv Same data as CSV download (QuickBooks/Xero import)
  *
  * All endpoints are staff-gated (requireStaff + assertPermission 'report:read').
  * All data access goes through `c.var.db` (the RLS-scoped tenant client).
@@ -372,6 +374,132 @@ async function buildLocationReport(
 }
 
 // ---------------------------------------------------------------------------
+// Accounting / transactions export helpers (Phase 3 — QuickBooks/Xero)
+// ---------------------------------------------------------------------------
+
+interface TransactionRow {
+  paymentId: string;
+  date: string; // ISO-8601 (processed_at)
+  orderNumber: string;
+  customerName: string;
+  method: string; // CARD | CASH | GIFT_CARD | COMP
+  processor: string; // STRIPE | SQUARE
+  processorTransactionId: string | null;
+  status: string;
+  grossCents: number;
+  refundedCents: number;
+  netCents: number; // gross − refunded
+  manuallyKeyed: boolean;
+}
+
+interface MethodTotal {
+  method: string;
+  count: number;
+  grossCents: number;
+  refundedCents: number;
+  netCents: number;
+}
+
+interface TransactionsReport {
+  from: string;
+  to: string;
+  count: number;
+  totalGrossCents: number;
+  totalRefundedCents: number;
+  totalNetCents: number;
+  byMethod: MethodTotal[];
+  transactions: TransactionRow[];
+}
+
+/**
+ * A payment-level journal over the range — one row per Payment, the form a
+ * bookkeeper imports into QuickBooks/Xero. Each row is net of its own refunds
+ * (`amount_cents − refunded_cents`): the schema has no standalone refund-transaction
+ * entity — a refund advances `refunded_cents` on the originating Payment — so netting
+ * into the payment row is the faithful representation. Rows are keyed by
+ * `processed_at` (the cash-movement date), unlike the revenue/bookings reports which
+ * key by order creation. Includes a per-tender reconciliation breakdown.
+ */
+async function buildTransactionsReport(
+  db: Env['Variables']['db'],
+  from: Date,
+  to: Date,
+): Promise<TransactionsReport> {
+  const payments = await db.payment.findMany({
+    where: { processed_at: { gte: from, lt: to } },
+    select: {
+      id: true,
+      processed_at: true,
+      method: true,
+      status: true,
+      processor: true,
+      processor_transaction_id: true,
+      amount_cents: true,
+      refunded_cents: true,
+      is_manually_keyed: true,
+      order: {
+        select: {
+          order_number: true,
+          customer: { select: { first_name: true, last_name: true } },
+        },
+      },
+    },
+    orderBy: { processed_at: 'asc' },
+  });
+
+  const methodMap = new Map<string, MethodTotal>();
+  let totalGrossCents = 0;
+  let totalRefundedCents = 0;
+
+  const transactions: TransactionRow[] = payments.map((p) => {
+    const netCents = p.amount_cents - p.refunded_cents;
+    totalGrossCents += p.amount_cents;
+    totalRefundedCents += p.refunded_cents;
+
+    const m = methodMap.get(p.method) ?? {
+      method: p.method,
+      count: 0,
+      grossCents: 0,
+      refundedCents: 0,
+      netCents: 0,
+    };
+    m.count += 1;
+    m.grossCents += p.amount_cents;
+    m.refundedCents += p.refunded_cents;
+    m.netCents += netCents;
+    methodMap.set(p.method, m);
+
+    return {
+      paymentId: p.id,
+      date: p.processed_at.toISOString(),
+      orderNumber: p.order.order_number,
+      customerName: `${p.order.customer.first_name} ${p.order.customer.last_name}`.trim(),
+      method: p.method,
+      processor: p.processor,
+      processorTransactionId: p.processor_transaction_id,
+      status: p.status,
+      grossCents: p.amount_cents,
+      refundedCents: p.refunded_cents,
+      netCents,
+      manuallyKeyed: p.is_manually_keyed,
+    };
+  });
+
+  const byMethod = Array.from(methodMap.values()).sort((a, b) => b.netCents - a.netCents);
+
+  return {
+    from: from.toISOString().slice(0, 10),
+    to: new Date(to.getTime() - 1).toISOString().slice(0, 10),
+    count: payments.length,
+    totalGrossCents,
+    totalRefundedCents,
+    totalNetCents: totalGrossCents - totalRefundedCents,
+    byMethod,
+    transactions,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // GET /revenue — JSON revenue summary
 // ---------------------------------------------------------------------------
 
@@ -557,6 +685,101 @@ reports.get('/by-location.csv', requireStaff, async (c) => {
       report.total.totalQuantity,
       report.total.grossCents,
       centsToUSD(report.total.grossCents),
+    ]),
+  );
+
+  return c.body(lines.join('\r\n'));
+});
+
+// ---------------------------------------------------------------------------
+// GET /transactions — JSON payment journal (accounting export)
+// ---------------------------------------------------------------------------
+
+reports.get('/transactions', requireStaff, async (c) => {
+  assertPermission(c.var.auth, 'report:read');
+
+  const range = parseDateRange(c.req.query('from'), c.req.query('to'));
+  if (!range) {
+    return c.json({ error: 'Invalid date range. Use ?from=YYYY-MM-DD&to=YYYY-MM-DD' }, 400);
+  }
+
+  const report = await buildTransactionsReport(c.var.db, range.from, range.to);
+  return c.json({ report });
+});
+
+// ---------------------------------------------------------------------------
+// GET /transactions.csv — CSV payment journal (QuickBooks/Xero import)
+// ---------------------------------------------------------------------------
+
+reports.get('/transactions.csv', requireStaff, async (c) => {
+  assertPermission(c.var.auth, 'report:read');
+
+  const range = parseDateRange(c.req.query('from'), c.req.query('to'));
+  if (!range) {
+    return c.json({ error: 'Invalid date range. Use ?from=YYYY-MM-DD&to=YYYY-MM-DD' }, 400);
+  }
+
+  const report = await buildTransactionsReport(c.var.db, range.from, range.to);
+
+  const filename = `transactions-${report.from}-to-${report.to}.csv`;
+  c.header('Content-Type', 'text/csv; charset=utf-8');
+  c.header('Content-Disposition', `attachment; filename="${filename}"`);
+
+  const lines: string[] = [];
+
+  // Transaction journal — one row per payment.
+  lines.push(
+    csvRow([
+      'Date',
+      'Order Number',
+      'Customer',
+      'Method',
+      'Processor',
+      'Processor Txn ID',
+      'Status',
+      'Gross Cents',
+      'Gross USD',
+      'Refunded Cents',
+      'Net Cents',
+      'Net USD',
+      'Manually Keyed',
+    ]),
+  );
+  for (const t of report.transactions) {
+    lines.push(
+      csvRow([
+        t.date,
+        t.orderNumber,
+        t.customerName,
+        t.method,
+        t.processor,
+        t.processorTransactionId,
+        t.status,
+        t.grossCents,
+        centsToUSD(t.grossCents),
+        t.refundedCents,
+        t.netCents,
+        centsToUSD(t.netCents),
+        t.manuallyKeyed ? 'yes' : 'no',
+      ]),
+    );
+  }
+  lines.push('');
+
+  // Per-tender reconciliation breakdown.
+  lines.push(csvRow(['Tender', 'Count', 'Gross Cents', 'Refunded Cents', 'Net Cents', 'Net USD']));
+  for (const m of report.byMethod) {
+    lines.push(csvRow([m.method, m.count, m.grossCents, m.refundedCents, m.netCents, centsToUSD(m.netCents)]));
+  }
+  lines.push('');
+  lines.push(
+    csvRow([
+      'TOTAL',
+      report.count,
+      report.totalGrossCents,
+      report.totalRefundedCents,
+      report.totalNetCents,
+      centsToUSD(report.totalNetCents),
     ]),
   );
 

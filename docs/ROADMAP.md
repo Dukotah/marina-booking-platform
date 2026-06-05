@@ -72,6 +72,7 @@ channel/OTA + affiliate management · accounting exports (QuickBooks/Xero).
 | # | Item | Status |
 |---|---|---|
 | 3.x | **Multi-location roll-up reporting (backend)** — `GET /reports/by-location` (+`.csv`): item-level location attribution (gross = unit×qty), per-location volume + a chain roll-up total (D-020) | 🟦 backend live-verified 3/3. Admin dashboards on top of it (+ per-location filtering of `/revenue`,`/bookings`, per-location net) are follow-ups |
+| 3.x | **Accounting export (backend)** — `GET /reports/transactions` (+`.csv`): payment-level journal keyed by cash date, net-of-refunds per row, per-tender reconciliation + totals (QuickBooks/Xero import) (D-021) | 🟦 backend live-verified 3/3. Direct QuickBooks/Xero API sync (OAuth + GL account mapping) is a later gated follow-up |
 
 ## Go-live checklist (before selling)
 
@@ -90,6 +91,19 @@ I will build against sandboxes/free tiers and flag exactly when each is needed.
 
 ## Changelog
 
+- **2026-06-05** — **Accounting transactions export — backend (Phase 3, D-021).** Added the
+  payment journal a bookkeeper imports into QuickBooks/Xero: `GET /api/reports/transactions`
+  (+ `.csv`), report:read-gated, date-range filtered (reports route, no schema change). One row
+  per Payment, **net of its own refunds** (`gross − refunded`; the schema nets refunds into the
+  originating Payment per D-016), with method/processor/txn-id/order#/customer/manually-keyed.
+  **Keyed by `processed_at`** (cash-movement date) rather than order creation — that's what
+  reconciles to a bank statement. Includes a per-tender breakdown (CARD/CASH/GIFT_CARD/COMP →
+  count/gross/refunded/net) + grand total, row sums equal totals by construction. It's a flat
+  journal, not GL-mapped double-entry (that's operator-specific, a later integration); the CSV is
+  the universal import shape. New live suite **3/3** (partially-refunded CARD + CASH on one order →
+  exact per-row net, row-sum == per-method-sum == totals invariant, 401-without-staff, CSV TOTAL
+  line). api **141 → 144**; grand total **218 → 221 green** (core 69 + isolation 8 + api 144).
+  typecheck 9/9. Held locally, not pushed (Vercel quota).
 - **2026-06-05** — **Multi-location roll-up reporting — backend (Phase 3, D-020).** Started the
   multi-location dashboards/roll-up Phase-3 item (the core D-001/D-002 differentiator) backend-first
   by extending the reports route: `GET /api/reports/by-location` (+ `.csv`), report:read-gated,
