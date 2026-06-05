@@ -45,7 +45,7 @@ exercised against a live DB/keys (waiting on 0.5 Neon + service keys).
 | 1.6 | Order list + detail + cancel + refund (full & partial) | ✅🧪 (list + detail + cancel now **live-verified via full HTTP** — status/search/pagination filters, public-by-number fetch, staff cancel restores capacity + idempotency guard; refund still 🧪 — needs Stripe) |
 | 1.7 | Email confirmation + reminder (Resend) | ✅ (all flows wired + live-tested: booking-create fires confirmation + staff-alert; refund fires the receipt; **POS-sale fires the customer confirmation** (D-019); **reminder = idempotent `sendDueReminders` sweep + secret-gated `POST /jobs/reminders` for a cron**, with an `Order.reminder_sent_at` stamp so it sends exactly once (D-019). All fire-and-forget, `isEmailConfigured()`-guarded — a no-op without a key, live the moment `RESEND_API_KEY` is set) |
 | 1.8 | Day Gantt manifest (visual, color-coded) + week calendar | ✅🧪 |
-| 1.9 | Digital waiver signing + audit trail | ✅🧪 (waiver sign + audit **live-verified** via full HTTP path — signature recorded, item/customer flags flipped, staff list + auth guard) |
+| 1.9 | Digital waiver signing + audit trail | ✅ (waiver sign + audit **live-verified** via full HTTP path — signature recorded, item/customer flags flipped, staff list + auth guard. **+ versioned template management** (D-022): `GET/POST /waivers/templates` + `/:id/activate` — content is immutable per version (signatures reference the version signed), "edit" publishes a new version, exactly one active, operator:manage-gated; 5/5 live) |
 | 1.10 | Dashboard home (revenue/occupancy KPIs, alerts, upcoming) | ✅🧪 |
 | 1.11 | Full white-label theming per tenant | ✅🧪 (brand var; logo upload later) |
 
@@ -91,6 +91,19 @@ I will build against sandboxes/free tiers and flag exactly when each is needed.
 
 ## Changelog
 
+- **2026-06-05** — **Versioned waiver template management (1.9 / go-live, D-022).** Waiver
+  templates were seed-only with no management API. Added staff management designed around audit
+  integrity: `GET /waivers/templates` (list versions + each one's `signatureCount`, order:read),
+  `POST /waivers/templates` (publish a NEW version, operator:manage), `POST /waivers/templates/:id/activate`
+  (operator:manage). **`template_html` is immutable per version** — every signature references the
+  exact version signed, so "editing" creates a new Waiver row rather than mutating signed legal
+  text; old versions are retained forever. Exactly one version is active at a time, switched
+  transactionally (publish-with-activate deactivates the prior; `activate:false` stores a draft).
+  Gated at `operator:manage` (a MANAGER gets 403, verified). Advances the "waivers legally sound +
+  audit trail" go-live item. New live suite **5/5** (lists seed active; publish-new-active
+  deactivates prior + public /active follows; draft leaves active untouched; activate switches;
+  401-anon + 403-MANAGER). api **144 → 149**; grand total **221 → 226 green** (core 69 + isolation
+  8 + api 149). typecheck 9/9. Held locally, not pushed (Vercel quota).
 - **2026-06-05** — **Accounting transactions export — backend (Phase 3, D-021).** Added the
   payment journal a bookkeeper imports into QuickBooks/Xero: `GET /api/reports/transactions`
   (+ `.csv`), report:read-gated, date-range filtered (reports route, no schema change). One row

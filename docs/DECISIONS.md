@@ -554,3 +554,38 @@ order → exact per-row net, row-sum == per-method-sum == totals invariant, repo
 operator. A payment-level journal keyed by cash date, with a tender reconciliation, is the honest
 minimum that's immediately useful and import-ready — without committing to a GL-mapping model
 before we know each customer's chart of accounts.
+
+## D-022 — Waiver templates are versioned + immutable; "edit" = publish a new version (2026-06-05) — Accepted
+
+"Waivers are legally sound — captured signatures, minor handling, audit trail" is a go-live
+requirement (CONTEXT § rock solid). Waiver templates were seed-only with no management API; added
+staff management — but designed around audit integrity rather than naive CRUD.
+
+- **`template_html` is immutable once it exists.** Every `WaiverSignature` references the exact
+  `Waiver` row (version) the customer signed. Editing a template in place would silently rewrite
+  the legal text that signed history points at — a tamper of the audit trail. So there is **no
+  PATCH of template content**: "editing" is `POST /waivers/templates`, which creates a NEW Waiver
+  row. Old versions are retained forever for the signatures that reference them; the list endpoint
+  surfaces each version's `signatureCount` so a version with signed history is visibly permanent.
+- **Exactly one active version, switched transactionally.** Signing resolves the active template.
+  `POST /templates` with `activate` (default true) deactivates the prior active version in the same
+  transaction; `POST /templates/:id/activate` flips a chosen version active and all others inactive
+  atomically. `activate:false` stores an inactive draft without disturbing the live one. This makes
+  "what are customers signing right now" a single unambiguous row, while version switches never
+  touch past signatures.
+- **Gated at `operator:manage`; listing at `order:read`.** The waiver is operator-level legal
+  config (alongside branding / danger-zone), so publishing/activating requires `operator:manage`
+  (OWNER tier) — verified live that a MANAGER (who has `order:write` but not `operator:manage`)
+  gets 403. Reading the versions is `order:read` so front-desk staff can see them. A dedicated
+  `waiver:manage` permission (to let ADMIN manage waivers without full `operator:manage`) is a
+  clean future refinement; reused the existing config-tier perm to keep this slice off the
+  permission-model surface.
+
+Verified: typecheck 9/9, **api +5 live cases** (lists the seed active version; publish-new-active
+deactivates the prior + public /active follows; inactive-draft leaves the active untouched;
+activate switches; 401-anon + 403-for-MANAGER). The test restores the seed's original active
+waiver in teardown. Held locally, not pushed (Vercel quota).
+
+**Why:** a waiver is a legal record — its history must be tamper-evident. Modeling "edit" as an
+append-only new version (never an in-place mutation) makes that a structural guarantee, not a
+discipline, while a single transactionally-switched active version keeps the signing path simple.
