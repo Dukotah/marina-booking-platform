@@ -12,6 +12,7 @@ import { withTenant } from '@marina/database';
 import type { Env } from '../context.js';
 import { requireStaff } from '../middleware/auth.js';
 import { isEmailConfigured, sendBookingConfirmation } from '../services/notifications.js';
+import { getResourceConstraint } from '../services/resource-availability.js';
 
 /**
  * Point-of-sale API — the register. Staff record walk-up sales (bookings and/or
@@ -116,6 +117,9 @@ pos.post('/sale', async (c) => {
     activityName: string;
     locationId: string | null;
     unitPriceCents: number;
+    /** Asset-occupancy window for shared-resource contention (D-024). */
+    slotDatetime: Date;
+    durationMinutes: number;
   };
   const resolvedBookings: ResolvedBooking[] = [];
 
@@ -149,6 +153,8 @@ pos.post('/sale', async (c) => {
       activityName: rate.activity.name_internal,
       locationId,
       unitPriceCents: line.unitPriceCentsOverride ?? rate.price_cents,
+      slotDatetime: timeslot.datetime,
+      durationMinutes: rate.duration_minutes,
     });
   }
 
@@ -295,8 +301,24 @@ pos.post('/sale', async (c) => {
         },
       });
 
-      // Booking items + capacity.
+      // Booking items + capacity. The shared-resource check runs in-transaction so
+      // multiple lines in ONE sale that draw on the same asset accumulate correctly
+      // (each line sees the items the prior lines just created). D-024.
       for (const b of resolvedBookings) {
+        const resource = await getResourceConstraint(tx, {
+          activityId: b.line.activityId,
+          slotStart: b.slotDatetime,
+          durationMs: b.durationMinutes * 60_000,
+        });
+        if (resource.remaining !== null && b.line.quantity > resource.remaining) {
+          const what = resource.bindingResourceName ?? 'the required resource';
+          throw new SaleError(
+            409,
+            resource.remaining <= 0
+              ? `${what} is fully committed at this time`
+              : `Only ${resource.remaining} ${what} spot(s) remain at this time`,
+          );
+        }
         await tx.orderItem.create({
           data: {
             operator_id: operatorId,

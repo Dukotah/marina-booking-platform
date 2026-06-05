@@ -502,7 +502,7 @@ export async function rescheduleBooking(
     // New slot: must belong to the same activity, be bookable, and have room.
     const newSlot = await tx.timeslot.findFirst({
       where: { id: newTimeslotId, activity_id: item.activity_id },
-      select: { id: true, capacity_total: true, capacity_booked: true, status: true },
+      select: { id: true, datetime: true, capacity_total: true, capacity_booked: true, status: true },
     });
     if (!newSlot) {
       throw new BookingError('TIMESLOT_NOT_FOUND', 'That timeslot is not available for this activity', 404);
@@ -517,6 +517,30 @@ export async function rescheduleBooking(
         remaining <= 0
           ? 'That timeslot is fully booked'
           : `Only ${remaining} spot(s) remain for that timeslot`,
+        409,
+      );
+    }
+
+    // Shared-resource capacity at the NEW time (D-024). Exclude THIS item so its own
+    // current booking can't block a move into an overlapping window; the booked rate's
+    // duration sizes the occupancy window.
+    const itemRate = await tx.rate.findFirst({
+      where: { id: item.rate_id },
+      select: { duration_minutes: true },
+    });
+    const resource = await getResourceConstraint(tx, {
+      activityId: item.activity_id,
+      slotStart: newSlot.datetime,
+      durationMs: (itemRate?.duration_minutes ?? 240) * 60_000,
+      excludeOrderItemId: item.id,
+    });
+    if (resource.remaining !== null && item.quantity > resource.remaining) {
+      const what = resource.bindingResourceName ?? 'the required resource';
+      throw new BookingError(
+        'INSUFFICIENT_RESOURCE_CAPACITY',
+        resource.remaining <= 0
+          ? `${what} is fully committed at that time`
+          : `Only ${resource.remaining} ${what} spot(s) remain at that time`,
         409,
       );
     }

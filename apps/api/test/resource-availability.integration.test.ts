@@ -22,15 +22,17 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { adminPrisma, forOperator } from '@marina/database';
-import { createBooking, BookingError } from '../src/services/booking.js';
+import { createBooking, rescheduleBooking } from '../src/services/booking.js';
 import {
   getResourceConstraint,
   getResourceConstraints,
 } from '../src/services/resource-availability.js';
 import { getDayAvailability } from '../src/services/availability.js';
+import { app } from '../src/app.js';
 
 const HAS_DB = Boolean(process.env.DATABASE_URL);
 const OP = 'lsra';
+const SLUG = 'lake-sonoma';
 const TEST_EMAIL = 'resource-itest@example.com';
 const TAG = 'ZZ-RESOURCE-ITEST';
 
@@ -53,6 +55,7 @@ interface Fixture {
 
 let fx: Fixture;
 let bookedOrderId: string | null = null;
+let createdStaff = false;
 
 /** Create a minimal active, online activity with one 60-min public rate. */
 async function makeActivity(name: string): Promise<{ activityId: string; rateId: string }> {
@@ -103,6 +106,28 @@ describe.skipIf(!HAS_DB)('resource-backed availability (live vs Neon, LSRA seed)
   beforeAll(async () => {
     await adminPrisma.customer.deleteMany({ where: { operator_id: OP, email: TEST_EMAIL } });
 
+    // Ensure the dev-owner staff principal the POS HTTP test authenticates as exists
+    // (the dev auth shim resolves x-dev-staff-id → this row). Track if we created it.
+    const existingStaff = await adminPrisma.staffMember.findFirst({
+      where: { operator_id: OP, auth_user_id: 'dev-owner' },
+      select: { id: true },
+    });
+    if (!existingStaff) {
+      const loc = await adminPrisma.location.findFirst({ where: { operator_id: OP }, select: { id: true } });
+      await adminPrisma.staffMember.create({
+        data: {
+          operator_id: OP,
+          auth_user_id: 'dev-owner',
+          name: 'Dev Owner',
+          email: 'dev-owner@example.com',
+          role: 'OWNER',
+          is_active: true,
+          locations: loc ? { create: { location_id: loc.id } } : undefined,
+        },
+      });
+      createdStaff = true;
+    }
+
     const a = await makeActivity('A');
     const b = await makeActivity('B');
     const free = await makeActivity('FREE');
@@ -126,7 +151,10 @@ describe.skipIf(!HAS_DB)('resource-backed availability (live vs Neon, LSRA seed)
     // calendar day equals its operator-timezone day (keeps the day-availability lookup
     // deterministic regardless of the operator's tz).
     base.setUTCHours(18, 0, 0, 0);
-    const later = new Date(base.getTime() + 5 * 60 * 60 * 1000); // +5h, no overlap with a 60-min window
+    // +26h → the NEXT calendar day, so (a) no time-overlap with A's 60-min window and
+    // (b) the reschedule's B booking lands on a different service date than A's booking,
+    // sidestepping the createBooking per-service-day order-number sequencing.
+    const later = new Date(base.getTime() + 26 * 60 * 60 * 1000);
 
     fx = {
       resourceId: resource.id,
@@ -158,6 +186,9 @@ describe.skipIf(!HAS_DB)('resource-backed availability (live vs Neon, LSRA seed)
     await adminPrisma.resource.deleteMany({ where: { id: fx.resourceId } });
     await adminPrisma.activity.deleteMany({ where: { operator_id: OP, name_internal: { startsWith: TAG } } });
     await adminPrisma.customer.deleteMany({ where: { operator_id: OP, email: TEST_EMAIL } });
+    if (createdStaff) {
+      await adminPrisma.staffMember.deleteMany({ where: { operator_id: OP, auth_user_id: 'dev-owner' } });
+    }
     await adminPrisma.$disconnect();
   });
 
@@ -270,5 +301,51 @@ describe.skipIf(!HAS_DB)('resource-backed availability (live vs Neon, LSRA seed)
     );
     expect(map.get(concurrent!.id)?.remaining).toBe(0);
     expect(map.get(later!.id)?.remaining).toBe(2);
+  });
+
+  it('POS sale on B is refused when the shared resource is fully committed', async () => {
+    const res = await app.request('/api/pos/sale', {
+      method: 'POST',
+      headers: { 'x-operator-slug': SLUG, 'x-dev-staff-id': 'dev-owner', 'content-type': 'application/json' },
+      body: JSON.stringify({
+        lines: [
+          { kind: 'BOOKING', activityId: fx.activityB, rateId: fx.rateB, timeslotId: fx.slotBConcurrent, quantity: 1 },
+        ],
+        payment: { method: 'CASH', amountCents: 100_000 },
+        customer: { email: TEST_EMAIL, first_name: 'POS', last_name: 'Blocked' },
+      }),
+    });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error?: string };
+    expect(body.error ?? '').toMatch(/committed|remain/i);
+
+    // The refused sale must not have moved the slot's capacity.
+    const slot = await adminPrisma.timeslot.findUnique({ where: { id: fx.slotBConcurrent } });
+    expect(slot!.capacity_booked).toBe(0);
+  });
+
+  it('reschedule into the committed window is refused (move into a free window allowed)', async () => {
+    // A B booking in the FREE later window (pool open there).
+    const order = await createBooking(
+      OP,
+      {
+        activityId: fx.activityB,
+        rateId: fx.rateB,
+        timeslotId: fx.slotBLater,
+        quantity: 1,
+        customer: { first_name: 'Resched', last_name: 'Itest', email: TEST_EMAIL },
+        participants: [],
+      },
+      { channel: 'STAFF' },
+    );
+
+    // Moving it onto the concurrent slot (A has committed the pool there) is refused —
+    // and the item must stay put on its original slot.
+    await expect(
+      rescheduleBooking(OP, order.id, fx.slotBConcurrent, { channel: 'STAFF' }),
+    ).rejects.toMatchObject({ code: 'INSUFFICIENT_RESOURCE_CAPACITY' });
+
+    const item = await adminPrisma.orderItem.findFirst({ where: { order_id: order.id } });
+    expect(item!.timeslot_id).toBe(fx.slotBLater);
   });
 });

@@ -94,6 +94,9 @@ export async function getResourceConstraints(
   activityId: string,
   slots: Array<{ id: string; datetime: Date }>,
   candidateDurationMs: number,
+  /** Order item to ignore in the pool usage — e.g. the item being rescheduled, whose
+   * own current booking must not block its move to an overlapping window. */
+  excludeOrderItemId?: string,
 ): Promise<Map<string, ResourceConstraint>> {
   const result = new Map<string, ResourceConstraint>();
   if (slots.length === 0) return result;
@@ -136,6 +139,7 @@ export async function getResourceConstraints(
       activity_id: { in: siblingIds },
       status: { not: 'CANCELLED' },
       timeslot: { datetime: { gte: windowLo, lt: windowHi } },
+      ...(excludeOrderItemId ? { id: { not: excludeOrderItemId } } : {}),
     },
     select: {
       activity_id: true,
@@ -188,13 +192,20 @@ export async function getResourceConstraints(
  */
 export async function getResourceConstraint(
   db: ResourceClient,
-  params: { activityId: string; slotStart: Date; durationMs: number },
+  params: {
+    activityId: string;
+    slotStart: Date;
+    durationMs: number;
+    /** Order item to ignore in the pool usage (e.g. the item being rescheduled). */
+    excludeOrderItemId?: string;
+  },
 ): Promise<ResourceConstraint> {
   const m = await getResourceConstraints(
     db,
     params.activityId,
     [{ id: '_', datetime: params.slotStart }],
     params.durationMs,
+    params.excludeOrderItemId,
   );
   return m.get('_') ?? NO_CONSTRAINT;
 }
