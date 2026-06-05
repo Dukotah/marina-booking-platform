@@ -39,10 +39,10 @@ exercised against a live DB/keys (waiting on 0.5 Neon + service keys).
 |---|---|---|
 | 1.1 | Operator onboarding wizard (brand, location, first activities) | ✅🧪 |
 | 1.2 | Activity CRUD (simplified wizard, generic categories) | ✅🧪 |
-| 1.3 | Customer portal: catalog → date → time → rate → checkout | ✅🧪 |
+| 1.3 | Customer portal: catalog → date → time → rate → checkout | ✅🧪 (booking **service** now live-verified vs Neon — pricing/capacity/order graph; UI flow still 🧪) |
 | 1.4 | Availability calendar (color-coded) + capacity-aware time slots | ✅🧪 |
 | 1.5 | Square payments (sandbox, SDK v44) | ✅🧪 (needs Square keys to charge) |
-| 1.6 | Order list + detail + cancel + refund (full & partial) | ✅🧪 |
+| 1.6 | Order list + detail + cancel + refund (full & partial) | ✅🧪 (cancel **service** live-verified — restores timeslot capacity; refund still 🧪) |
 | 1.7 | Email confirmation + reminder (Resend) | ✅🧪 (needs Resend key to send) |
 | 1.8 | Day Gantt manifest (visual, color-coded) + week calendar | ✅🧪 |
 | 1.9 | Digital waiver signing + audit trail | ✅🧪 |
@@ -78,6 +78,14 @@ I will build against sandboxes/free tiers and flag exactly when each is needed.
 
 ## Changelog
 
+- **2026-06-04** — **Booking path verified live against Neon (first Phase-1 `🧪`→live).**
+  Added `apps/api` vitest + an integration suite that runs the real `createBooking` /
+  `cancelBooking` services against the seeded LSRA tenant: asserts server-recomputed
+  pricing matches `@marina/core`, the full order graph is written (item + OrderEvent +
+  customer), capacity decrements, overbooking past remaining capacity is refused, and
+  cancel restores capacity. **3/3 pass live; no bugs found** in the sweep code. Suite
+  skips without `DATABASE_URL` so `pnpm test` stays green. Test totals now: core 69 +
+  isolation 8 + booking 3.
 - **2026-06-04** — **0.7 (staff half) — Clerk auth wired behind a switch (D-012).**
   Replaced the dev auth shims with real Clerk auth for operators/staff, gated by a single
   `REQUIRE_CLERK_AUTH` flag (default off = dev fallback stays, so nothing locks out).

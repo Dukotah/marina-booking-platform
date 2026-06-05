@@ -31,7 +31,10 @@ database.** As of last verification:
   through — required because Neon's `neondb_owner` has BYPASSRLS (see D-010).
 - **Tests:** `@marina/core` 69/69. `@marina/database` cross-tenant isolation suite runs
   **live against Neon: 8/8** (D-010 FK-attach gap closed by 0.13 / D-011 — tenant-composite
-  FKs; the previously-skipped attach case is un-skipped and passing).
+  FKs; the previously-skipped attach case is un-skipped and passing). `@marina/api`
+  booking integration suite runs **live: 3/3** (createBooking pricing/capacity/order-graph,
+  overbook rejection, cancelBooking capacity restore). Both live suites skip without
+  `DATABASE_URL`, so plain `pnpm test` stays green (core 69 runs).
 - Secrets live in `.env` (gitignored). `DATABASE_URL`/`DIRECT_URL` (owner) +
   `APP_DATABASE_URL`/`APP_DB_PASSWORD` (app_user) are set.
 
