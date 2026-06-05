@@ -45,7 +45,7 @@ exercised against a live DB/keys (waiting on 0.5 Neon + service keys).
 | 1.6 | Order list + detail + cancel + refund (full & partial) | ✅🧪 (cancel **service** live-verified — restores timeslot capacity; refund still 🧪) |
 | 1.7 | Email confirmation + reminder (Resend) | ✅🧪 (needs Resend key to send) |
 | 1.8 | Day Gantt manifest (visual, color-coded) + week calendar | ✅🧪 |
-| 1.9 | Digital waiver signing + audit trail | ✅🧪 |
+| 1.9 | Digital waiver signing + audit trail | ✅🧪 (waiver sign + audit **live-verified** via full HTTP path — signature recorded, item/customer flags flipped, staff list + auth guard) |
 | 1.10 | Dashboard home (revenue/occupancy KPIs, alerts, upcoming) | ✅🧪 |
 | 1.11 | Full white-label theming per tenant | ✅🧪 (brand var; logo upload later) |
 
@@ -78,6 +78,14 @@ I will build against sandboxes/free tiers and flag exactly when each is needed.
 
 ## Changelog
 
+- **2026-06-04** — **Waiver capture verified live via the full HTTP stack.** Added a
+  `app.request(...)` integration suite (real Hono app → tenant middleware → RLS client →
+  zod → handler → dev-staff shim): `POST /waivers/sign` records the signature and flips
+  the order-item + customer waiver flags in one transaction, a minor-without-guardian is
+  rejected (400), `GET /waivers/active` returns the template, and the staff list both
+  works (dev-staff shim) and 401s without an identity. **5/5 live; no bugs.** First
+  HTTP-level (not service-level) test — proves tenant resolution + RLS + auth end to end.
+  API suite now 11 (booking 3 + availability 3 + waivers 5); grand total 88 green.
 - **2026-06-04** — **Booking funnel verified live against Neon (first Phase-1 `🧪`→live).**
   Added `apps/api` vitest + two integration suites against the seeded LSRA tenant:
   **booking** (`createBooking` server-recomputed pricing matches `@marina/core`, full
