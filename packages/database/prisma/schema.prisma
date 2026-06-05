@@ -113,6 +113,13 @@ enum StaffRole {
   GUIDE
 }
 
+enum GiftCardTransactionType {
+  ISSUE   // initial load when the card is sold/created
+  REDEEM  // amount spent against an order / at POS
+  REFUND  // amount returned to the card (e.g. a redeemed booking was cancelled)
+  ADJUST  // manual balance correction by staff
+}
+
 // ===========================================================================
 // Tenant root
 // ===========================================================================
@@ -151,6 +158,7 @@ model Operator {
   promo_codes  PromoCode[]
   waivers      Waiver[]
   integrations Integration[]
+  gift_cards   GiftCard[]
 }
 
 // ===========================================================================
@@ -581,4 +589,57 @@ model Integration {
 
   @@unique([operator_id, key])
   @@index([operator_id])
+}
+
+// ===========================================================================
+// Gift cards — stored-value instruments. Money is integer cents; the balance is
+// authoritative and every change is recorded in GiftCardTransaction so the ledger
+// sums to the current balance (audit trail for a money instrument).
+// ===========================================================================
+
+model GiftCard {
+  id              String    @id @default(cuid())
+  operator_id     String
+  operator        Operator  @relation(fields: [operator_id], references: [id], onDelete: Cascade)
+  code            String // human-facing redemption code, unique per operator
+  initial_cents   Int // amount the card was issued with
+  balance_cents   Int // remaining balance (authoritative)
+  is_active       Boolean   @default(true) // false = voided / disabled
+  purchaser_name  String?
+  purchaser_email String?
+  recipient_name  String?
+  recipient_email String?
+  message         String? // optional gift message
+  issued_by       String? // staff actor id/email, or 'customer'
+  expires_at      DateTime?
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
+
+  transactions GiftCardTransaction[]
+
+  // Unique redemption code per tenant + composite-FK target (D-011) so a
+  // transaction can never reference another tenant's card.
+  @@unique([operator_id, code])
+  @@unique([operator_id, id])
+  @@index([operator_id])
+}
+
+model GiftCardTransaction {
+  id                  String                  @id @default(cuid())
+  operator_id         String
+  gift_card_id        String
+  // Tenant-composite FK: (operator_id, gift_card_id) -> GiftCard(operator_id, id).
+  gift_card           GiftCard                @relation(fields: [operator_id, gift_card_id], references: [operator_id, id], onDelete: Cascade)
+  type                GiftCardTransactionType
+  // Signed cents: +load/refund/positive adjust, -redeem/negative adjust. The
+  // ledger sums to the card's current balance_cents.
+  amount_cents        Int
+  balance_after_cents Int // running balance immediately after this entry
+  order_id            String? // order it was applied to, if any (bare ref; nullable per D-011 residual)
+  actor               String?
+  note                String?
+  created_at          DateTime                @default(now())
+
+  @@index([operator_id])
+  @@index([gift_card_id])
 }

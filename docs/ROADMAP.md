@@ -58,6 +58,7 @@ customer self-service reschedule.
 | # | Item | Status |
 |---|---|---|
 | 2.1 | **Customer self-service reschedule** — `rescheduleBooking` service (capacity move + `self_reschedule_hours` window) + staff `POST /orders/:id/reschedule` + customer `POST /orders/:orderNumber/self-reschedule` (email-gated) + **web account slot-picker UI** (RescheduleFlow → server actions) | ✅ full-stack (backend live-verified 5/5; web typechecks + builds) |
+| 2.2 | **Gift cards (backend)** — `GiftCard` + `GiftCardTransaction` models (signed ledger, tenant-composite FK) + `issueGiftCard`/`redeemGiftCard`/`getGiftCardByCode` service (atomic, overspend-safe conditional decrement) + staff `POST /giftcards` (issue) · `GET /giftcards` (list) · `POST /giftcards/:code/redeem` + public `GET /giftcards/:code/balance` | ✅ backend live-verified 6/6 (D-014). Customer-checkout redemption (ties into payments) + admin UI are follow-ups |
 
 ## Phase 3 — Power features (the moat for complex customers)
 
@@ -82,6 +83,26 @@ I will build against sandboxes/free tiers and flag exactly when each is needed.
 
 ## Changelog
 
+- **2026-06-05** — **Gift cards backend slice (2.2) — live-verified (D-014).** New
+  `GiftCard` + `GiftCardTransaction` models: balance in integer cents is authoritative
+  and every change appends a *signed* ledger row (`+ISSUE/REFUND`, `−REDEEM`) so the
+  ledger sums to the balance; `GiftCardTransaction` references its card via a
+  tenant-composite FK `(operator_id, gift_card_id) -> GiftCard(operator_id, id)` (D-011).
+  Migration `20260605130000_gift_cards` applied live to Neon (clean additive diff, zero
+  drift); both tables added to `rls.sql` + `db:rls`/`db:approle` re-run so RLS + app_user
+  grants cover them. Service `services/giftcards.ts`: `issueGiftCard` (unique grouped code
+  from `generateGiftCardCode`, retries on collision, ISSUE entry), `redeemGiftCard`
+  (**overspend-safe** — a conditional `updateMany` guarded on `is_active` + `balance >=
+  amount` is the arbiter, not a read-then-write race; checks expiry; signed REDEEM entry),
+  `getGiftCardByCode`. Routes `routes/giftcards.ts`: staff `POST /giftcards` (order:write,
+  issue) · `GET /giftcards` (order:read, list) · `POST /giftcards/:code/redeem`
+  (order:write) + public `GET /giftcards/:code/balance` (the code is the bearer secret).
+  Added `generateGiftCardCode` to `@marina/core`. New live suite 6/6 (issue+ISSUE ledger,
+  partial redeem+signed entry, over-redeem refused/balance untouched, public balance HTTP,
+  staff redeem HTTP, 401 without staff identity). Verified: typecheck 9/9, build 3/3, core
+  69 + isolation 8 + api 24 = **101 green**. Customer-checkout redemption (ties into the
+  payment flow) + admin UI are documented follow-ups. Held locally, not pushed (Vercel
+  quota).
 - **2026-06-04** — **Reschedule web UI (2.1 now full-stack).** Wired the customer account
   area to the self-service endpoint: `RescheduleFlow` client component (date picker → open
   slots for that day → confirm) backed by two server actions (`fetchRescheduleSlots`,

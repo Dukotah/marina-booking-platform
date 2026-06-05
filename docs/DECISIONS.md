@@ -242,3 +242,51 @@ build 3/3, all 90 tests green (no test charges a card — live charge still need
 
 **Why:** owner's processor of choice; Stripe's PaymentIntents + Elements are a clean fit
 and the schema already anticipated it, so the switch is low-risk and self-contained.
+
+## D-014 — Gift cards: ledgered stored value, overspend-safe redemption (2026-06-05) — Accepted
+
+Built the gift-cards backend slice (ROADMAP 2.2) backend-first, same pattern as the
+reschedule slice (new model → migration → service → endpoints → live integration test).
+
+- **Data model — balance + signed ledger.** A `GiftCard` carries the authoritative
+  `balance_cents` (integer cents, like all money here), and every change appends a
+  `GiftCardTransaction` row. Amounts are **signed** (`+` for ISSUE/REFUND, `−` for REDEEM),
+  so the ledger sums to the current balance — a built-in audit trail and reconciliation
+  check for a money instrument. `balance_after_cents` records the running balance per
+  entry. The transaction references its card via a **tenant-composite FK**
+  `(operator_id, gift_card_id) -> GiftCard(operator_id, id)` (D-011), so a transaction can
+  never attach to another tenant's card; `order_id` is a bare nullable reference (no FK),
+  matching the D-011 residual posture for optional relations.
+- **Redemption is overspend-safe by construction.** `redeemGiftCard` does not trust a
+  read-then-write: after validating, it decrements with a **conditional** `updateMany`
+  guarded on `is_active = true AND balance_cents >= amount`. If two redemptions race, only
+  one matches a row; the other sees `count = 0` and is refused. Expiry is enforced, and the
+  amount is re-validated server-side (never taken as pre-checked). Runs inside `withTenant`
+  so RLS scopes the writes and the balance change + ledger entry are atomic.
+- **Codes.** `generateGiftCardCode` (added to `@marina/core`) makes a grouped,
+  hard-to-mistype code (`ABCD-EFGH-JKMN`) from an unambiguous alphabet (no 0/O/1/I/L), with
+  randomness from cuid2's CSPRNG; uniqueness is still DB-enforced
+  (`@@unique([operator_id, code])`) and the issuer retries on the rare collision.
+- **Surface + authz.** Staff (gated): `POST /giftcards` issue (`order:write`),
+  `GET /giftcards` list (`order:read`), `POST /giftcards/:code/redeem` (`order:write`).
+  Public: `GET /giftcards/:code/balance` — the full code is the bearer secret, so a
+  balance check by code needs no auth (you must already hold it). Issuing/redeeming are
+  staff actions for now.
+- **Scope boundary (deliberate follow-ups).** This slice is staff/POS issuance + redemption
+  only. **Customer-checkout redemption** (applying a gift card as tender during a booking)
+  is intentionally deferred because it belongs with the payment flow (which is blocked on
+  Stripe keys) — the `PaymentMethod.GIFT_CARD` enum already exists for it. A **public
+  purchase** flow (a customer buying a gift card) likewise needs Stripe. An **admin UI** is
+  also a follow-up. The `REFUND`/`ADJUST` ledger types are modeled but not yet wired to
+  endpoints (they exist so cancelling a gift-card-paid booking can credit the card later).
+
+Migration `20260605130000_gift_cards` applied live to Neon (additive, zero drift); both
+tables added to `rls.sql` and `db:rls`/`db:approle` re-run so RLS policies + the non-bypass
+`app_user` grants cover them. Verified: typecheck 9/9, build 3/3, **101 tests green** (core
+69 + isolation 8 + api 24, incl. a new 6/6 live gift-card suite).
+
+**Why:** gift cards are stored value — real money sitting on the platform — so the
+guarantees that matter are (1) the balance is always reconcilable (signed ledger) and
+(2) it can never be overspent (DB-arbitrated conditional decrement, not an app-level race).
+Both are enforced at the data layer, consistent with the product's rock-solid-over-money
+posture (AGENTS.md rule 3).
