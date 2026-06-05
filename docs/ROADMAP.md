@@ -78,6 +78,12 @@ I will build against sandboxes/free tiers and flag exactly when each is needed.
 
 ## Changelog
 
+- **2026-06-04** — **Promo discounts verified live in the booking path.** A disposable
+  active percent-off code is resolved server-side, applied to pricing (matches
+  `@marina/core` `discountCents`/`totalCents`), and increments `times_redeemed` exactly
+  once; the seed's inactive+expired `LASTSPLASH` is rejected (`BookingError`). **2/2 live;
+  no bugs.** API suite now 13 (booking 3 + availability 3 + waivers 5 + promo 2); grand
+  total 90 green.
 - **2026-06-04** — **Waiver capture verified live via the full HTTP stack.** Added a
   `app.request(...)` integration suite (real Hono app → tenant middleware → RLS client →
   zod → handler → dev-staff shim): `POST /waivers/sign` records the signature and flips
