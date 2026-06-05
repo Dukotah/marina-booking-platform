@@ -14,6 +14,7 @@ import { promos } from './routes/promos.js';
 import { giftcards } from './routes/giftcards.js';
 import { merchandise } from './routes/merchandise.js';
 import { pos } from './routes/pos.js';
+import { reports } from './routes/reports.js';
 import { operator } from './routes/operator.js';
 import { webhooks } from './routes/webhooks.js';
 
@@ -45,6 +46,7 @@ api.route('/promos', promos);
 api.route('/giftcards', giftcards);
 api.route('/merchandise', merchandise);
 api.route('/pos', pos);
+api.route('/reports', reports);
 api.route('/operator', operator);
 
 // Echo the resolved tenant — handy sanity check during scaffolding.

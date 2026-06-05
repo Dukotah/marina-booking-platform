@@ -58,7 +58,9 @@ customer self-service reschedule.
 | # | Item | Status |
 |---|---|---|
 | 2.1 | **Customer self-service reschedule** — `rescheduleBooking` service (capacity move + `self_reschedule_hours` window) + staff `POST /orders/:id/reschedule` + customer `POST /orders/:orderNumber/self-reschedule` (email-gated) + **web account slot-picker UI** (RescheduleFlow → server actions) | ✅ full-stack (backend live-verified 5/5; web typechecks + builds) |
-| 2.2 | **Gift cards (backend)** — `GiftCard` + `GiftCardTransaction` models (signed ledger, tenant-composite FK) + `issueGiftCard`/`redeemGiftCard`/`getGiftCardByCode` service (atomic, overspend-safe conditional decrement) + staff `POST /giftcards` (issue) · `GET /giftcards` (list) · `POST /giftcards/:code/redeem` + public `GET /giftcards/:code/balance` | ✅ backend live-verified 6/6 (D-014). Customer-checkout redemption (ties into payments) + admin UI are follow-ups |
+| 2.2 | **Gift cards (backend)** — `GiftCard` + `GiftCardTransaction` models (signed ledger, tenant-composite FK) + `issueGiftCard`/`redeemGiftCard`/`getGiftCardByCode` service (atomic, overspend-safe conditional decrement) + staff `POST /giftcards` (issue) · `GET /giftcards` (list) · `POST /giftcards/:code/redeem` + public `GET /giftcards/:code/balance` | ✅ backend live-verified 6/6 (D-014). Admin UI is a follow-up |
+| 2.3 | **Gift card as tender** — `applyGiftCardToOrder` service (one atomic tx: overspend-safe card draw-down + `Payment{GIFT_CARD}` + order balance update + signed ledger entry stamped with the order id + audit event) + staff `POST /payments/gift-card` | ✅ backend live-verified 5/5 (D-015). Needs no Stripe (stored value). Customer-checkout tender (ties into customer auth) is the follow-up |
+| 2.4 | **Reports + CSV export** — staff (`report:read`) `GET /reports/revenue` + `/reports/bookings` (date-range filtered; gross/discount/tax/tip/refund/net + per-day breakdown; status + top-activity counts) and `.csv` downloads | ✅ backend live-verified 15/15 |
 
 ## Phase 3 — Power features (the moat for complex customers)
 
@@ -83,6 +85,21 @@ I will build against sandboxes/free tiers and flag exactly when each is needed.
 
 ## Changelog
 
+- **2026-06-05** — **Gift-card tender + Reports/CSV + public-catalog verification.** Lean
+  parallel round (2 background Sonnet agents on safe independent work; the money path
+  authored directly + reviewed). (1) **Gift card as tender (2.3, D-015):** new
+  `applyGiftCardToOrder` service does the whole thing in ONE tenant tx — overspend-safe
+  guarded card decrement, a signed REDEEM ledger entry stamped with the order id, a
+  `Payment{method:GIFT_CARD}` linked to that ledger entry, the order's
+  amount_paid/balance_due advanced, and an OrderEvent — exposed as staff
+  `POST /api/payments/gift-card` (order:write; needs no Stripe). Applies
+  min(requested|card balance|balance due); refuses over-balance-due / over-card-balance /
+  already-settled. Live 5/5. (2) **Reports + CSV export (2.4):** `routes/reports.ts` —
+  `/reports/revenue` + `/reports/bookings` (+ `.csv`), date-range filtered, report:read-gated,
+  CANCELLED excluded from revenue; no new deps. Live 15/15. (3) **Public catalog/availability
+  verification:** `catalog.integration.test.ts` over the public activities/availability/operator
+  endpoints — 12/12, no route bugs. api suite **84 → 116**; grand total **161 → 193 green**
+  (core 69 + isolation 8 + api 116). typecheck 9/9. Held locally, not pushed (Vercel quota).
 - **2026-06-05** — **Live-verification sweep: orders, merchandise, POS, customers (HTTP).**
   Ran a lean 4-agent parallel fan-out (Sonnet) to turn the remaining Phase-1/2 `✅🧪` API
   surface into live-verified, each agent writing one new `app.request` integration suite

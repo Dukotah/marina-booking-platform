@@ -2,6 +2,7 @@
  * Payments API — charge a booking and refund it (Stripe, test-first).
  *
  *   POST /api/payments/charge        public  — charge a card against an order
+ *   POST /api/payments/gift-card     staff   — apply a gift card as tender (order:write)
  *   POST /api/payments/:id/refund    staff   — full/partial refund (order:refund)
  *
  * All money is integer cents. Every DB write is tenant-scoped (RLS via c.var.db)
@@ -29,6 +30,7 @@ import {
   StripeNotConfiguredError,
   StripePaymentError,
 } from '../services/stripe.js';
+import { applyGiftCardToOrder, GiftCardError } from '../services/giftcards.js';
 
 export const payments = new Hono<Env>();
 
@@ -177,6 +179,45 @@ payments.post('/charge', async (c) => {
     },
     201,
   );
+});
+
+const giftCardTenderSchema = z.object({
+  orderId: z.string().min(1),
+  /** The gift card's redemption code (the bearer secret). */
+  code: z.string().min(1),
+  /** Amount to apply, integer cents. Omit to apply as much as covers the balance. */
+  amountCents: z.number().int().positive().optional(),
+});
+
+/**
+ * POST /api/payments/gift-card — staff (order:write). Applies a gift card as tender
+ * against an order's outstanding balance. Stored value, so this needs no Stripe
+ * config; the whole draw-down + Payment + order update is one atomic tenant tx in
+ * services/giftcards.ts (overspend-safe). Customer-checkout gift-card tender is a
+ * follow-up (ties into customer auth); this is the staff/POS path.
+ */
+payments.post('/gift-card', requireStaff, async (c) => {
+  assertPermission(c.var.auth, 'order:write');
+
+  const parsed = giftCardTenderSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) {
+    return c.json({ error: 'Invalid request', issues: parsed.error.flatten() }, 400);
+  }
+
+  try {
+    const result = await applyGiftCardToOrder(
+      c.var.operatorId,
+      parsed.data.orderId,
+      parsed.data.code,
+      { amountCents: parsed.data.amountCents, actor: c.var.auth.userId },
+    );
+    return c.json(result, 201);
+  } catch (err) {
+    if (err instanceof GiftCardError) {
+      return c.json({ error: err.message, code: err.code }, err.status as 400);
+    }
+    throw err;
+  }
 });
 
 /**

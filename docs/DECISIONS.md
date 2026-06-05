@@ -290,3 +290,44 @@ guarantees that matter are (1) the balance is always reconcilable (signed ledger
 (2) it can never be overspent (DB-arbitrated conditional decrement, not an app-level race).
 Both are enforced at the data layer, consistent with the product's rock-solid-over-money
 posture (AGENTS.md rule 3).
+
+## D-015 — Gift card as tender = a GIFT_CARD Payment + ledgered draw-down, one tx (2026-06-05) — Accepted
+
+Built on D-014: a gift card can now pay down an order's balance (ROADMAP 2.3). The
+operation that ties the two money instruments together — `applyGiftCardToOrder` — runs in
+a **single tenant transaction** so the card balance, the gift-card ledger, the `Payment`
+row, and the order's `amount_paid_cents`/`balance_due_cents` can never drift:
+
+- **One atomic tx, no nested service calls.** It does NOT call `redeemGiftCard` (which opens
+  its own `withTenant` tx — nesting two transactions); instead it replicates the same
+  overspend-safe guarded decrement (`updateMany WHERE is_active AND balance >= amount`)
+  inline, then in the same tx writes a signed `REDEEM` `GiftCardTransaction` **stamped with
+  the order id** (so the ledger entry and the Payment cross-reference each other), a
+  `Payment{ method: GIFT_CARD, status: PAID }` whose `processor_transaction_id` points at
+  that ledger entry, advances the order, and logs a `PAYMENT` OrderEvent.
+- **Amount semantics.** Applies `min(requested | card balance | balance due)`. With no
+  amount it applies as much as covers the balance (the common "settle this with the card"
+  case). Over-balance-due (`EXCEEDS_BALANCE_DUE` 400), over-card-balance
+  (`INSUFFICIENT_BALANCE` 409), and already-settled (`NOTHING_DUE` 400) are all refused.
+- **Processor field.** `Payment.processor` is a non-null `{SQUARE|STRIPE}` enum with no
+  stored-value member, so a gift-card Payment keeps the schema default; the meaningful link
+  is `processor_transaction_id = <GiftCardTransaction id>`. (Changing the enum to add a
+  GIFT_CARD/CASH/COMP processor was considered and deferred — it'd touch the migration +
+  Stripe/POS code for no functional gain right now; revisit if reporting needs to filter by
+  tender type at the Payment level rather than by `method`.)
+- **No Stripe dependency.** This is stored value, so the endpoint (`POST /api/payments/gift-card`)
+  works with payments unconfigured — unlike `/charge` and `/refund`, it has no
+  `isStripeConfigured()` gate.
+- **Surface.** Staff-gated (`order:write`) — the staff/POS "pay with gift card" action.
+  **Customer-checkout gift-card tender** (a guest paying with a gift card during online
+  checkout) remains the follow-up; it belongs with customer magic-link auth (0.7), since the
+  customer flow needs an identity to attach the action to.
+
+Verified: typecheck 9/9, build unaffected, **193 tests green** (core 69 + isolation 8 + api
+116, incl. a new 5/5 live tender suite — partial apply, default-settle-to-zero, over-due
+refusal, already-settled refusal, 401-without-staff).
+
+**Why:** recording gift-card spend as a real `Payment` (not a magic order adjustment) keeps
+the order's money story uniform across tender types — card, cash, comp, gift card all land
+as `Payment` rows that sum to `amount_paid_cents` — while the single-tx draw-down preserves
+the D-014 guarantees (reconcilable ledger, no overspend) across the order boundary.

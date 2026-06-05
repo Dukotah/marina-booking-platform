@@ -221,3 +221,142 @@ export async function redeemGiftCard(
     return { card: updated!, amountAppliedCents: amount, balanceCents: newBalance };
   });
 }
+
+export interface ApplyGiftCardOptions {
+  /** Amount to apply, integer cents. Defaults to min(card balance, order balance due). */
+  amountCents?: number;
+  actor?: string;
+}
+
+/**
+ * Apply a gift card as **tender** against an order's outstanding balance — the
+ * money path that lets a gift card pay for a booking (staff/POS today; customer
+ * checkout is a follow-up). Everything happens in ONE tenant transaction so the
+ * card draw-down, the Payment row, and the order's amount_paid/balance_due can
+ * never drift:
+ *   - validates the order is open and has a balance due;
+ *   - resolves + validates the card (active, unexpired) and draws it down with the
+ *     same overspend-safe conditional decrement as `redeemGiftCard`;
+ *   - records a signed REDEEM ledger entry (stamped with the order id), a
+ *     `Payment{ method: GIFT_CARD }`, advances the order, and logs an OrderEvent.
+ *
+ * The applied amount is the smaller of (requested | card balance | balance due);
+ * a request that exceeds the balance due or the card balance is refused.
+ */
+export async function applyGiftCardToOrder(
+  operatorId: string,
+  orderId: string,
+  rawCode: string,
+  options: ApplyGiftCardOptions = {},
+) {
+  const code = normalizeCode(rawCode);
+
+  return withTenant(operatorId, async (tx) => {
+    const order = await tx.order.findFirst({ where: { id: orderId } });
+    if (!order) {
+      throw new GiftCardError('ORDER_NOT_FOUND', 'Order not found', 404);
+    }
+    if (order.status === 'CANCELLED') {
+      throw new GiftCardError('ORDER_CANCELLED', 'This order has been cancelled', 409);
+    }
+    const balanceDue = order.balance_due_cents;
+    if (balanceDue <= 0) {
+      throw new GiftCardError('NOTHING_DUE', 'This order has no outstanding balance', 400);
+    }
+
+    const card = await tx.giftCard.findFirst({ where: { code } });
+    if (!card) {
+      throw new GiftCardError('GIFT_CARD_NOT_FOUND', 'No gift card matches that code', 404);
+    }
+    if (!card.is_active) {
+      throw new GiftCardError('GIFT_CARD_INACTIVE', 'This gift card is not active', 409);
+    }
+    if (card.expires_at && card.expires_at.getTime() <= Date.now()) {
+      throw new GiftCardError('GIFT_CARD_EXPIRED', 'This gift card has expired', 409);
+    }
+
+    // Amount to apply: requested, else as much as covers the balance from the card.
+    const requested =
+      options.amountCents != null
+        ? Math.trunc(options.amountCents)
+        : Math.min(card.balance_cents, balanceDue);
+    if (!Number.isFinite(requested) || requested <= 0) {
+      throw new GiftCardError('INVALID_AMOUNT', 'Amount to apply must be a positive number of cents');
+    }
+    if (requested > balanceDue) {
+      throw new GiftCardError(
+        'EXCEEDS_BALANCE_DUE',
+        `Amount exceeds the order's outstanding balance (${balanceDue} cent(s))`,
+      );
+    }
+    if (requested > card.balance_cents) {
+      throw new GiftCardError(
+        'INSUFFICIENT_BALANCE',
+        `Gift card balance is ${card.balance_cents} cent(s); cannot apply ${requested}`,
+        409,
+      );
+    }
+
+    // Overspend-safe conditional decrement (DB arbitrates a concurrent draw-down).
+    const guarded = await tx.giftCard.updateMany({
+      where: { id: card.id, is_active: true, balance_cents: { gte: requested } },
+      data: { balance_cents: { decrement: requested } },
+    });
+    if (guarded.count !== 1) {
+      throw new GiftCardError('INSUFFICIENT_BALANCE', 'Gift card balance changed; please retry', 409);
+    }
+    const newCardBalance = card.balance_cents - requested;
+
+    const gcTxn = await tx.giftCardTransaction.create({
+      data: {
+        operator_id: operatorId,
+        gift_card_id: card.id,
+        type: 'REDEEM',
+        amount_cents: -requested,
+        balance_after_cents: newCardBalance,
+        order_id: order.id,
+        actor: options.actor ?? null,
+        note: `Applied to order ${order.order_number}`,
+      },
+    });
+
+    const newAmountPaid = order.amount_paid_cents + requested;
+    const newBalanceDue = order.total_cents - newAmountPaid;
+    const payment = await tx.payment.create({
+      data: {
+        operator_id: operatorId,
+        order_id: order.id,
+        method: 'GIFT_CARD',
+        status: 'PAID',
+        amount_cents: requested,
+        // No card processor for stored value; link the Payment to its ledger entry.
+        processor_transaction_id: gcTxn.id,
+      },
+    });
+    await tx.order.update({
+      where: { id: order.id },
+      data: { amount_paid_cents: newAmountPaid, balance_due_cents: newBalanceDue },
+    });
+    await tx.orderEvent.create({
+      data: {
+        operator_id: operatorId,
+        order_id: order.id,
+        type: 'PAYMENT',
+        description: `Applied gift card ${card.code} — ${(requested / 100).toFixed(2)} USD`,
+        actor: options.actor ?? null,
+        metadata: {
+          paymentId: payment.id,
+          giftCardId: card.id,
+          giftCardTransactionId: gcTxn.id,
+          amountCents: requested,
+        } as Prisma.InputJsonValue,
+      },
+    });
+
+    return {
+      payment: { id: payment.id, method: 'GIFT_CARD' as const, amountCents: requested },
+      order: { id: order.id, amountPaidCents: newAmountPaid, balanceDueCents: newBalanceDue },
+      giftCard: { code: card.code, balanceCents: newCardBalance },
+    };
+  });
+}
