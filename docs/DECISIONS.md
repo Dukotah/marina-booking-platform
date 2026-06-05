@@ -406,3 +406,40 @@ added to RLS + app_user grants.
 **Why:** customer auth is the foundation under self-service and customer-paid gift cards;
 email-OTP + a stateless signed token is the least-moving-parts design that's secure (hashed,
 single-use, rate-capped, fail-closed secret) and testable without owner-provisioned accounts.
+
+## D-018 — Gift-card management: ADJUST corrections + reversible void (2026-06-05) — Accepted
+
+Wired the last modeled-but-unused gift-card ledger type (`ADJUST`, from D-014) and added
+the staff freeze controls, finishing gift-card *management* (issue → tender → refund → now
+correct/void). No schema change — the enum and `is_active` column already existed; this is a
+pure service + route + live-test slice.
+
+- **Manual balance correction = a signed `ADJUST` entry.** `adjustGiftCardBalance(code,
+  deltaCents, reason)` applies a signed delta and appends an `ADJUST` ledger row, so the
+  invariant "the ledger sums to `balance_cents`" still holds. A reason is **required** (it's a
+  money correction — the audit trail must say why). A **negative** delta uses the same
+  overspend-safe conditional `updateMany` guard as `redeemGiftCard`, so a correction can never
+  drive the balance below zero (`ADJUST_BELOW_ZERO`) or race a concurrent draw-down.
+- **Void = a reversible freeze, not value destruction.** `voidGiftCard` flips `is_active` to
+  false (both redeem and tender already guard on it, so a voided card is unspendable) but
+  **preserves the balance** — no stored value silently disappears, and `reactivateGiftCard`
+  restores spendability. Each writes a **zero-amount `ADJUST` marker** entry (`amount_cents:
+  0`, note "Voided: …" / "Reactivated: …") for the audit trail; a zero entry leaves the ledger
+  sum unchanged, so the invariant is preserved. Considered void-and-zero (drain the balance to
+  0) and rejected it: freezing is reversible and doesn't destroy money an operator may still
+  owe the holder. Idempotency guards: re-void → `ALREADY_VOIDED`, re-activate → `ALREADY_ACTIVE`
+  (both 409). Adjusting a voided card is refused (`GIFT_CARD_INACTIVE`) — reactivate first.
+- **Gated at `order:refund`, not `order:write`.** Rewriting stored value is a money-correction
+  action on par with issuing a refund, so the three endpoints (`POST /giftcards/:code/adjust`
+  · `/void` · `/reactivate`) require `order:refund` (MANAGER+), above the `order:write` tier
+  that plain order STAFF hold for redeem/tender. Verified live: a STAFF-role identity gets 403.
+
+Verified: typecheck 9/9, **api +10 live cases** (adjust up/down + signed entries, below-zero
+refused, empty-reason refused, HTTP adjust 200 + 403-for-STAFF + 401-no-identity, void freezes
++ blocks redeem/adjust + double-void, reactivate + double-reactivate + re-spend; ledger-sum
+invariant asserted throughout). Held locally, not pushed (Vercel quota).
+
+**Why:** gift cards are real money on the platform, and an operator must be able to fix a
+mistake (mis-issued amount, goodwill credit) and kill a lost/fraudulent card — without ever
+breaking the two D-014 guarantees (reconcilable signed ledger, no overspend) or destroying
+value that can't be recovered. Reversible-freeze + signed-correction keeps both true.

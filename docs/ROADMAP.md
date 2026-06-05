@@ -86,6 +86,22 @@ I will build against sandboxes/free tiers and flag exactly when each is needed.
 
 ## Changelog
 
+- **2026-06-05** — **Gift-card management: ADJUST + reversible void (D-018).** Wired the last
+  modeled-but-unused gift-card ledger type (`ADJUST`) and the freeze controls — finishes
+  gift-card management (issue → tender → refund → **correct/void**). No schema change (enum +
+  `is_active` already existed); pure service + route + live-test. `adjustGiftCardBalance` applies
+  a signed delta with a required reason and a signed `ADJUST` ledger row — a **negative** delta
+  reuses the overspend-safe conditional decrement so a correction can never go below zero
+  (`ADJUST_BELOW_ZERO`). `voidGiftCard` freezes a card (`is_active=false`, redeem + tender already
+  guard on it) while **preserving the balance** (no value destroyed), and `reactivateGiftCard`
+  restores it — each writes a zero-amount `ADJUST` marker so the ledger-sums-to-balance invariant
+  holds. Three new staff endpoints (`POST /giftcards/:code/adjust · /void · /reactivate`) gated at
+  **`order:refund`** (money-correction tier, above the `order:write` STAFF use for redeem) — a
+  STAFF-role identity gets 403, verified live. New live suite **9/9** (adjust up/down + signed
+  entries, below-zero + empty-reason refused, HTTP adjust 200 + 403-for-STAFF + 401-no-identity,
+  void freezes/blocks/double-void, reactivate + double-reactivate + re-spend; ledger-sum invariant
+  asserted throughout). api **125 → 134**; grand total **202 → 211 green** (core 69 + isolation 8
+  + api 134). typecheck 9/9. Held locally, not pushed (Vercel quota).
 - **2026-06-05** — **Customer self-service gift-card tender (2.3 complete).** With customer
   auth in place (D-017), added `POST /api/payments/customer/gift-card`: token-gated, and a
   customer may pay down ONLY their own order (ownership checked against the token's email; a

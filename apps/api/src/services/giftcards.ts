@@ -498,3 +498,182 @@ export async function refundGiftCardPayment(
     };
   });
 }
+
+// ---------------------------------------------------------------------------
+// Manual gift-card management: balance correction (ADJUST) + void / reactivate.
+//
+// These are the staff-side controls for a stored-value instrument that has no
+// order behind it. They are the modeled-but-previously-unwired `ADJUST` ledger
+// type (D-014), and they are deliberately gated at a higher tier than redeem
+// (order:refund, the money-correction permission) — rewriting a card's balance is
+// as sensitive as issuing a refund. Every change still appends a signed ledger row
+// so the invariant "the ledger sums to balance_cents" holds (a void/reactivate
+// writes a zero-amount marker entry, leaving the sum unchanged).
+// ---------------------------------------------------------------------------
+
+export interface AdjustGiftCardOptions {
+  /** Audit actor (staff id/email). */
+  actor?: string;
+}
+
+/**
+ * Manually correct a gift card's balance by a signed delta (a real money
+ * correction by staff — e.g. fixing a mis-issued amount or honouring a goodwill
+ * credit). Atomic and, for a *negative* delta, overspend-safe: the decrement uses
+ * the same conditional `updateMany` guard as a redemption, so a correction can
+ * never drive the balance below zero (and never races a concurrent draw-down).
+ * Records a signed `ADJUST` ledger entry. A reason is required for the audit trail.
+ */
+export async function adjustGiftCardBalance(
+  operatorId: string,
+  rawCode: string,
+  deltaCents: number,
+  reason: string,
+  options: AdjustGiftCardOptions = {},
+) {
+  const code = normalizeCode(rawCode);
+  const delta = Math.trunc(deltaCents);
+  if (!Number.isFinite(delta) || delta === 0) {
+    throw new GiftCardError('INVALID_AMOUNT', 'Adjustment must be a non-zero number of cents');
+  }
+  const trimmedReason = (reason ?? '').trim();
+  if (!trimmedReason) {
+    throw new GiftCardError('REASON_REQUIRED', 'A reason is required for a manual balance adjustment');
+  }
+
+  return withTenant(operatorId, async (tx) => {
+    const card = await tx.giftCard.findFirst({ where: { code } });
+    if (!card) {
+      throw new GiftCardError('GIFT_CARD_NOT_FOUND', 'No gift card matches that code', 404);
+    }
+    if (!card.is_active) {
+      // A frozen card must be reactivated before its balance can be corrected.
+      throw new GiftCardError('GIFT_CARD_INACTIVE', 'This gift card is voided; reactivate it before adjusting', 409);
+    }
+
+    if (delta < 0) {
+      const decrement = -delta;
+      if (card.balance_cents < decrement) {
+        throw new GiftCardError(
+          'ADJUST_BELOW_ZERO',
+          `Adjustment of ${delta} would drive the balance below zero (balance ${card.balance_cents} cent(s))`,
+          409,
+        );
+      }
+      // Overspend-safe conditional decrement (same guard as redeemGiftCard).
+      const guarded = await tx.giftCard.updateMany({
+        where: { id: card.id, is_active: true, balance_cents: { gte: decrement } },
+        data: { balance_cents: { decrement } },
+      });
+      if (guarded.count !== 1) {
+        throw new GiftCardError('ADJUST_BELOW_ZERO', 'Gift card balance changed; please retry', 409);
+      }
+    } else {
+      await tx.giftCard.update({
+        where: { id: card.id },
+        data: { balance_cents: { increment: delta } },
+      });
+    }
+
+    const newBalance = card.balance_cents + delta;
+    await tx.giftCardTransaction.create({
+      data: {
+        operator_id: operatorId,
+        gift_card_id: card.id,
+        type: 'ADJUST',
+        amount_cents: delta, // signed: + credits up, − corrects down
+        balance_after_cents: newBalance,
+        actor: options.actor ?? null,
+        note: trimmedReason,
+      },
+    });
+
+    const updated = await tx.giftCard.findFirst({ where: { id: card.id } });
+    return { card: updated!, deltaCents: delta, balanceCents: newBalance };
+  });
+}
+
+export interface VoidGiftCardOptions {
+  reason?: string;
+  actor?: string;
+}
+
+/**
+ * Void (freeze) a gift card: flips `is_active` to false so it can no longer be
+ * redeemed or used as tender (both paths already guard on `is_active`). The balance
+ * is **preserved, not destroyed** — voiding is reversible via `reactivateGiftCard`,
+ * and no stored value silently disappears. A zero-amount `ADJUST` marker entry is
+ * appended for the audit trail (the ledger sum is unchanged). Idempotency: voiding
+ * an already-voided card is refused (409).
+ */
+export async function voidGiftCard(
+  operatorId: string,
+  rawCode: string,
+  options: VoidGiftCardOptions = {},
+) {
+  const code = normalizeCode(rawCode);
+  return withTenant(operatorId, async (tx) => {
+    const card = await tx.giftCard.findFirst({ where: { code } });
+    if (!card) {
+      throw new GiftCardError('GIFT_CARD_NOT_FOUND', 'No gift card matches that code', 404);
+    }
+    if (!card.is_active) {
+      throw new GiftCardError('ALREADY_VOIDED', 'This gift card is already voided', 409);
+    }
+
+    await tx.giftCard.update({ where: { id: card.id }, data: { is_active: false } });
+    await tx.giftCardTransaction.create({
+      data: {
+        operator_id: operatorId,
+        gift_card_id: card.id,
+        type: 'ADJUST',
+        amount_cents: 0, // marker entry — balance preserved, ledger sum unchanged
+        balance_after_cents: card.balance_cents,
+        actor: options.actor ?? null,
+        note: options.reason?.trim() ? `Voided: ${options.reason.trim()}` : 'Card voided',
+      },
+    });
+
+    const updated = await tx.giftCard.findFirst({ where: { id: card.id } });
+    return updated!;
+  });
+}
+
+/**
+ * Reactivate a previously voided gift card: flips `is_active` back to true so its
+ * preserved balance can be spent again. Appends a zero-amount `ADJUST` marker.
+ * Reactivating an already-active card is refused (409). Note: this does not change
+ * `expires_at`, so a card past its expiry stays unredeemable even once active.
+ */
+export async function reactivateGiftCard(
+  operatorId: string,
+  rawCode: string,
+  options: VoidGiftCardOptions = {},
+) {
+  const code = normalizeCode(rawCode);
+  return withTenant(operatorId, async (tx) => {
+    const card = await tx.giftCard.findFirst({ where: { code } });
+    if (!card) {
+      throw new GiftCardError('GIFT_CARD_NOT_FOUND', 'No gift card matches that code', 404);
+    }
+    if (card.is_active) {
+      throw new GiftCardError('ALREADY_ACTIVE', 'This gift card is already active', 409);
+    }
+
+    await tx.giftCard.update({ where: { id: card.id }, data: { is_active: true } });
+    await tx.giftCardTransaction.create({
+      data: {
+        operator_id: operatorId,
+        gift_card_id: card.id,
+        type: 'ADJUST',
+        amount_cents: 0,
+        balance_after_cents: card.balance_cents,
+        actor: options.actor ?? null,
+        note: options.reason?.trim() ? `Reactivated: ${options.reason.trim()}` : 'Card reactivated',
+      },
+    });
+
+    const updated = await tx.giftCard.findFirst({ where: { id: card.id } });
+    return updated!;
+  });
+}
