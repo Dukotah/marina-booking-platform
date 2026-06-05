@@ -74,7 +74,7 @@ channel/OTA + affiliate management · accounting exports (QuickBooks/Xero).
 | 3.x | **Multi-location roll-up reporting (backend)** — `GET /reports/by-location` (+`.csv`): item-level location attribution (gross = unit×qty), per-location volume + a chain roll-up total (D-020) | 🟦 backend live-verified 3/3. Admin dashboards on top of it (+ per-location filtering of `/revenue`,`/bookings`, per-location net) are follow-ups |
 | 3.x | **Accounting export (backend)** — `GET /reports/transactions` (+`.csv`): payment-level journal keyed by cash date, net-of-refunds per row, per-tender reconciliation + totals (QuickBooks/Xero import) (D-021) | 🟦 backend live-verified 3/3. Direct QuickBooks/Xero API sync (OAuth + GL account mapping) is a later gated follow-up |
 | 3.x | **Resource/asset management (backend)** — staff CRUD `/api/resources` + activity assignment (ActivityResources m2m); fields seat_capacity/quantity/out_of_service_qty, derived availableQty; tenant-validated refs (D-023) | ✅ catalog + assignment live-verified 7/7 |
-| 3.x | **Resource-backed availability** — shared assets constrain capacity across every activity they back; OrderItem-level time-overlap by rate duration; enforced in **`createBooking` + POS sale + `rescheduleBooking`** (`INSUFFICIENT_RESOURCE_CAPACITY`) + overlaid on `getDayAvailability` (`resourceConstrained`) (D-024) | 🟦 live-verified 8/8 across all three write paths + the customer read. Follow-ups: whole-unit (exclusive-charter) allocation policy, month-range overlay |
+| 3.x | **Resource-backed availability** — shared assets constrain capacity across every activity they back; OrderItem-level time-overlap by rate duration; enforced in **`createBooking` + POS sale + `rescheduleBooking`** (`INSUFFICIENT_RESOURCE_CAPACITY`) + overlaid on **both** `getDayAvailability` (`resourceConstrained`) **and** `getRangeAvailability` (month calendar day signals) (D-024) | 🟦 live-verified 9/9 across all three write paths + both reads. Follow-up: whole-unit (exclusive-charter) allocation policy |
 
 ## Go-live checklist (before selling)
 
@@ -93,6 +93,15 @@ I will build against sandboxes/free tiers and flag exactly when each is needed.
 
 ## Changelog
 
+- **2026-06-05** — **Resource overlay extended to the month-range calendar (D-024 cont).** Closed the
+  last availability follow-up: `getRangeAvailability` now folds each slot's EFFECTIVE remaining
+  (own-capacity vs shared-resource pool, whichever is tighter) into the day rollup, so the month
+  calendar's traffic light goes red on a day whose backing asset is fully committed even when the
+  slot's own seats are unsold. Reuses the same `getResourceConstraints` batch primitive; no-op for
+  activities with no resource. +1 live case (a resource-committed day reads red with 0 effective
+  remaining despite 20 own seats free). api **165 → 166**; grand total **242 → 243 green**. typecheck
+  9/9. Only the whole-unit/exclusive-charter allocation policy remains as a D-024 follow-up. Held
+  locally, not pushed (Vercel quota).
 - **2026-06-05** — **Bugfix: order-number sequencing collided for same-day future bookings (D-025).**
   `createBooking` computed the per-service-day sequence by counting orders *created* in the slot's
   (future) calendar day — ~0 for any future slot, so every booking for a given future date got

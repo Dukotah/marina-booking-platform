@@ -27,7 +27,7 @@ import {
   getResourceConstraint,
   getResourceConstraints,
 } from '../src/services/resource-availability.js';
-import { getDayAvailability } from '../src/services/availability.js';
+import { getDayAvailability, getRangeAvailability } from '../src/services/availability.js';
 import { app } from '../src/app.js';
 
 const HAS_DB = Boolean(process.env.DATABASE_URL);
@@ -347,5 +347,20 @@ describe.skipIf(!HAS_DB)('resource-backed availability (live vs Neon, LSRA seed)
 
     const item = await adminPrisma.orderItem.findFirst({ where: { order_id: order.id } });
     expect(item!.timeslot_id).toBe(fx.slotBLater);
+  });
+
+  it('month-range rollup marks a fully resource-committed day red (own seats still open)', async () => {
+    const db = forOperator(OP);
+    const concurrent = await adminPrisma.timeslot.findUnique({ where: { id: fx.slotBConcurrent } });
+    const date = concurrent!.datetime.toISOString().slice(0, 10);
+
+    const range = await getRangeAvailability(db, { activityId: fx.activityB, from: date, to: date });
+    const day = range.days.find((d) => d.date === date);
+    expect(day).toBeDefined();
+    // B's only slot that day has 20 of its own seats free, but A has committed the shared
+    // pool → the calendar day must read red with nothing effectively bookable.
+    expect(day!.capacityTotal).toBe(20);
+    expect(day!.capacityRemaining).toBe(0);
+    expect(day!.signal).toBe('red');
   });
 });

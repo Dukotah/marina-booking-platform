@@ -290,11 +290,30 @@ export async function getRangeAvailability(
     },
     orderBy: { datetime: 'asc' },
     select: {
+      id: true,
       datetime: true,
       capacity_total: true,
       capacity_booked: true,
     },
   });
+
+  // Shared-resource overlay (D-024): a slot whose backing asset is committed by a
+  // concurrent sibling activity should count as booked in the day rollup even though its
+  // own seats are open. Compute the pool remaining per slot once, then fold the EFFECTIVE
+  // booked (own or resource-limited, whichever is tighter) into each day bucket so the
+  // calendar's traffic light never overstates a day's availability. Rate-agnostic month
+  // view ⇒ size the window with the activity's longest active rate.
+  const durAgg = await db.rate.aggregate({
+    where: { activity_id: params.activityId, is_active: true },
+    _max: { duration_minutes: true },
+  });
+  const candidateDurationMs = (durAgg._max.duration_minutes ?? 240) * 60_000;
+  const constraints = await getResourceConstraints(
+    db,
+    params.activityId,
+    slots.map((s) => ({ id: s.id, datetime: s.datetime })),
+    candidateDurationMs,
+  );
 
   // Seed every calendar day in the range so days with no slots still appear (red).
   const buckets = new Map<
@@ -317,9 +336,14 @@ export async function getRangeAvailability(
   for (const slot of slots) {
     const key = dayKey(timeZone, slot.datetime);
     const bucket = buckets.get(key) ?? { slotCount: 0, capacityTotal: 0, capacityBooked: 0 };
+    const ownRemaining = Math.max(0, slot.capacity_total - slot.capacity_booked);
+    const pool = constraints.get(slot.id)?.remaining ?? null;
+    const effRemaining = pool === null ? ownRemaining : Math.min(ownRemaining, pool);
     bucket.slotCount += 1;
     bucket.capacityTotal += slot.capacity_total;
-    bucket.capacityBooked += slot.capacity_booked;
+    // Effective booked = total − effective remaining, so a resource-starved slot pushes
+    // the day toward red even with its own seats unsold.
+    bucket.capacityBooked += slot.capacity_total - effRemaining;
     buckets.set(key, bucket);
   }
 
