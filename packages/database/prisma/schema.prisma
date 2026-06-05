@@ -7,7 +7,11 @@
 // Money is always integer cents. Times are stored UTC; operator.timezone renders.
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  // Include the Linux binary target used by Vercel (Amazon Linux 2 / RHEL).
+  // Without this, Prisma ships only the native binary for the build host
+  // (Windows) and the serverless runtime can't find an engine to use.
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
 }
 
 datasource db {

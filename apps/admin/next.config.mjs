@@ -1,9 +1,22 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  transpilePackages: ['@marina/types', '@marina/ui', '@marina/core', '@marina/auth'],
+  // All @marina/* workspace packages ship TypeScript source — webpack must
+  // transpile them. This includes @marina/database; listing it in
+  // serverComponentsExternalPackages would make Next.js try to require() the
+  // raw .ts entry point via Node, which fails on Vercel's Node 18/20 runtime.
+  transpilePackages: [
+    '@marina/types',
+    '@marina/ui',
+    '@marina/core',
+    '@marina/auth',
+    '@marina/database',
+  ],
   experimental: {
-    serverComponentsExternalPackages: ['@prisma/client', '@marina/database'],
+    // @prisma/client ships pre-compiled JS + native binaries — it must stay
+    // external so webpack does not try to bundle the native .node files.
+    // @marina/database is intentionally NOT listed here (see transpilePackages).
+    serverComponentsExternalPackages: ['@prisma/client'],
   },
   webpack: (config) => {
     // Shared @marina/* packages ship TS source with NodeNext-style `.js` import

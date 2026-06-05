@@ -153,6 +153,21 @@ async function main() {
         },
       });
 
+      // Default owner staff member (used by the dev-auth shim for testing).
+      // Look it up via the `x-dev-staff-id: dev-owner` header (see api auth middleware).
+      // Location scoping is via the StaffLocation join, not a scalar field.
+      await tx.staffMember.create({
+        data: {
+          operator_id: operator.id,
+          auth_user_id: 'dev-owner',
+          name: 'Dukotah Hutcheon',
+          email: 'dukotah@gmail.com',
+          role: 'OWNER',
+          is_active: true,
+          locations: { create: { location_id: location.id } },
+        },
+      });
+
       // Activities + rates
       let sort = 0;
       for (const s of ACTIVITIES) {

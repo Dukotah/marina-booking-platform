@@ -78,6 +78,18 @@ I will build against sandboxes/free tiers and flag exactly when each is needed.
 
 ## Changelog
 
+- **2026-06-04** — **marina-admin Vercel deploy fix + customer-portal API wiring.**
+  Root-caused the admin deploy failure as a Prisma/runtime packaging issue and fixed
+  it: added the `rhel-openssl-3.0.x` Prisma binaryTarget (Vercel Linux engine); moved
+  `@marina/database` from `serverComponentsExternalPackages` into `transpilePackages`
+  so Next transpiles its TS source instead of `require()`-ing it; admin `build` (and a
+  new `vercel.json`) now run `prisma generate` before `next build`. Wired the customer
+  portal's expected endpoints: `GET /api/activities/:id` (public booking detail) +
+  `GET /api/activities/:id/availability` (delegates to the availability service), and a
+  `/bookings`→`/orders` alias to match web `lib/api.ts`. Seed now creates a `dev-owner`
+  OWNER StaffMember (location-scoped via StaffLocation) so the `x-dev-staff-id` shim has
+  a principal to load. Verified green: typecheck 9/9, build 3/3, core 69/69. (Live DB
+  still needs a re-seed to pick up the new staff row.)
 - **2026-06-04** — **Went live against a real database.** Neon Postgres connected
   (US-West); `prisma migrate dev` applied migration `init`; RLS applied; LSRA seeded
   (operator `lsra`, 19 activities). Two isolation findings fixed (D-010): (1) Neon's

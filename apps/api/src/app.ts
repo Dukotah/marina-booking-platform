@@ -34,6 +34,9 @@ api.use('*', tenantMiddleware);
 api.route('/activities', activities);
 api.route('/availability', availability);
 api.route('/orders', orders);
+// /bookings is an alias for /orders used by the customer portal (lib/api.ts createBooking).
+// POST /bookings -> POST /orders (create a booking); GET/PATCH on orders still use /orders.
+api.route('/bookings', orders);
 api.route('/payments', payments);
 api.route('/customers', customers);
 api.route('/waivers', waivers);
@@ -44,6 +47,7 @@ api.route('/operator', operator);
 
 // Echo the resolved tenant — handy sanity check during scaffolding.
 api.get('/whoami', (c) => c.json({ operatorId: c.var.operatorId }));
+
 
 app.route('/api', api);
 
