@@ -3,7 +3,7 @@
 
 export { toCents, fromCents, formatUSD, roundCents } from './money.js';
 
-export { createId, generateOrderNumber, generateGiftCardCode } from './ids.js';
+export { createId, generateOrderNumber, orderNumberPrefix, generateGiftCardCode } from './ids.js';
 
 export {
   calculatePricing,

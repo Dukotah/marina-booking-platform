@@ -22,12 +22,22 @@ export const createId = (): string => cuid2();
  * @param seq          1-based sequence number for that location + day
  */
 export const generateOrderNumber = (locationCode: string, date: Date, seq: number): string => {
+  const seqStr = String(Math.max(0, Math.trunc(seq))).padStart(3, '0');
+  return `${orderNumberPrefix(locationCode, date)}${seqStr}`;
+};
+
+/**
+ * The non-sequence portion of an order number — `<UPPERCASE_CODE><YYMMDD>` — shared by
+ * every order for one location + calendar day. Use it to count existing orders for that
+ * day (`order_number startsWith prefix`) when assigning the next sequence, so the
+ * sequence reflects orders for the SERVICE date rather than the creation date.
+ */
+export const orderNumberPrefix = (locationCode: string, date: Date): string => {
   const code = locationCode.trim().toUpperCase();
   const yy = String(date.getFullYear() % 100).padStart(2, '0');
   const mm = String(date.getMonth() + 1).padStart(2, '0');
   const dd = String(date.getDate()).padStart(2, '0');
-  const seqStr = String(Math.max(0, Math.trunc(seq))).padStart(3, '0');
-  return `${code}${yy}${mm}${dd}${seqStr}`;
+  return `${code}${yy}${mm}${dd}`;
 };
 
 // Unambiguous alphabet for human-keyed codes — no 0/O/1/I/L to avoid misreads.

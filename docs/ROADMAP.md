@@ -93,6 +93,14 @@ I will build against sandboxes/free tiers and flag exactly when each is needed.
 
 ## Changelog
 
+- **2026-06-05** — **Bugfix: order-number sequencing collided for same-day future bookings (D-025).**
+  `createBooking` computed the per-service-day sequence by counting orders *created* in the slot's
+  (future) calendar day — ~0 for any future slot, so every booking for a given future date got
+  sequence `001` and the second collided on the `order_number` unique constraint (P2002). Fixed to
+  count orders sharing the day's prefix (`orderNumberPrefix`, factored out in `@marina/core`), plus a
+  bounded retry on the residual concurrent race. POS numbering (by creation day) unaffected. +1 live
+  case (two bookings on one future day → distinct increasing sequences). core 69/69; api **164 → 165**;
+  grand total **241 → 242 green**. typecheck 9/9. Held locally, not pushed (Vercel quota).
 - **2026-06-05** — **Resource-backed availability — the moat (Phase 3, D-024).** Made capacity
   derive from shared physical assets: a `Resource` backing more than one activity is now one pool, so
   booking it for one activity removes that capacity from every sibling for the OVERLAPPING time. New

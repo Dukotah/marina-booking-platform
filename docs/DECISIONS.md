@@ -676,3 +676,33 @@ can't express — a boat double-booked across two activities is the exact failur
 Routing both the guard and the customer-facing read through one overlap-aware primitive makes the
 constraint correct at the point of sale and honest in the catalog, while the `remaining: null`
 short-circuit keeps it a no-op for operators who haven't modeled resources.
+
+## D-025 — Bugfix: order-number sequence counted the wrong day → duplicate order numbers (2026-06-05) — Accepted
+
+Found and fixed a real booking-path bug while testing D-024. The human `order_number` encodes the
+**service date** (`<CODE><YYMMDD><SEQ3>`, from the booked slot's day), but `createBooking` computed
+the sequence as `count(orders WHERE created_at ∈ the slot's calendar day) + 1`. For any FUTURE slot,
+no orders were *created* on that future date, so the count was ~0 and every booking for a given future
+service day got sequence `001` → the second booking for that day collided on the `order_number` unique
+constraint and threw P2002. Multiple bookings for the same future date is the normal case, so this
+broke booking #2 for any service day with more than one reservation.
+
+- **Fix:** sequence now counts orders that already share the day's prefix
+  (`order_number startsWith orderNumberPrefix(code, slotDate)`) — i.e. orders for that SERVICE date,
+  which is exactly what the number's sequence is meant to count. Factored `orderNumberPrefix()` out of
+  `generateOrderNumber()` in `@marina/core` so the two can't drift.
+- **Concurrency:** two simultaneous bookings for the same day can still read the same count and race on
+  the unique constraint. Wrapped `createBooking` in a bounded retry (≤3) that recomputes on a P2002
+  naming `order_number` and re-runs the whole tenant transaction (atomic rollback → no partial writes
+  between attempts). The unique index remains the final arbiter.
+- **POS is unaffected** — it numbers by `now` and counts orders created today, which is self-consistent
+  (creation-date numbering), so it was left as-is.
+
+Verified: typecheck 9/9, core 69/69, **api +1 live case** (two bookings on one future service day get
+distinct, strictly-increasing sequences sharing the prefix) + the full booking suite still green. api
+**164 → 165**; grand total **241 → 242**. Held locally, not pushed (Vercel quota).
+
+**Why:** order numbers are customer- and staff-facing primary references; silently colliding (and
+500-ing the second booking) on the most common real pattern — several reservations for one day — is a
+launch-blocker. Counting by the prefix the number already commits to makes the sequence correct by
+construction, and the retry turns the residual race into a self-healing path rather than a 500.

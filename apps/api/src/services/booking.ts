@@ -16,6 +16,7 @@ import {
   calculatePricing,
   computeSlotStatus,
   generateOrderNumber,
+  orderNumberPrefix,
   type BookingInput,
   type PricingFee,
   type PricingPromo,
@@ -45,6 +46,17 @@ export class BookingError extends Error {
   }
 }
 
+/** A Prisma P2002 unique-constraint violation that names the `order_number` field. */
+function isOrderNumberCollision(err: unknown): boolean {
+  return (
+    err instanceof Prisma.PrismaClientKnownRequestError &&
+    err.code === 'P2002' &&
+    String((err.meta as { target?: string | string[] } | undefined)?.target ?? '').includes(
+      'order_number',
+    )
+  );
+}
+
 /**
  * Create a booking for the given operator. Returns the persisted Order with its
  * items, customer, and timeslot/activity context needed by the API response.
@@ -56,7 +68,13 @@ export async function createBooking(
 ) {
   const channel: BookingChannel = options.channel ?? 'CUSTOMER';
 
-  return withTenant(operatorId, async (tx) => {
+  // The order number encodes the service date + a per-day sequence; under concurrent
+  // bookings for the same day two transactions can compute the same sequence and one
+  // loses the `order_number` unique race. Recompute + retry on that specific collision
+  // (the whole tx rolls back atomically, so no partial writes leak between attempts).
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await withTenant(operatorId, async (tx) => {
     // --- Load + validate the operator (needed for the human order number). ---
     const operator = await tx.operator.findFirst({
       where: { id: operatorId },
@@ -252,14 +270,13 @@ export async function createBooking(
     // A customer whose record predates this transaction is a returning guest.
     const isReturningGuest = customer.created_at.getTime() < Date.now() - 1000;
 
-    // --- Generate a per-location, per-day sequential order number. ---
+    // --- Generate a per-location, per-SERVICE-day sequential order number. ---
+    // The number encodes the slot's calendar day, so the sequence must count orders that
+    // already share that day's prefix (NOT orders created today — for a future slot that
+    // count is ~0, which would hand every booking seq 1 and collide on `order_number`).
     const slotDate = timeslot.datetime;
-    const dayStart = new Date(slotDate.getFullYear(), slotDate.getMonth(), slotDate.getDate(), 0, 0, 0, 0);
-    const dayEnd = new Date(slotDate.getFullYear(), slotDate.getMonth(), slotDate.getDate() + 1, 0, 0, 0, 0);
-    const seq =
-      (await tx.order.count({
-        where: { created_at: { gte: dayStart, lt: dayEnd } },
-      })) + 1;
+    const prefix = orderNumberPrefix(operator.location_code, slotDate);
+    const seq = (await tx.order.count({ where: { order_number: { startsWith: prefix } } })) + 1;
     const orderNumber = generateOrderNumber(operator.location_code, slotDate, seq);
 
     // --- Create the order + its single item. ---
@@ -349,7 +366,12 @@ export async function createBooking(
     });
 
     return order;
-  });
+      });
+    } catch (err) {
+      if (attempt < 3 && isOrderNumberCollision(err)) continue;
+      throw err;
+    }
+  }
 }
 
 /**
