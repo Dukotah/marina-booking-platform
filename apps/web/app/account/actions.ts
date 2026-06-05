@@ -11,7 +11,14 @@
  * followup (see slice notes).
  */
 
-import { getOrder, isApiError, type OrderSummary } from '@/lib/api';
+import {
+  getOrder,
+  getAvailability,
+  selfReschedule,
+  isApiError,
+  type AvailabilitySlot,
+  type OrderSummary,
+} from '@/lib/api';
 
 /** Normalize an email for comparison (trim + lowercase). */
 function normalizeEmail(value: string): string {
@@ -88,4 +95,53 @@ export async function lookupBooking(
   }
 
   return { ok: true, orderNumber: order.orderNumber, email };
+}
+
+/**
+ * Bookable slots for an activity on a given day (operator-local YYYY-MM-DD), for the
+ * self-service reschedule picker. Drops full slots and anything already past.
+ */
+export async function fetchRescheduleSlots(
+  activityId: string,
+  isoDate: string,
+): Promise<{ ok: true; slots: AvailabilitySlot[] } | { ok: false; error: string }> {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) {
+    return { ok: false, error: 'Please choose a valid date.' };
+  }
+  try {
+    const day = await getAvailability(activityId, isoDate);
+    const now = Date.now();
+    const slots = day.slots.filter(
+      (s) => s.status !== 'FULL' && s.capacityRemaining > 0 && new Date(s.datetime).getTime() > now,
+    );
+    return { ok: true, slots };
+  } catch (err) {
+    return {
+      ok: false,
+      error: isApiError(err) ? err.message : 'We could not load times for that day.',
+    };
+  }
+}
+
+/**
+ * Move the booking to a new timeslot via the email-gated self-service endpoint.
+ * Identity (order number + email) is re-checked server-side by the API.
+ */
+export async function rescheduleBookingAction(
+  orderNumber: string,
+  email: string,
+  timeslotId: string,
+  orderItemId?: string,
+): Promise<{ ok: true; order: OrderSummary } | { ok: false; error: string }> {
+  try {
+    const order = await selfReschedule(orderNumber, email, timeslotId, orderItemId);
+    return { ok: true, order };
+  } catch (err) {
+    return {
+      ok: false,
+      error: isApiError(err)
+        ? err.message
+        : 'We could not reschedule your booking. Please try again.',
+    };
+  }
 }

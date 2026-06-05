@@ -10,8 +10,9 @@
  * customer-cancel endpoint (gated by the magic-link session) lands, swap the
  * mailto for a server action calling it. See slice followups.
  *
- * Reschedule links the customer to the activity's booking page (rebook a new
- * slot), since drag-to-reschedule is an operator/manifest capability.
+ * Reschedule opens an in-page self-service flow (RescheduleFlow) that moves the
+ * booking to another slot of the same activity via the email-gated API endpoint.
+ * If we don't have the item context, it falls back to linking the rebook page.
  *
  * White-label: all copy uses the tenant's operator name (brand). No platform or
  * marina-specific branding.
@@ -19,6 +20,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import { RescheduleFlow } from '@/components/account/RescheduleFlow';
 
 interface ManagePanelProps {
   orderNumber: string;
@@ -29,6 +31,10 @@ interface ManagePanelProps {
   changeable: boolean;
   /** First activity id, used as a convenient "rebook" target when present. */
   rebookActivityId: string | null;
+  /** Customer email (magic-link stub identity) for the self-service reschedule call. */
+  email: string;
+  /** The upcoming item to reschedule in-page, if one is available. */
+  rescheduleItem: { activityId: string; activityName: string; orderItemId: string } | null;
 }
 
 export function ManagePanel({
@@ -37,8 +43,11 @@ export function ManagePanel({
   contactEmail,
   changeable,
   rebookActivityId,
+  email,
+  rescheduleItem,
 }: ManagePanelProps) {
   const [confirmingCancel, setConfirmingCancel] = useState(false);
+  const [rescheduling, setRescheduling] = useState(false);
 
   if (!changeable) {
     return (
@@ -77,19 +86,33 @@ export function ManagePanel({
       </h2>
 
       <div className="grid gap-3 sm:grid-cols-2">
-        <Link
-          href={
-            rebookActivityId
-              ? `/activities/${encodeURIComponent(rebookActivityId)}`
-              : '/'
-          }
-          className="flex flex-col rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-brand hover:shadow-md"
-        >
-          <span className="text-base font-semibold text-slate-900">Reschedule</span>
-          <span className="mt-1 text-sm text-slate-600">
-            Pick a new date or time by booking a different slot.
-          </span>
-        </Link>
+        {rescheduleItem ? (
+          <button
+            type="button"
+            onClick={() => setRescheduling((v) => !v)}
+            className="flex flex-col rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-brand hover:shadow-md"
+            aria-expanded={rescheduling}
+          >
+            <span className="text-base font-semibold text-slate-900">Reschedule</span>
+            <span className="mt-1 text-sm text-slate-600">
+              Move your reservation to a different day or time.
+            </span>
+          </button>
+        ) : (
+          <Link
+            href={
+              rebookActivityId
+                ? `/activities/${encodeURIComponent(rebookActivityId)}`
+                : '/'
+            }
+            className="flex flex-col rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-brand hover:shadow-md"
+          >
+            <span className="text-base font-semibold text-slate-900">Reschedule</span>
+            <span className="mt-1 text-sm text-slate-600">
+              Pick a new date or time by booking a different slot.
+            </span>
+          </Link>
+        )}
 
         <button
           type="button"
@@ -131,6 +154,17 @@ export function ManagePanel({
             </button>
           </div>
         </div>
+      )}
+
+      {rescheduling && rescheduleItem && (
+        <RescheduleFlow
+          orderNumber={orderNumber}
+          email={email}
+          activityId={rescheduleItem.activityId}
+          activityName={rescheduleItem.activityName}
+          orderItemId={rescheduleItem.orderItemId}
+          onCancel={() => setRescheduling(false)}
+        />
       )}
     </div>
   );

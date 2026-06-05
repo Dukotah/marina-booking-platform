@@ -57,7 +57,7 @@ customer self-service reschedule.
 
 | # | Item | Status |
 |---|---|---|
-| 2.1 | **Customer self-service reschedule** — `rescheduleBooking` service (capacity move + `self_reschedule_hours` window) + staff `POST /orders/:id/reschedule` + customer `POST /orders/:orderNumber/self-reschedule` (email-gated) | ✅ backend (live-verified 5/5); web account slot-picker UI still TODO |
+| 2.1 | **Customer self-service reschedule** — `rescheduleBooking` service (capacity move + `self_reschedule_hours` window) + staff `POST /orders/:id/reschedule` + customer `POST /orders/:orderNumber/self-reschedule` (email-gated) + **web account slot-picker UI** (RescheduleFlow → server actions) | ✅ full-stack (backend live-verified 5/5; web typechecks + builds) |
 
 ## Phase 3 — Power features (the moat for complex customers)
 
@@ -82,6 +82,13 @@ I will build against sandboxes/free tiers and flag exactly when each is needed.
 
 ## Changelog
 
+- **2026-06-04** — **Reschedule web UI (2.1 now full-stack).** Wired the customer account
+  area to the self-service endpoint: `RescheduleFlow` client component (date picker → open
+  slots for that day → confirm) backed by two server actions (`fetchRescheduleSlots`,
+  `rescheduleBookingAction`) + a `selfReschedule` API client method; `ManagePanel` now
+  opens the in-page flow instead of linking to rebooking. Web typechecks + builds. (This
+  commit and onward are **held locally, not pushed** — owner flagged the Vercel build
+  quota; push when it clears.)
 - **2026-06-04** — **Customer self-service reschedule (2.1) — backend + live-verified.**
   New `rescheduleBooking` service moves a booking's item to another slot of the same
   activity: releases the old slot's capacity, takes the new one (recomputing status),

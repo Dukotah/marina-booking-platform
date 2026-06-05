@@ -140,6 +140,16 @@ export default async function BookingsPage({
         operatorName={brand.name}
         changeable={changeable}
         rebookActivityId={rebookActivityId}
+        email={email}
+        rescheduleItem={
+          upcoming[0]
+            ? {
+                activityId: upcoming[0].activityId,
+                activityName: upcoming[0].activityName,
+                orderItemId: upcoming[0].id,
+              }
+            : null
+        }
       />
 
       {upcoming.length > 0 && (
@@ -200,6 +210,8 @@ function ManagePanelSection(props: {
   operatorName: string;
   changeable: boolean;
   rebookActivityId: string | null;
+  email: string;
+  rescheduleItem: { activityId: string; activityName: string; orderItemId: string } | null;
 }) {
   return (
     <section className="mb-8">
@@ -209,6 +221,8 @@ function ManagePanelSection(props: {
         contactEmail={operatorContactEmail()}
         changeable={props.changeable}
         rebookActivityId={props.rebookActivityId}
+        email={props.email}
+        rescheduleItem={props.rescheduleItem}
       />
     </section>
   );

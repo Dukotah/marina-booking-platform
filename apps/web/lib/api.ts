@@ -333,6 +333,24 @@ export async function getOrder(orderNumber: string): Promise<OrderSummary> {
 }
 
 /**
+ * Customer self-service reschedule: move a booking to another timeslot of the same
+ * activity. Email-gated server-side (must match the order's customer email) and
+ * subject to the activity's self-reschedule window. Returns the updated order.
+ */
+export async function selfReschedule(
+  orderNumber: string,
+  email: string,
+  timeslotId: string,
+  orderItemId?: string,
+): Promise<OrderSummary> {
+  const data = await request<{ order: OrderSummary }>(
+    `/api/orders/${encodeURIComponent(orderNumber)}/self-reschedule`,
+    { method: 'POST', body: { email, timeslotId, ...(orderItemId ? { orderItemId } : {}) } },
+  );
+  return data.order;
+}
+
+/**
  * Submit a payment for an order using a tokenized payment source.
  * @param sourceId Stripe PaymentMethod id from Stripe Elements (sent as `sourceId`).
  */
