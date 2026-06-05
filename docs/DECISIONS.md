@@ -624,3 +624,55 @@ delete, 401-anon + 403-GUIDE). Held locally, not pushed (Vercel quota).
 substrate real capacity management is built on. Shipping the catalog + assignment first — with the
 derived in-service count already exposed — lets the resource-backed-availability follow-up be a
 focused capacity change rather than a model-and-API change at once.
+
+## D-024 — Resource-backed availability: shared assets constrain capacity across activities (2026-06-05) — Accepted
+
+Delivered the D-023 follow-up — the actual moat. A `Resource` is now a finite, SHARED pool: an asset
+backing more than one activity (the `ActivityResources` m2m) can only be in one place at one time, so
+booking it for one activity removes that capacity from every sibling activity for the OVERLAPPING
+time. New service `services/resource-availability.ts` is the single primitive both the write-guard and
+the read overlay call.
+
+- **Seat-pool model, using the fields already on `Resource`.** A resource provides
+  `poolTotal = seat_capacity × (quantity − out_of_service_qty)` seats at any instant; a booking of N
+  participants draws N seats. An activity backed by several resources is bound by the scarcest (min
+  remaining). An activity backed by NO active resource returns `remaining: null` — unconstrained,
+  identical to the pre-existing per-timeslot behaviour (zero behaviour change for non-resource
+  operators, which is most of the seed today).
+- **Duration comes from the Rate, not the Activity (corrected mid-build).** `duration_minutes` lives
+  on `Rate` (a "2-hour rental" and a "4-hour rental" are two rates on one activity), NOT on `Activity`
+  (which has no duration field). So a booking occupies `[slot.datetime, slot.datetime + rate.duration)`
+  and contention is measured at the **OrderItem** level — each item carries its own start (timeslot)
+  and its own duration (rate). Aggregated `Timeslot.capacity_booked` is insufficient: one slot can hold
+  mixed-duration bookings. Overlap is the standard half-open test (`a < d ∧ b > c`).
+- **Two call sites, one primitive.** (1) Booking write-guard (`createBooking`): after the per-slot
+  capacity check, refuse with `INSUFFICIENT_RESOURCE_CAPACITY` (409) when the pool can't fit the
+  quantity — authoritative, using the chosen rate's exact duration. (2) Customer day-availability read
+  (`getDayAvailability`): a batched overlay that lowers each slot's `capacityRemaining` to the lesser of
+  its own free seats and the pool's, flips a new `resourceConstrained` flag, and drives the traffic
+  light off the EFFECTIVE remaining (a slot the asset has fully committed reads FULL though its own
+  seats are open). The read is rate-agnostic, so it sizes the candidate window with the activity's
+  LONGEST active rate (conservative — never understates contention).
+- **Structural client typing.** The primitive accepts a hand-written `ResourceClient` interface
+  (delegates typed `(args: any) => Promise<any>`, results re-pinned with local annotations) so BOTH a
+  `Prisma.TransactionClient` (booking tx) and a `TenantClient` (availability read) satisfy it without
+  fighting Prisma's extended-client generics.
+- **No schema/RLS change.** Pure code over existing tables. (Side note: the generated Prisma client was
+  stale — predated `Rate.duration_minutes` — and was regenerated; a build-time artifact, nothing to
+  commit.)
+- **Scoped deliberately.** Enforced on the primary `createBooking` money path + the customer read.
+  **Follow-ups (documented, not yet done):** resource enforcement in `rescheduleBooking` and the POS
+  sale path; whole-unit/exclusive-charter allocation as a per-resource policy (vs today's shared
+  seating); and a resource overlay on the month-range availability rollup.
+
+Verified: typecheck 9/9, **api +6 live cases** vs Neon (full pool when empty, unbacked → null, a
+booking on A drains the OVERLAPPING B slot while a non-overlapping B slot stays full, booking-on-B
+refused with the resource as the sole binding limit, day-availability shows `resourceConstrained` +
+0 remaining + FULL, batched lookup keyed by slot id). Full api suite **156 → 162 green**; grand total
+**233 → 239** (core 69 + isolation 8 + api 162). Held locally, not pushed (Vercel quota).
+
+**Why:** shared multi-asset inventory is the differentiator legacy per-activity tools (Singenuity)
+can't express — a boat double-booked across two activities is the exact failure operators fear.
+Routing both the guard and the customer-facing read through one overlap-aware primitive makes the
+constraint correct at the point of sale and honest in the catalog, while the `remaining: null`
+short-circuit keeps it a no-op for operators who haven't modeled resources.

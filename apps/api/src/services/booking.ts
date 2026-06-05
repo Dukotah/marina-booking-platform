@@ -21,6 +21,7 @@ import {
   type PricingPromo,
 } from '@marina/core';
 import { withTenant } from '@marina/database';
+import { getResourceConstraint } from './resource-availability.js';
 
 /** How an order entered the system (mirrors Prisma `OrderChannel`). */
 export type BookingChannel = 'CUSTOMER' | 'STAFF' | 'KIOSK';
@@ -98,7 +99,7 @@ export async function createBooking(
     // --- Load the rate; it must belong to this activity and be sellable. ---
     const rate = await tx.rate.findFirst({
       where: { id: input.rateId, activity_id: activity.id },
-      select: { id: true, price_cents: true, is_active: true, internal_only: true },
+      select: { id: true, price_cents: true, is_active: true, internal_only: true, duration_minutes: true },
     });
     if (!rate) {
       throw new BookingError('RATE_NOT_FOUND', 'Rate not found for this activity', 404);
@@ -135,6 +136,26 @@ export async function createBooking(
         remaining <= 0
           ? 'This timeslot is fully booked'
           : `Only ${remaining} spot(s) remain for this timeslot`,
+        409,
+      );
+    }
+
+    // --- Shared-resource capacity: a backing asset (boat/equipment) may be consumed by
+    // a concurrent booking on a SIBLING activity, so the slot's own capacity isn't the
+    // whole story. Refuse if no pool unit remains across the overlapping window. A `null`
+    // remaining means the activity is backed by no active resource (no extra constraint).
+    const resource = await getResourceConstraint(tx, {
+      activityId: activity.id,
+      slotStart: timeslot.datetime,
+      durationMs: rate.duration_minutes * 60_000,
+    });
+    if (resource.remaining !== null && input.quantity > resource.remaining) {
+      const what = resource.bindingResourceName ?? 'the required resource';
+      throw new BookingError(
+        'INSUFFICIENT_RESOURCE_CAPACITY',
+        resource.remaining <= 0
+          ? `${what} is fully committed at this time`
+          : `Only ${resource.remaining} ${what} spot(s) remain at this time`,
         409,
       );
     }

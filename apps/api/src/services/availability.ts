@@ -12,6 +12,7 @@
  */
 import { computeSlotStatus, generateTimeslots, type SlotStatus } from '@marina/core';
 import type { TenantClient } from '@marina/database';
+import { getResourceConstraints } from './resource-availability.js';
 
 /** Customer-facing view of a single bookable timeslot. */
 export interface TimeslotView {
@@ -20,9 +21,16 @@ export interface TimeslotView {
   datetime: string;
   capacityTotal: number;
   capacityBooked: number;
+  /**
+   * Spots a customer can actually book — the lesser of the slot's own remaining and any
+   * shared-resource pool remaining (a backing asset consumed by a concurrent sibling
+   * activity reduces this below the slot's own free seats).
+   */
   capacityRemaining: number;
   status: SlotStatus;
   isOvernight: boolean;
+  /** True when a shared resource — not the slot's own capacity — is the binding limit. */
+  resourceConstrained: boolean;
 }
 
 /** Per-day availability rollup used by calendars / month views. */
@@ -158,22 +166,32 @@ async function resolveActivityTimezone(db: TenantClient, activityId: string): Pr
   return activity.location?.timezone ?? activity.operator.timezone;
 }
 
-function toView(slot: {
-  id: string;
-  datetime: Date;
-  capacity_total: number;
-  capacity_booked: number;
-  is_overnight: boolean;
-}): TimeslotView {
-  const remaining = Math.max(0, slot.capacity_total - slot.capacity_booked);
+function toView(
+  slot: {
+    id: string;
+    datetime: Date;
+    capacity_total: number;
+    capacity_booked: number;
+    is_overnight: boolean;
+  },
+  /** Shared-resource pool remaining at this slot, or null when no resource constrains it. */
+  resourceRemaining: number | null,
+): TimeslotView {
+  const ownRemaining = Math.max(0, slot.capacity_total - slot.capacity_booked);
+  const resourceConstrained = resourceRemaining !== null && resourceRemaining < ownRemaining;
+  const effectiveRemaining = resourceConstrained ? resourceRemaining : ownRemaining;
+  // Drive the traffic-light off the EFFECTIVE remaining so a slot the shared asset has
+  // fully committed reads FULL even though its own seats are open.
+  const effectiveBooked = slot.capacity_total - effectiveRemaining;
   return {
     id: slot.id,
     datetime: slot.datetime.toISOString(),
     capacityTotal: slot.capacity_total,
     capacityBooked: slot.capacity_booked,
-    capacityRemaining: remaining,
-    status: computeSlotStatus(slot.capacity_total, slot.capacity_booked),
+    capacityRemaining: effectiveRemaining,
+    status: computeSlotStatus(slot.capacity_total, effectiveBooked),
     isOvernight: slot.is_overnight,
+    resourceConstrained,
   };
 }
 
@@ -207,11 +225,29 @@ export async function getDayAvailability(
     },
   });
 
+  // Overlay shared-resource availability: a backing asset consumed by a concurrent
+  // sibling activity reduces what's actually bookable here. One batched lookup for the
+  // whole day; a no-resource activity comes back all-null (own capacity unchanged).
+  // This read is rate-agnostic (no rate chosen yet), so we size the candidate window
+  // with the activity's LONGEST active rate — the conservative window, so a slot the
+  // asset could conflict with at its longest booking is shown constrained.
+  const durAgg = await db.rate.aggregate({
+    where: { activity_id: params.activityId, is_active: true },
+    _max: { duration_minutes: true },
+  });
+  const candidateDurationMs = (durAgg._max.duration_minutes ?? 240) * 60_000;
+  const constraints = await getResourceConstraints(
+    db,
+    params.activityId,
+    slots.map((s) => ({ id: s.id, datetime: s.datetime })),
+    candidateDurationMs,
+  );
+
   return {
     activityId: params.activityId,
     date: params.date,
     timezone: timeZone,
-    timeslots: slots.map(toView),
+    timeslots: slots.map((s) => toView(s, constraints.get(s.id)?.remaining ?? null)),
   };
 }
 

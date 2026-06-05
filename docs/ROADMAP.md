@@ -73,7 +73,8 @@ channel/OTA + affiliate management · accounting exports (QuickBooks/Xero).
 |---|---|---|
 | 3.x | **Multi-location roll-up reporting (backend)** — `GET /reports/by-location` (+`.csv`): item-level location attribution (gross = unit×qty), per-location volume + a chain roll-up total (D-020) | 🟦 backend live-verified 3/3. Admin dashboards on top of it (+ per-location filtering of `/revenue`,`/bookings`, per-location net) are follow-ups |
 | 3.x | **Accounting export (backend)** — `GET /reports/transactions` (+`.csv`): payment-level journal keyed by cash date, net-of-refunds per row, per-tender reconciliation + totals (QuickBooks/Xero import) (D-021) | 🟦 backend live-verified 3/3. Direct QuickBooks/Xero API sync (OAuth + GL account mapping) is a later gated follow-up |
-| 3.x | **Resource/asset management (backend)** — staff CRUD `/api/resources` + activity assignment (ActivityResources m2m); fields seat_capacity/quantity/out_of_service_qty, derived availableQty; tenant-validated refs (D-023) | 🟦 catalog + assignment live-verified 7/7. **Resource-backed availability** (assets constrain capacity across the activities they back) is the high-value follow-up |
+| 3.x | **Resource/asset management (backend)** — staff CRUD `/api/resources` + activity assignment (ActivityResources m2m); fields seat_capacity/quantity/out_of_service_qty, derived availableQty; tenant-validated refs (D-023) | ✅ catalog + assignment live-verified 7/7 |
+| 3.x | **Resource-backed availability** — shared assets constrain capacity across every activity they back; OrderItem-level time-overlap by rate duration; enforced in `createBooking` (`INSUFFICIENT_RESOURCE_CAPACITY`) + overlaid on `getDayAvailability` (`resourceConstrained`) (D-024) | 🟦 live-verified 6/6 on the booking + customer-read paths. Follow-ups: reschedule/POS enforcement, whole-unit (exclusive-charter) allocation policy, month-range overlay |
 
 ## Go-live checklist (before selling)
 
@@ -92,6 +93,26 @@ I will build against sandboxes/free tiers and flag exactly when each is needed.
 
 ## Changelog
 
+- **2026-06-05** — **Resource-backed availability — the moat (Phase 3, D-024).** Made capacity
+  derive from shared physical assets: a `Resource` backing more than one activity is now one pool, so
+  booking it for one activity removes that capacity from every sibling for the OVERLAPPING time. New
+  `services/resource-availability.ts` is the single overlap-aware primitive both paths use. Contention
+  is OrderItem-level (each item's own slot start + its own `Rate.duration_minutes` — duration lives on
+  Rate, not Activity, corrected mid-build), seat-pool sized as `seat_capacity × (quantity −
+  out_of_service_qty)`. Enforced in `createBooking` (refuse `INSUFFICIENT_RESOURCE_CAPACITY` 409) and
+  overlaid on `getDayAvailability` (lowers `capacityRemaining`, sets a new `resourceConstrained` flag,
+  drives the traffic light off effective remaining). An activity with no active resource returns
+  `remaining: null` → a no-op (zero behaviour change for non-resource operators). No schema/RLS change.
+  New live suite **6/6** (full pool when empty, unbacked→null, A's booking drains the overlapping B
+  slot while a non-overlapping B slot stays full, B-booking refused with the resource as sole binding
+  limit, day-availability resourceConstrained+0+FULL, batched lookup keyed by slot). api **156 → 162**;
+  grand total **233 → 239 green** (core 69 + isolation 8 + api 162). typecheck 9/9. Follow-ups:
+  reschedule/POS enforcement, whole-unit allocation policy, month-range overlay. Held locally, not
+  pushed (Vercel quota).
+- **2026-06-05** — **Resource/asset catalog CRUD + activity assignment (Phase 3, D-023).** Staff CRUD
+  `/api/resources` + the `ActivityResources` m2m assignment (seat_capacity/quantity/out_of_service_qty,
+  derived availableQty, tenant-validated refs). Pure code slice — `Resource` was already in schema +
+  rls.sql. Live-verified **7/7**; api **149 → 156**. Held locally, not pushed (Vercel quota).
 - **2026-06-05** — **Versioned waiver template management (1.9 / go-live, D-022).** Waiver
   templates were seed-only with no management API. Added staff management designed around audit
   integrity: `GET /waivers/templates` (list versions + each one's `signatureCount`, order:read),
