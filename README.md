@@ -58,7 +58,7 @@ Read `PRODUCT_REQUIREMENTS.md` first — it contains everything you need:
 3. Auth (Clerk for operators)
 4. Activity CRUD API
 5. Customer booking portal (catalog → checkout)
-6. Square payment integration
+6. Stripe payment integration
 7. Email confirmations (Resend)
 8. Operator day manifest view
 ```
@@ -74,7 +74,7 @@ Read `PRODUCT_REQUIREMENTS.md` first — it contains everything you need:
 | Database | PostgreSQL via Prisma ORM |
 | Cache | Redis |
 | Jobs | BullMQ |
-| Payments | Square SDK (primary), Stripe (alt) |
+| Payments | Stripe (PaymentIntents + Elements) |
 | Email | Resend + React Email |
 | SMS | Twilio |
 | Auth | Clerk (operators), magic link (customers) |

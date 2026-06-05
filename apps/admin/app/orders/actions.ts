@@ -278,7 +278,7 @@ async function dispatchConfirmationEmail(
  * OrderEvent. Validates the requested amount against the remaining refundable
  * amount so an order's money can never go inconsistent.
  *
- * Note on the processor: issuing the money-movement refund against Square/Stripe
+ * Note on the processor: issuing the money-movement refund against Stripe
  * is owned by the payments API slice (it holds the processor SDK + secrets). This
  * action records the refund against the Payment ledger; for card payments the
  * processor refund should be initiated through the payments endpoint. We block

@@ -197,7 +197,7 @@ model Payment {
   card_last_four           String?
   card_brand               String?
   cardholder_name          String?
-  processor                String   @default("SQUARE")
+  processor                String   @default("STRIPE")
   processor_transaction_id String?
   is_manually_keyed        Boolean  @default(false)
   processed_at             DateTime @default(now())
@@ -336,7 +336,7 @@ model OrderEvent {
 | Database | PostgreSQL + Prisma |
 | Cache | Redis |
 | Jobs | BullMQ |
-| Payments | Square SDK |
+| Payments | Stripe (PaymentIntents + Elements) |
 | Email | Resend + React Email |
 | SMS | Twilio |
 | Auth | Clerk (operators), Magic Link (customers) |
@@ -353,7 +353,7 @@ model OrderEvent {
 3. API: auth, activities, rates, timeslots
 4. Admin: operator setup wizard
 5. Customer portal: catalog → date → time → rate
-6. API: orders + payment (Square)
+6. API: orders + payment (Stripe)
 7. Email: confirmation + reminder (Resend)
 8. Admin: day Gantt manifest
 9. Admin: order list + detail + refund

@@ -8,7 +8,7 @@
  * submit pipeline:
  *
  *   1. validate the form (react-hook-form, rules mirror @marina/core schemas)
- *   2. tokenize the card via the Square Web Payments SDK (PaymentSection)
+ *   2. tokenize the card via Stripe Elements (PaymentSection)
  *   3. call the `placeOrder` server action (createBooking → submitPayment)
  *   4. redirect to /confirmation/[orderNumber]
  *
@@ -22,7 +22,7 @@ import { FormProvider, useForm } from 'react-hook-form';
 import { AlertTriangle } from 'lucide-react';
 import { calculatePricing } from '@marina/core';
 import { Button, Card, CardContent, CardHeader, CardTitle } from '@marina/ui';
-import type { SquareConfig } from '@/app/checkout/square-config';
+import type { StripeConfig } from '@/app/checkout/stripe-config';
 import { placeOrder } from '@/app/checkout/actions';
 import { OrderSummary } from './OrderSummary';
 import { CustomerFields } from './CustomerFields';
@@ -41,7 +41,7 @@ import type {
 
 interface CheckoutClientProps {
   selection: CheckoutSelection;
-  square: SquareConfig;
+  stripe: StripeConfig;
   /** Operator (white-label) name for the waiver copy. */
   operatorName: string;
 }
@@ -77,7 +77,7 @@ function Section({
 
 export function CheckoutClient({
   selection,
-  square,
+  stripe,
   operatorName,
 }: CheckoutClientProps) {
   const router = useRouter();
@@ -134,7 +134,7 @@ export function CheckoutClient({
   const onSubmit = async (values: CheckoutFormValues) => {
     setSubmitError(null);
 
-    if (!square.configured) {
+    if (!stripe.configured) {
       setSubmitError(
         'Online payments are not configured for this site yet, so this booking cannot be completed online. Please contact us to finish your reservation.',
       );
@@ -216,7 +216,7 @@ export function CheckoutClient({
             )}
 
             <Section title="Payment" description="Secure card payment.">
-              <PaymentSection ref={paymentRef} square={square} />
+              <PaymentSection ref={paymentRef} stripe={stripe} />
             </Section>
           </div>
 
@@ -281,7 +281,7 @@ export function CheckoutClient({
                 size="lg"
                 className="w-full"
                 loading={submitting}
-                disabled={!square.configured}
+                disabled={!stripe.configured}
               >
                 {submitting ? 'Processing…' : 'Complete booking'}
               </Button>

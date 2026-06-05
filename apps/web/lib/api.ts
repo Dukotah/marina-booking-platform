@@ -333,8 +333,8 @@ export async function getOrder(orderNumber: string): Promise<OrderSummary> {
 }
 
 /**
- * Submit a payment for an order using a tokenized payment source (Square nonce).
- * @param sourceId Tokenized card/source id from the payment form SDK.
+ * Submit a payment for an order using a tokenized payment source.
+ * @param sourceId Stripe PaymentMethod id from Stripe Elements (sent as `sourceId`).
  */
 export async function submitPayment(
   orderId: string,

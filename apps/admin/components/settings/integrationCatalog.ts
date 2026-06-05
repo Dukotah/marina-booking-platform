@@ -29,24 +29,14 @@ export interface IntegrationDef {
 
 export const INTEGRATION_CATALOG: IntegrationDef[] = [
   {
-    key: 'square',
-    name: 'Square',
-    category: 'Payments',
-    description: 'Accept card payments and reconcile transactions.',
-    fields: [
-      { name: 'application_id', label: 'Application ID', placeholder: 'sq0idp-…' },
-      { name: 'access_token', label: 'Access token', secret: true, placeholder: 'EAAA…' },
-      { name: 'location_id', label: 'Square location ID', placeholder: 'L…' },
-    ],
-  },
-  {
     key: 'stripe',
     name: 'Stripe',
     category: 'Payments',
-    description: 'Alternative card processor.',
+    description: 'Accept card payments and reconcile transactions.',
     fields: [
       { name: 'publishable_key', label: 'Publishable key', placeholder: 'pk_live_…' },
       { name: 'secret_key', label: 'Secret key', secret: true, placeholder: 'sk_live_…' },
+      { name: 'webhook_secret', label: 'Webhook signing secret', secret: true, placeholder: 'whsec_…' },
     ],
   },
   {

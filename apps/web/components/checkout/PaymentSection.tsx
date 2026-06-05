@@ -1,34 +1,34 @@
 'use client';
 
 /**
- * Square Web Payments card entry.
+ * Stripe Elements card entry.
  *
- * Loads Square's browser SDK (sandbox or production per server-resolved config),
- * mounts a hosted, PCI-safe card field, and exposes a `tokenize()` method via an
- * imperative ref so the parent can obtain a single-use payment token (nonce) at
- * submit time and pass it to the booking action.
+ * Loads Stripe.js with the public publishable key, mounts a hosted, PCI-safe
+ * CardElement, and exposes a `tokenize()` method via an imperative ref so the
+ * parent can obtain a single-use PaymentMethod id at submit time and pass it to
+ * the booking action (which charges it server-side via a PaymentIntent).
  *
- * When Square is not configured (no application/location id — the common early
- * dev state), it renders a clear "sandbox not configured" notice instead of a
- * card field, and `tokenize()` returns a sentinel so the parent can decide how to
- * proceed (e.g. block submit and explain). No secrets touch the browser: only
- * the public application/location ids are used here.
+ * When Stripe is not configured (no publishable key — the common early dev
+ * state), it renders a clear "payments not configured" notice instead of a card
+ * field; the parent guards submit on `stripe.configured`, so `tokenize()` is never
+ * called in that state. No secrets touch the browser: only the publishable key.
  */
+import { forwardRef, useImperativeHandle, useMemo, useState } from 'react';
+import { loadStripe, type Stripe } from '@stripe/stripe-js';
 import {
-  forwardRef,
-  useEffect,
-  useImperativeHandle,
-  useRef,
-  useState,
-} from 'react';
+  CardElement,
+  Elements,
+  useElements,
+  useStripe,
+} from '@stripe/react-stripe-js';
 import { AlertTriangle, CreditCard, Lock } from 'lucide-react';
-import type { SquareConfig } from '@/app/checkout/square-config';
+import type { StripeConfig } from '@/app/checkout/stripe-config';
 
 /** What the parent can ask of this section. */
 export interface PaymentSectionHandle {
   /**
-   * Tokenize the entered card. Returns the source id (nonce) on success, or an
-   * object describing why it could not (so the parent shows a message).
+   * Tokenize the entered card. Returns the PaymentMethod id (as `sourceId`) on
+   * success, or an object describing why it could not (so the parent shows a msg).
    */
   tokenize: () => Promise<
     { ok: true; sourceId: string } | { ok: false; error: string }
@@ -38,189 +38,117 @@ export interface PaymentSectionHandle {
 }
 
 interface PaymentSectionProps {
-  square: SquareConfig;
+  stripe: StripeConfig;
 }
 
-const SDK_URLS: Record<SquareConfig['environment'], string> = {
-  sandbox: 'https://sandbox.web.squarecdn.com/v1/square.js',
-  production: 'https://web.squarecdn.com/v1/square.js',
+const CARD_ELEMENT_OPTIONS = {
+  style: {
+    base: {
+      fontSize: '16px',
+      color: '#0f172a',
+      '::placeholder': { color: '#94a3b8' },
+    },
+    invalid: { color: '#dc2626' },
+  },
 };
 
-// Minimal structural types for the parts of the Square SDK we use. The SDK has
-// no first-party types bundled here, so we type just our surface to avoid `any`.
-interface SquareTokenResult {
-  status: string;
-  token?: string;
-  errors?: Array<{ message?: string }>;
-}
-interface SquareCard {
-  attach: (selector: string | HTMLElement) => Promise<void>;
-  tokenize: () => Promise<SquareTokenResult>;
-  destroy?: () => Promise<void> | void;
-}
-interface SquarePayments {
-  card: () => Promise<SquareCard>;
-}
-interface SquareSdk {
-  payments: (applicationId: string, locationId: string) => SquarePayments;
-}
-
-declare global {
-  interface Window {
-    Square?: SquareSdk;
-  }
-}
-
-/** Load the Square SDK script once; resolve when window.Square is available. */
-function loadSquareSdk(url: string): Promise<SquareSdk> {
-  return new Promise((resolve, reject) => {
-    if (typeof window === 'undefined') {
-      reject(new Error('Square SDK can only load in the browser.'));
-      return;
-    }
-    if (window.Square) {
-      resolve(window.Square);
-      return;
-    }
-    const existing = document.querySelector<HTMLScriptElement>(
-      `script[src="${url}"]`,
-    );
-    const onLoad = () => {
-      if (window.Square) resolve(window.Square);
-      else reject(new Error('Square SDK loaded but is unavailable.'));
-    };
-    if (existing) {
-      existing.addEventListener('load', onLoad, { once: true });
-      existing.addEventListener(
-        'error',
-        () => reject(new Error('Failed to load the payment SDK.')),
-        { once: true },
-      );
-      return;
-    }
-    const script = document.createElement('script');
-    script.src = url;
-    script.async = true;
-    script.addEventListener('load', onLoad, { once: true });
-    script.addEventListener(
-      'error',
-      () => reject(new Error('Failed to load the payment SDK.')),
-      { once: true },
-    );
-    document.head.appendChild(script);
-  });
-}
-
-export const PaymentSection = forwardRef<PaymentSectionHandle, PaymentSectionProps>(
-  function PaymentSection({ square }, ref) {
-    const containerRef = useRef<HTMLDivElement>(null);
-    const cardRef = useRef<SquareCard | null>(null);
-    const [status, setStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>(
-      square.configured ? 'loading' : 'idle',
-    );
-    const [loadError, setLoadError] = useState<string | null>(null);
-
-    useEffect(() => {
-      if (!square.configured || !square.applicationId || !square.locationId) {
-        return;
-      }
-      let cancelled = false;
-      let card: SquareCard | null = null;
-
-      (async () => {
-        try {
-          const sdk = await loadSquareSdk(SDK_URLS[square.environment]);
-          if (cancelled) return;
-          const payments = sdk.payments(square.applicationId!, square.locationId!);
-          card = await payments.card();
-          if (cancelled) {
-            await card.destroy?.();
-            return;
-          }
-          if (containerRef.current) {
-            await card.attach(containerRef.current);
-          }
-          if (cancelled) {
-            await card.destroy?.();
-            return;
-          }
-          cardRef.current = card;
-          setStatus('ready');
-        } catch (err) {
-          if (cancelled) return;
-          setLoadError(
-            err instanceof Error
-              ? err.message
-              : 'The payment form could not be loaded.',
-          );
-          setStatus('error');
-        }
-      })();
-
-      return () => {
-        cancelled = true;
-        const c = cardRef.current ?? card;
-        cardRef.current = null;
-        void c?.destroy?.();
-      };
-    }, [square]);
+/**
+ * Inner form — lives inside <Elements> so it can use the Stripe hooks. Exposes the
+ * imperative handle the parent drives at submit time.
+ */
+const CardForm = forwardRef<PaymentSectionHandle, { testMode: boolean }>(
+  function CardForm({ testMode }, ref) {
+    const stripe = useStripe();
+    const elements = useElements();
+    const [ready, setReady] = useState(false);
+    const [fieldError, setFieldError] = useState<string | null>(null);
 
     useImperativeHandle(
       ref,
       () => ({
-        isReady: () => status === 'ready' && cardRef.current !== null,
+        isReady: () => Boolean(stripe && elements && ready),
         tokenize: async () => {
-          if (!square.configured) {
-            return {
-              ok: false,
-              error:
-                'Online payments are not configured for this site yet. Please contact us to complete your booking.',
-            };
+          if (!stripe || !elements) {
+            return { ok: false, error: 'The payment form is not ready yet. Please wait a moment.' };
           }
-          const card = cardRef.current;
+          const card = elements.getElement(CardElement);
           if (!card) {
+            return { ok: false, error: 'The payment form is not ready yet. Please wait a moment.' };
+          }
+          const { error, paymentMethod } = await stripe.createPaymentMethod({
+            type: 'card',
+            card,
+          });
+          if (error || !paymentMethod) {
             return {
               ok: false,
-              error: 'The payment form is not ready yet. Please wait a moment.',
+              error: error?.message ?? 'Please check your card details and try again.',
             };
           }
-          try {
-            const result = await card.tokenize();
-            if (result.status === 'OK' && result.token) {
-              return { ok: true, sourceId: result.token };
-            }
-            const msg =
-              result.errors?.map((e) => e.message).filter(Boolean).join(' ') ||
-              'Please check your card details and try again.';
-            return { ok: false, error: msg };
-          } catch {
-            return {
-              ok: false,
-              error: 'We could not process your card. Please try again.',
-            };
-          }
+          return { ok: true, sourceId: paymentMethod.id };
         },
       }),
-      [square, status],
+      [stripe, elements, ready],
     );
 
-    // --- Not configured: clear sandbox notice (no card field). ----------------
-    if (!square.configured) {
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
+          <CreditCard className="h-4 w-4" aria-hidden />
+          Card details
+          {testMode && (
+            <span className="rounded bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-slate-500">
+              Test
+            </span>
+          )}
+        </div>
+
+        {/* Stripe mounts its hosted, PCI-safe card iframe inside this element. */}
+        <div className="min-h-[44px] rounded-md border border-slate-300 bg-white p-3">
+          <CardElement
+            options={CARD_ELEMENT_OPTIONS}
+            onReady={() => setReady(true)}
+            onChange={(e) => setFieldError(e.error?.message ?? null)}
+          />
+        </div>
+
+        {!ready && <p className="text-sm text-slate-500">Loading secure card field…</p>}
+        {fieldError && (
+          <p role="alert" className="text-sm text-red-600">
+            {fieldError}
+          </p>
+        )}
+
+        <p className="flex items-center gap-1.5 text-xs text-slate-400">
+          <Lock className="h-3.5 w-3.5" aria-hidden />
+          Your card is encrypted and processed securely. We never see your card number.
+        </p>
+      </div>
+    );
+  },
+);
+
+export const PaymentSection = forwardRef<PaymentSectionHandle, PaymentSectionProps>(
+  function PaymentSection({ stripe }, ref) {
+    // Hooks must run unconditionally — build the Stripe instance (null if unconfigured).
+    const stripePromise = useMemo<Promise<Stripe | null> | null>(
+      () => (stripe.configured && stripe.publishableKey ? loadStripe(stripe.publishableKey) : null),
+      [stripe.configured, stripe.publishableKey],
+    );
+
+    // --- Not configured: clear notice (no card field). The parent guards submit on
+    // stripe.configured, so the imperative ref is never used in this state. --------
+    if (!stripePromise) {
       return (
         <div className="rounded-lg border border-amber-300 bg-amber-50 p-4">
           <div className="flex items-start gap-3">
-            <AlertTriangle
-              className="mt-0.5 h-5 w-5 shrink-0 text-amber-600"
-              aria-hidden
-            />
+            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" aria-hidden />
             <div className="space-y-1 text-sm">
-              <p className="font-semibold text-amber-900">
-                Payments sandbox not configured
-              </p>
+              <p className="font-semibold text-amber-900">Payments not configured</p>
               <p className="text-amber-800">
-                Card payments are not set up for this site yet. Add a Square
-                application id and location id to enable secure checkout. Until
-                then, bookings cannot be paid online here.
+                Card payments are not set up for this site yet. Add a Stripe publishable
+                key to enable secure checkout. Until then, bookings cannot be paid online
+                here.
               </p>
             </div>
           </div>
@@ -229,38 +157,9 @@ export const PaymentSection = forwardRef<PaymentSectionHandle, PaymentSectionPro
     }
 
     return (
-      <div className="space-y-3">
-        <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
-          <CreditCard className="h-4 w-4" aria-hidden />
-          Card details
-          {square.environment === 'sandbox' && (
-            <span className="rounded bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-slate-500">
-              Sandbox
-            </span>
-          )}
-        </div>
-
-        {/* Square mounts its hosted, PCI-safe card iframe inside this element. */}
-        <div
-          ref={containerRef}
-          className="min-h-[56px] rounded-md border border-slate-300 bg-white p-1"
-        />
-
-        {status === 'loading' && (
-          <p className="text-sm text-slate-500">Loading secure card field…</p>
-        )}
-        {status === 'error' && (
-          <p role="alert" className="text-sm text-red-600">
-            {loadError ?? 'The payment form could not be loaded. Please refresh.'}
-          </p>
-        )}
-
-        <p className="flex items-center gap-1.5 text-xs text-slate-400">
-          <Lock className="h-3.5 w-3.5" aria-hidden />
-          Your card is encrypted and processed securely. We never see your card
-          number.
-        </p>
-      </div>
+      <Elements stripe={stripePromise}>
+        <CardForm ref={ref} testMode={stripe.testMode} />
+      </Elements>
     );
   },
 );

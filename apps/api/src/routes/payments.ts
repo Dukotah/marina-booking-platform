@@ -1,16 +1,16 @@
 /**
- * Payments API — charge a booking and refund it (Square, sandbox-first).
+ * Payments API — charge a booking and refund it (Stripe, test-first).
  *
  *   POST /api/payments/charge        public  — charge a card against an order
  *   POST /api/payments/:id/refund    staff   — full/partial refund (order:refund)
  *
  * All money is integer cents. Every DB write is tenant-scoped (RLS via c.var.db)
  * and the multi-row mutations run inside a single tenant transaction so an order's
- * balance and its payment row can never drift. Square's network call happens
+ * balance and its payment row can never drift. Stripe's network call happens
  * BEFORE the transaction (you don't want to hold a DB tx open across an external
  * HTTP call); the transaction then records the already-settled result.
  *
- * If Square isn't configured, every endpoint returns a clean 501 instead of
+ * If Stripe isn't configured, every endpoint returns a clean 501 instead of
  * crashing — payments are an opt-in integration.
  */
 import { Hono } from 'hono';
@@ -25,16 +25,16 @@ import { requireStaff } from '../middleware/auth.js';
 import {
   createPayment,
   refundPayment,
-  isSquareConfigured,
-  SquareNotConfiguredError,
-  SquarePaymentError,
-} from '../services/square.js';
+  isStripeConfigured,
+  StripeNotConfiguredError,
+  StripePaymentError,
+} from '../services/stripe.js';
 
 export const payments = new Hono<Env>();
 
 const chargeSchema = z.object({
   orderId: z.string().min(1),
-  /** Card nonce from the Square Web Payments SDK. */
+  /** Stripe PaymentMethod id created client-side by Stripe.js / Elements. */
   sourceId: z.string().min(1),
   /** Amount to charge, integer cents. Defaults to the order's full balance. */
   amountCents: z.number().int().positive().optional(),
@@ -48,12 +48,12 @@ const refundSchema = z.object({
   reason: z.string().max(192).optional(),
 });
 
-/** Map a Square service error to a clean JSON response. */
-function squareErrorResponse(c: Context<Env>, err: unknown) {
-  if (err instanceof SquareNotConfiguredError) {
+/** Map a Stripe service error to a clean JSON response. */
+function stripeErrorResponse(c: Context<Env>, err: unknown) {
+  if (err instanceof StripeNotConfiguredError) {
     return c.json({ error: 'payments not configured' }, 501);
   }
-  if (err instanceof SquarePaymentError) {
+  if (err instanceof StripePaymentError) {
     return c.json(
       { error: err.message, code: err.code ?? null },
       err.status as ContentfulStatusCode,
@@ -68,7 +68,7 @@ function squareErrorResponse(c: Context<Env>, err: unknown) {
  * OrderEvent. Public because customers pay during checkout (no staff session).
  */
 payments.post('/charge', async (c) => {
-  if (!isSquareConfigured()) {
+  if (!isStripeConfigured()) {
     return c.json({ error: 'payments not configured' }, 501);
   }
 
@@ -106,7 +106,7 @@ payments.post('/charge', async (c) => {
       idempotencyKey: parsed.data.idempotencyKey ?? createId(),
     });
   } catch (err) {
-    return squareErrorResponse(c, err);
+    return stripeErrorResponse(c, err);
   }
 
   // Record the settled charge atomically against the order.
@@ -125,7 +125,7 @@ payments.post('/charge', async (c) => {
         card_brand: result.cardBrand,
         card_last_four: result.cardLastFour,
         cardholder_name: result.cardholderName,
-        processor: 'SQUARE',
+        processor: 'STRIPE',
         processor_transaction_id: result.paymentId,
       },
     });
@@ -187,7 +187,7 @@ payments.post('/charge', async (c) => {
 payments.post('/:id/refund', requireStaff, async (c) => {
   assertPermission(c.var.auth, 'order:refund');
 
-  if (!isSquareConfigured()) {
+  if (!isStripeConfigured()) {
     return c.json({ error: 'payments not configured' }, 501);
   }
 
@@ -202,8 +202,8 @@ payments.post('/:id/refund', requireStaff, async (c) => {
   if (!payment) {
     return c.json({ error: 'Payment not found' }, 404);
   }
-  if (payment.processor !== 'SQUARE' || !payment.processor_transaction_id) {
-    return c.json({ error: 'Payment is not a refundable Square transaction' }, 400);
+  if (payment.processor !== 'STRIPE' || !payment.processor_transaction_id) {
+    return c.json({ error: 'Payment is not a refundable Stripe transaction' }, 400);
   }
 
   const refundable = payment.amount_cents - payment.refunded_cents;
@@ -228,7 +228,7 @@ payments.post('/:id/refund', requireStaff, async (c) => {
       reason: parsed.data.reason,
     });
   } catch (err) {
-    return squareErrorResponse(c, err);
+    return stripeErrorResponse(c, err);
   }
 
   const newRefunded = payment.refunded_cents + amountCents;

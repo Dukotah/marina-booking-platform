@@ -12,7 +12,7 @@
 import Link from 'next/link';
 import { getActivity, getAvailability, isApiError } from '@/lib/api';
 import { getBrand } from '@/lib/brand';
-import { getSquareConfig } from './square-config';
+import { getStripeConfig } from './stripe-config';
 import { CheckoutClient } from '@/components/checkout/CheckoutClient';
 import type { CheckoutSelection } from '@/components/checkout/types';
 
@@ -143,7 +143,7 @@ export default async function CheckoutPage({ searchParams }: CheckoutPageProps) 
     maxQuantity,
   };
 
-  const square = getSquareConfig();
+  const stripe = getStripeConfig();
   const brand = getBrand();
 
   return (
@@ -165,7 +165,7 @@ export default async function CheckoutPage({ searchParams }: CheckoutPageProps) 
 
       <CheckoutClient
         selection={selection}
-        square={square}
+        stripe={stripe}
         operatorName={brand.name}
       />
     </main>

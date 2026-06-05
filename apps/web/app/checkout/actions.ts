@@ -81,7 +81,7 @@ export interface PlaceOrderInput {
   }>;
   promoCode?: string;
   tipCents?: number;
-  /** Tokenized payment source from the Square Web Payments SDK. */
+  /** Tokenized payment source — a Stripe PaymentMethod id from Stripe Elements. */
   paymentSourceId: string;
   heardAboutUs?: string;
   isReturningGuest?: boolean;

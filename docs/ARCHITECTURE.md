@@ -61,7 +61,7 @@ Permission, Resource, Integration, RLS) added.
 | API | Node.js + Hono (Bun optional later) |
 | Database | PostgreSQL + Prisma ORM, RLS for tenant isolation |
 | Cache / jobs | Redis + BullMQ (added when needed, not MVP day 1) |
-| Payments | Square SDK (sandbox first), Stripe optional |
+| Payments | Stripe (PaymentIntents + Elements), test mode first (D-013) |
 | Email | Resend + React Email |
 | SMS | Twilio |
 | Auth | Clerk (operators/staff) + magic link (customers) |
@@ -101,5 +101,5 @@ Checked 2026-06-04 on the owner's Windows 11 machine:
 ## 7. Secrets / external accounts needed (deferred until go-live)
 
 Build runs against sandboxes/free tiers first. These need the owner eventually:
-Neon connection string, Clerk keys, Square sandbox→production keys, Resend API key,
+Neon connection string, Clerk keys, Stripe test→production keys + webhook secret, Resend API key,
 Twilio (later), Cloudflare R2, deploy accounts. Tracked in `ROADMAP.md`.

@@ -41,7 +41,7 @@ exercised against a live DB/keys (waiting on 0.5 Neon + service keys).
 | 1.2 | Activity CRUD (simplified wizard, generic categories) | ✅🧪 |
 | 1.3 | Customer portal: catalog → date → time → rate → checkout | ✅🧪 (booking **service** now live-verified vs Neon — pricing/capacity/order graph; UI flow still 🧪) |
 | 1.4 | Availability calendar (color-coded) + capacity-aware time slots | ✅🧪 |
-| 1.5 | Square payments (sandbox, SDK v44) | ✅🧪 (needs Square keys to charge) |
+| 1.5 | Stripe payments (test mode, PaymentIntents + Elements) | ✅🧪 (switched from Square → Stripe per D-013; needs Stripe keys to charge; 3DS/SCA is a follow-up) |
 | 1.6 | Order list + detail + cancel + refund (full & partial) | ✅🧪 (cancel **service** live-verified — restores timeslot capacity; refund still 🧪) |
 | 1.7 | Email confirmation + reminder (Resend) | ✅🧪 (needs Resend key to send) |
 | 1.8 | Day Gantt manifest (visual, color-coded) + week calendar | ✅🧪 |
@@ -64,7 +64,7 @@ channel/OTA + affiliate management · accounting exports (QuickBooks/Xero).
 ## Go-live checklist (before selling)
 
 - [ ] Cross-tenant isolation tests pass
-- [ ] Payment + refund flows tested end-to-end in Square production
+- [ ] Payment + refund flows tested end-to-end in Stripe (test → live)
 - [ ] Waiver capture legally reviewed + audit trail verified
 - [ ] Zero broken routes (route test sweep)
 - [ ] Backups + error monitoring configured
@@ -72,12 +72,23 @@ channel/OTA + affiliate management · accounting exports (QuickBooks/Xero).
 
 ## Blocked-on-owner (deferred external accounts)
 
-Neon connection string · Clerk keys · Square sandbox→prod keys · Resend key ·
-Twilio (later) · Cloudflare R2 · Vercel + Railway deploy accounts.
+Neon connection string · Clerk keys · Stripe test→live keys + webhook secret · Resend
+key · Twilio (later) · Cloudflare R2 · Vercel + Railway deploy accounts.
 I will build against sandboxes/free tiers and flag exactly when each is needed.
 
 ## Changelog
 
+- **2026-06-04** — **Payments switched from Square → Stripe (D-013).** Removed the
+  `square` SDK + `services/square.ts`; added `services/stripe.ts` (PaymentIntents) with
+  the same interface the routes used, so `routes/payments.ts` only swapped imports +
+  `processor: 'STRIPE'`. Rewrote `routes/webhooks.ts` for Stripe
+  (`/webhooks/stripe`, signed). Frontend: `square-config`→`stripe-config`, `PaymentSection`
+  rebuilt on `@stripe/react-stripe-js` (`CardElement` → PaymentMethod), `CheckoutClient`/
+  page prop `square`→`stripe`. Admin catalog: Stripe is now the sole card processor.
+  Schema: `Payment.processor` default → `STRIPE` (migration applied live). Env: `SQUARE_*`
+  → `STRIPE_SECRET_KEY`/`STRIPE_WEBHOOK_SECRET`/`NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`.
+  3DS/SCA handling is a documented follow-up. Verified: typecheck 9/9, build 3/3, 90/90
+  tests green (none charge a card; live charge still needs keys).
 - **2026-06-04** — **Promo discounts verified live in the booking path.** A disposable
   active percent-off code is resolved server-side, applied to pricing (matches
   `@marina/core` `discountCents`/`totalCents`), and increments `times_redeemed` exactly

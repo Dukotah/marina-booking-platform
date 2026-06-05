@@ -208,7 +208,7 @@ localize_js_key
 - Digital waiver signing inline at checkout
 - Promo code field
 - Price breakdown (subtotal + tax + fee + tip)
-- Square payments (card + Apple Pay + Google Pay)
+- Stripe payments (card + Apple Pay + Google Pay)
 - Booking confirmation + email with QR code
 - Mobile-first responsive design
 - Full white-label (zero platform branding)
@@ -292,7 +292,7 @@ localize_js_key
 ### Stack
 - **Frontend:** Next.js 14+ (App Router), TypeScript, Tailwind CSS, shadcn/ui, Framer Motion, TanStack Query, Zustand
 - **Backend:** Bun + Hono (or Node.js + Fastify), PostgreSQL, Prisma ORM, Redis, BullMQ
-- **Payments:** Square SDK (primary), Stripe (optional)
+- **Payments:** Stripe (PaymentIntents + Elements)
 - **Infrastructure:** Vercel (frontend), Railway/Render (API), Cloudflare R2 (assets), Resend (email), Twilio (SMS)
 - **Auth:** Clerk or Auth0 (operators), magic link (customers)
 
@@ -330,7 +330,7 @@ marina-booking-platform/
 3. Operator onboarding wizard (4 steps)
 4. Activity CRUD (simplified wizard)
 5. Customer booking portal: catalog → date → time → rate → checkout
-6. Square payment processing
+6. Stripe payment processing
 7. Email confirmations (Resend + React Email)
 8. Order list + detail + cancel + refund
 9. Day Gantt manifest view

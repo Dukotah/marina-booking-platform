@@ -1,7 +1,7 @@
 # Browser-takeover prompt
 
 The local coding agent has built the platform but **can't operate a browser** to set up
-the third-party services it needs (Neon, Vercel, Clerk, Square, Resend). This prompt
+the third-party services it needs (Neon, Vercel, Clerk, Stripe, Resend). This prompt
 hands that work to a **browser-capable Claude** (Claude for Chrome, or any Claude session
 driving a browser) operating in the owner's own logged-in browser.
 
@@ -67,13 +67,15 @@ Keys page and find the development keys for me:
 The secret one is sensitive — just open the page and tell me to copy it; you don't need
 to repeat it back.
 
---- TASK 4 — Square (payments, sandbox/test mode) ---
-Go to https://developer.squareup.com/apps and create an application "Marina Booking".
-Switch to the **Sandbox** tab and find these three test values:
-  • Sandbox Access Token   → SQUARE_ACCESS_TOKEN
-  • Sandbox Application ID  → SQUARE_APPLICATION_ID
-  • a Sandbox Location ID (from the sandbox test account's Locations) → SQUARE_LOCATION_ID
-Open the page and point me to each; I'll copy the token myself.
+--- TASK 4 — Stripe (payments, test mode) ---
+Go to https://dashboard.stripe.com and sign in (or create an account). Make sure the
+"Test mode" toggle (top-right) is ON. Open Developers → API keys and find:
+  • Publishable key (starts "pk_test_")  → I'll save as NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
+  • Secret key (starts "sk_test_", click Reveal) → I'll save as STRIPE_SECRET_KEY
+Then Developers → Webhooks → Add endpoint (URL can be a placeholder for now, e.g. the
+deployed API's /webhooks/stripe), and from the endpoint's "Signing secret" (starts
+"whsec_") → I'll save as STRIPE_WEBHOOK_SECRET. The secret/signing values are sensitive —
+just open the page and tell me where to click; I'll copy them myself.
 
 --- TASK 5 — Resend (sends confirmation emails) ---
 Go to https://resend.com, create an account, and create an API key named "marina"
@@ -94,7 +96,7 @@ finish wiring everything up.
 2. `pnpm --filter @marina/database test` → the cross-tenant isolation suite now runs
    live against real Postgres RLS (roadmap 0.8 closes).
 3. `pnpm --filter @marina/api dev` + the web/admin apps → smoke-test
-   catalog → date/time → checkout → Square sandbox charge → Resend confirmation email.
+   catalog → date/time → checkout → Stripe test charge → Resend confirmation email.
 4. In each Vercel project's settings, set `API_URL` (and the Clerk keys on
    `marina-admin`) once the API is deployed to Railway/Render.
 

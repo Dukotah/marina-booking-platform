@@ -436,7 +436,7 @@ model Payment {
   card_last_four           String?
   card_brand               String?
   cardholder_name          String?
-  processor                PaymentProcessor @default(SQUARE)
+  processor                PaymentProcessor @default(STRIPE)
   processor_transaction_id String?
   is_manually_keyed        Boolean          @default(false)
   processed_at             DateTime         @default(now())

@@ -206,3 +206,39 @@ envs. **Still pending for 0.7:** magic-link/OTP auth for *customers* on the web 
 **Why:** real staff auth is required to sell, but flipping it on is a one-way door for
 usability until external setup is done — so build it fully, verify it, and ship it dark
 behind a switch the owner flips when ready.
+
+## D-013 — Payments: switch from Square to Stripe (2026-06-04) — Accepted
+
+Owner preference: use **Stripe** as the card processor instead of Square. The schema
+already had `PaymentProcessor { SQUARE STRIPE }`, so this is a service/route/frontend
+swap, not a data-model change.
+
+- **Backend:** removed `services/square.ts` + the `square` dep; added `services/stripe.ts`
+  (Stripe SDK, PaymentIntents) exposing the same shape the routes already used
+  (`isStripeConfigured`, `StripeNotConfiguredError`/`StripePaymentError`, `createPayment`,
+  `refundPayment`, plus `constructWebhookEvent`). `routes/payments.ts` is otherwise
+  unchanged — it still records `Payment`/`Order`/`OrderEvent` in one tenant tx and now
+  stamps `processor: 'STRIPE'`. `routes/webhooks.ts` rewritten for Stripe
+  (`POST /webhooks/stripe`, `stripe.webhooks.constructEvent`, handles `charge.refunded` +
+  `payment_intent.succeeded|payment_failed`).
+- **Charge model:** the browser collects a card with Stripe Elements (`CardElement`) and
+  makes a **PaymentMethod**; its id is sent to the API as `sourceId` (the wire field name
+  was kept generic to minimise churn). The API creates + confirms a PaymentIntent in one
+  synchronous call. Anything other than `succeeded` (incl. `requires_action` / 3-D Secure)
+  is treated as a decline for now — **full SCA/3DS handling is a follow-up.**
+- **Frontend:** `square-config.ts`→`stripe-config.ts` (publishable key only);
+  `PaymentSection.tsx` rewritten with `@stripe/react-stripe-js` (`<Elements>` + hooks),
+  same `tokenize()` imperative handle so `CheckoutClient` barely changed. Admin
+  integration catalog: Square entry removed, Stripe is the sole card processor (+ webhook
+  signing secret field).
+- **Schema/migration:** `Payment.processor` default `SQUARE`→`STRIPE`
+  (`20260605120000_payment_processor_default_stripe`, applied live).
+- **Env:** `SQUARE_*` replaced by `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`,
+  `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`. Payments stay an opt-in integration: unconfigured
+  = clean 501 (API) / "not configured" notice (checkout), same posture as before.
+
+This supersedes the Square choice recorded in D-002/D-005. Verified: typecheck 9/9,
+build 3/3, all 90 tests green (no test charges a card — live charge still needs keys).
+
+**Why:** owner's processor of choice; Stripe's PaymentIntents + Elements are a clean fit
+and the schema already anticipated it, so the switch is low-risk and self-contained.

@@ -61,24 +61,27 @@ operator app — Vercel deploy currently failing, see below).
    user (its Clerk id must equal a `StaffMember.auth_user_id`), then set
    `REQUIRE_CLERK_AUTH=true` on admin (Vercel) + API (Railway). **Remaining 0.7:**
    magic-link/OTP **customer** auth on web (today an order-number+email stub).
-2. **Square sandbox keys** — developer.squareup.com was blocked for the browser agent;
-   create the app + fill `SQUARE_*` to charge a test booking (1.5).
+2. **Stripe test keys** (D-013 — switched off Square) — create a Stripe account, fill
+   `STRIPE_SECRET_KEY` + `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` (and `STRIPE_WEBHOOK_SECRET`
+   for the `/webhooks/stripe` endpoint) to charge a test booking (1.5). NOTE: 3DS/SCA
+   cards aren't handled yet (a non-`succeeded` PaymentIntent is treated as a decline).
 3. **marina-admin Vercel runtime** — build is fixed and it deploys; it needs the DB env
    vars set on the Vercel project (it queries the DB directly, D-007). Until then it
    shows a graceful "Live data unavailable" notice (not a crash). See
    `docs/BROWSER-TAKEOVER.md` → "set marina-admin DB env vars". marina-web is already live.
-4. Smoke-test the full booking flow end-to-end once Clerk + Square are in.
+4. Smoke-test the full booking flow end-to-end once Clerk + Stripe are in.
 
 ## Things only the owner / a browser can do (blocked-on-owner)
 
 These need account dashboards — see `docs/BROWSER-TAKEOVER.md` for a copy-paste prompt:
-Neon connection string · Vercel project import + env vars · Clerk keys · Square
-sandbox keys · Resend key. Build everything against sandboxes/free tiers; flag exactly
-when each is needed.
+Neon connection string · Vercel project import + env vars · Clerk keys · Stripe test
+keys + webhook secret · Resend key. Build everything against test/free tiers; flag
+exactly when each is needed.
 
 ## Gotchas already solved (don't regress)
 
-- `square` must be **v44+** (new `SquareClient` API).
+- Payments are **Stripe** (D-013), not Square. Card → PaymentMethod (Elements) → server
+  confirms a PaymentIntent. The wire field is still named `sourceId` (now a PM id).
 - Next apps need `webpack resolve.extensionAlias` `.js`→`.ts` to consume the shared TS
   packages.
 - Client components must import shell **leaf files**, not the server-only barrel.
