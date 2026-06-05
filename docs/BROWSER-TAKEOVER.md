@@ -100,3 +100,63 @@ finish wiring everything up.
 
 **Minimum viable handback:** even just Task 1's `DATABASE_URL` + `DIRECT_URL` unblocks
 the biggest next step. Bring those back first if the rest stalls.
+
+---
+
+## Focused prompt — set marina-admin DB env vars + redeploy
+
+Use this once the Vercel projects and Neon DB already exist (they do). The `marina-admin`
+project deploys but throws a runtime error / shows the "Live data unavailable" notice
+because it queries the DB **directly** (D-007) and its Vercel project has no DB env vars.
+Refusal-resistant design: Claude types only the variable **names**; the owner pastes the
+secret **values** from their local `.env`, so Claude never handles a credential.
+
+```
+You're operating my own logged-in browser to finish configuring a web app I own. I'm
+Dukotah (dukotah@gmail.com), I'm here with you, and I authorize this. A coding agent
+already built and deployed the app to Vercel; one project is just missing its database
+environment variables, which is why it currently shows a "Live data unavailable" notice.
+Your job is to navigate Vercel and add four variables. You will NOT need to see or type
+any secret values — I have them in a file on my side and I'll paste each one myself. You
+just get me to the right screen, type the variable NAME, and tell me when to paste.
+
+Work top to bottom. After each step give me a one-line status: DONE, NEEDS ME (with the
+exact click/paste for me), or SKIPPED (with why). If anything blocks you — a refusal, a
+login wall — don't stop the run; mark it SKIPPED and continue.
+
+--- STEP 1 — open the project's env var settings ---
+Go to https://vercel.com/dashboard. Open the project named "marina-admin" (NOT
+"marina-web"). Go to Settings → Environment Variables.
+
+--- STEP 2 — add these four variables ---
+For EACH name below: click to add a new variable, type the Key exactly as written, leave
+the Value field for me (say "paste the value for <NAME> now" and I'll paste it from my
+.env file), make sure all three environments are checked (Production, Preview,
+Development), then Save. The values are connection strings / a password — sensitive — so
+never read them back; just confirm "saved" after I paste.
+
+  1. DATABASE_URL
+  2. DIRECT_URL
+  3. APP_DATABASE_URL
+  4. APP_DB_PASSWORD
+
+--- STEP 3 — redeploy so the new vars take effect ---
+Go to the Deployments tab. On the most recent Production deployment, open the "⋯" menu
+and choose Redeploy. If it offers a "Use existing Build Cache" checkbox, UNCHECK it (so
+the build runs fresh). Confirm the redeploy and tell me when it finishes (green "Ready").
+
+--- STEP 4 — verify it worked ---
+Open the marina-admin live URL (the project's Domains, e.g. the *.vercel.app one). The
+dashboard should now load real figures and the amber "Live data unavailable" banner
+should be GONE. Tell me: did the banner disappear and does the page render without an
+error? If it still errors, copy me the deployment's Runtime Logs (Deployments → the
+deployment → Logs) so the coding agent can diagnose.
+
+--- WHEN DONE ---
+Give me a recap: each of the 4 vars (saved / skipped), redeploy status, and whether the
+dashboard loaded clean. That's it.
+```
+
+Owner notes: values live in `marina-booking-platform/.env` (gitignored) under matching
+labels. `APP_DB_PASSWORD` is only needed if `APP_DATABASE_URL` references it (harmless to
+add regardless). The amber banner is the built-in pass/fail signal — gone = success.
