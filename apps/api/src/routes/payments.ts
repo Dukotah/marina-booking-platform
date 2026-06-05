@@ -31,6 +31,7 @@ import {
   StripePaymentError,
 } from '../services/stripe.js';
 import { applyGiftCardToOrder, refundGiftCardPayment, GiftCardError } from '../services/giftcards.js';
+import { isEmailConfigured, sendRefundReceipt } from '../services/notifications.js';
 
 export const payments = new Hono<Env>();
 
@@ -250,6 +251,14 @@ payments.post('/:id/refund', requireStaff, async (c) => {
         reason: parsed.data.reason,
         actor: c.var.auth.userId,
       });
+      if (isEmailConfigured()) {
+        void sendRefundReceipt({
+          operatorId: c.var.operatorId,
+          paymentId,
+          refundedCents: result.refund.amountCents,
+          reason: parsed.data.reason,
+        });
+      }
       return c.json(result);
     } catch (err) {
       if (err instanceof GiftCardError) {
@@ -335,6 +344,15 @@ payments.post('/:id/refund', requireStaff, async (c) => {
 
     return { updatedPayment, orderSummary };
   });
+
+  if (isEmailConfigured()) {
+    void sendRefundReceipt({
+      operatorId: c.var.operatorId,
+      paymentId: payment.id,
+      refundedCents: amountCents,
+      reason: parsed.data.reason,
+    });
+  }
 
   return c.json({
     refund: {

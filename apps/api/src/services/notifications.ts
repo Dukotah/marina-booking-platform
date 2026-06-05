@@ -53,6 +53,15 @@ const skipped = (reason: string): NotificationResult => ({ sent: false, skippedR
 let cachedResend: Resend | null = null;
 let warnedMissingKey = false;
 
+/**
+ * Whether transactional email is configured at all. Callers short-circuit on this
+ * BEFORE doing any DB work, so a deployment without a Resend key pays nothing for
+ * notification calls (and fire-and-forget callers never touch the DB pool).
+ */
+export function isEmailConfigured(): boolean {
+  return Boolean(process.env.RESEND_API_KEY);
+}
+
 /** Lazily construct the Resend client. Returns null (and warns once) if unconfigured. */
 function getResend(): Resend | null {
   if (cachedResend) return cachedResend;

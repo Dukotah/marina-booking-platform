@@ -43,7 +43,7 @@ exercised against a live DB/keys (waiting on 0.5 Neon + service keys).
 | 1.4 | Availability calendar (color-coded) + capacity-aware time slots | ✅🧪 |
 | 1.5 | Stripe payments (test mode, PaymentIntents + Elements) | ✅🧪 (switched from Square → Stripe per D-013; needs Stripe keys to charge; 3DS/SCA is a follow-up) |
 | 1.6 | Order list + detail + cancel + refund (full & partial) | ✅🧪 (list + detail + cancel now **live-verified via full HTTP** — status/search/pagination filters, public-by-number fetch, staff cancel restores capacity + idempotency guard; refund still 🧪 — needs Stripe) |
-| 1.7 | Email confirmation + reminder (Resend) | ✅🧪 (needs Resend key to send) |
+| 1.7 | Email confirmation + reminder (Resend) | ✅🧪 (send-path built **and now wired**: booking-create fires confirmation + staff-new-booking; refund fires the receipt — fire-and-forget, guarded by `isEmailConfigured()` so it's a true no-op without a key. Flows go live the moment `RESEND_API_KEY` is set. Reminder still needs a scheduled job; POS-sale confirmation is a trivial follow-up) |
 | 1.8 | Day Gantt manifest (visual, color-coded) + week calendar | ✅🧪 |
 | 1.9 | Digital waiver signing + audit trail | ✅🧪 (waiver sign + audit **live-verified** via full HTTP path — signature recorded, item/customer flags flipped, staff list + auth guard) |
 | 1.10 | Dashboard home (revenue/occupancy KPIs, alerts, upcoming) | ✅🧪 |
@@ -86,6 +86,15 @@ I will build against sandboxes/free tiers and flag exactly when each is needed.
 
 ## Changelog
 
+- **2026-06-05** — **Notification flows wired (1.7 integrated).** The transactional-email
+  send path existed but was never *called*. Wired it: booking-create (`POST /orders`, and the
+  `/bookings` alias) fires `sendBookingConfirmation` + `sendStaffNewBooking`; both refund
+  branches (gift-card + Stripe) fire `sendRefundReceipt`. All fire-and-forget (`void`), never
+  block or fail the response. Added `isEmailConfigured()` to the notifications service and
+  guard every call site with it, so a deployment without `RESEND_API_KEY` does ZERO work (no
+  DB load, no floating promise) — the moment a key is set, emails flow. 117 tests stay green
+  (wiring is dark without a key); typecheck 9/9. Follow-ups: reminder needs a scheduled job;
+  POS-sale confirmation is a one-liner. Held locally, not pushed (Vercel quota).
 - **2026-06-05** — **Gift card payment refund (2.5, D-016) — closes the money loop.** New
   `refundGiftCardPayment` service (one tenant tx): resolves the originating card via the
   Payment's linked ledger entry (`processor_transaction_id` → REDEEM `GiftCardTransaction` →

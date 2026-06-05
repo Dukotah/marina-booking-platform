@@ -24,6 +24,11 @@ import {
   rescheduleBooking,
   BookingError,
 } from '../services/booking.js';
+import {
+  isEmailConfigured,
+  sendBookingConfirmation,
+  sendStaffNewBooking,
+} from '../services/notifications.js';
 
 export const orders = new Hono<Env>();
 
@@ -93,6 +98,12 @@ orders.post('/', async (c) => {
     const order = await createBooking(c.var.operatorId, parsed.data, {
       channel: 'CUSTOMER',
     });
+    // Fire-and-forget the confirmation + staff alert (no-op without a Resend key;
+    // never throws — must not block or fail the booking response).
+    if (isEmailConfigured()) {
+      void sendBookingConfirmation({ operatorId: c.var.operatorId, orderId: order.id });
+      void sendStaffNewBooking({ operatorId: c.var.operatorId, orderId: order.id });
+    }
     return c.json({ order: serializeOrder(order) }, 201);
   } catch (err) {
     if (err instanceof BookingError) {
