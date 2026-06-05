@@ -11,6 +11,7 @@ import {
 import { withTenant } from '@marina/database';
 import type { Env } from '../context.js';
 import { requireStaff } from '../middleware/auth.js';
+import { isEmailConfigured, sendBookingConfirmation } from '../services/notifications.js';
 
 /**
  * Point-of-sale API — the register. Staff record walk-up sales (bookings and/or
@@ -387,6 +388,16 @@ pos.post('/sale', async (c) => {
 
       return { order, payment };
     });
+
+    // Email the customer their booking confirmation — fire-and-forget, never blocks
+    // or fails the sale. Only for a real customer email (anonymous/synthetic walk-in
+    // guests have no deliverable address) that actually booked something (a
+    // merchandise-only sale isn't a booking). No-op without a Resend key. We don't
+    // send the staff-new-booking alert here: a POS sale is made BY staff at the
+    // counter, so alerting them about their own sale would be noise.
+    if (isEmailConfigured() && input.customer?.email && resolvedBookings.length > 0) {
+      void sendBookingConfirmation({ operatorId, orderId: result.order.id });
+    }
 
     return c.json(
       {

@@ -443,3 +443,48 @@ invariant asserted throughout). Held locally, not pushed (Vercel quota).
 mistake (mis-issued amount, goodwill credit) and kill a lost/fraudulent card — without ever
 breaking the two D-014 guarantees (reconcilable signed ledger, no overspend) or destroying
 value that can't be recovered. Reversible-freeze + signed-correction keeps both true.
+
+## D-019 — Reminders via an idempotent cron-triggered sweep, not a job runner (2026-06-05) — Accepted
+
+Finished the 1.7 follow-ups: the pre-arrival reminder email needed a *scheduler*, and the
+POS sale needed to fire a confirmation. The notification send-paths already existed (D-013
+wiring); the open question was how to schedule reminders without standing job infra.
+
+- **No job runner — an idempotent HTTP sweep an external cron pings.** ARCHITECTURE § 4 defers
+  Redis/BullMQ until actually needed; a once-a-day reminder doesn't justify it. Instead
+  `sendDueReminders` (services/reminders.ts) finds every UPCOMING booking whose timeslot starts
+  within a look-ahead window (`leadHours`, default 24) and hasn't been reminded, sends each, and
+  is exposed at **`POST /jobs/reminders`** for any scheduler (Vercel Cron / Railway cron / a
+  pinger) to hit on a cadence. The scheduler is the only moving part we don't own, and it's
+  trivially swappable.
+- **Idempotency via a dedicated `Order.reminder_sent_at` stamp.** Chose a real nullable column
+  (migration `20260605150000_order_reminder_sent_at`, additive — no RLS/grant change, table
+  already covered) over scanning OrderEvents: it's directly filterable in the WHERE
+  (`reminder_sent_at: null`), so a reminded booking is never re-selected. A booking is stamped
+  once a reminder has been **dispatched to the provider** (delivered OR provider-error), not only
+  on confirmed delivery — so a flaky provider tick can't make the cron re-send the same booking
+  every beat (no retry-storm). It's left unstamped (retried next run) only when email is entirely
+  unconfigured or the order became ineligible mid-run. Best-effort delivery; a `reminder_attempts`
+  retry counter is a future refinement if needed.
+- **Tenant discipline preserved.** The sweep loops operators and does every per-tenant read/write
+  through the RLS-scoped `forOperator` client; only the operator *list* uses `adminPrisma` (the
+  one audited platform-admin path, ARCHITECTURE § 1). It can also be scoped to one operator.
+- **Job auth = a shared secret, fail-closed in prod.** `/jobs` is platform-level (iterates
+  operators), so like `/webhooks` it's mounted OUTSIDE the tenant middleware and authed by
+  `JOBS_SECRET` (sent as `Authorization: Bearer …` — Vercel Cron's convention — or `x-jobs-secret`),
+  not a staff session. With no secret set it's open in non-production and refuses in production,
+  mirroring D-017's secret posture. The check reads env per request (testable, config-reloadable).
+- **POS-sale confirmation.** `POST /api/pos/sale` now fires `sendBookingConfirmation`
+  (fire-and-forget, `isEmailConfigured()`-guarded) — but only for a real customer email (the
+  synthetic `@pos.local` walk-in addresses are excluded, here and in the reminder selection) on a
+  sale that actually booked something. Deliberately NOT the staff-new-booking alert: a POS sale is
+  made *by* staff at the counter, so alerting them to their own sale is noise.
+
+Verified: typecheck 9/9, **api +N live cases** (in-window booking stamped; far-future + CANCELLED
+left untouched; idempotent re-run; HTTP open-in-dev + JOBS_SECRET-enforced 401/200). Migration
+applied live to Neon. Held locally, not pushed (Vercel quota).
+
+**Why:** reminders are a real retention feature but low-frequency, so the right cost is an
+idempotent endpoint + an external cron, not standing queue infrastructure. A DB stamp makes
+"exactly once" a query invariant rather than app bookkeeping, and the secret-gated platform
+endpoint keeps the trigger off the tenant surface while staying safe by default.

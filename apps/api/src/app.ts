@@ -17,6 +17,7 @@ import { pos } from './routes/pos.js';
 import { reports } from './routes/reports.js';
 import { operator } from './routes/operator.js';
 import { webhooks } from './routes/webhooks.js';
+import { jobs } from './routes/jobs.js';
 import { auth } from './routes/auth.js';
 
 export const app = new Hono<Env>();
@@ -30,6 +31,11 @@ app.get('/health', (c) => c.json({ ok: true, service: 'marina-api' }));
 // Webhooks resolve their own tenant from the event payload — they receive no
 // x-operator-slug header, so they live OUTSIDE the tenant middleware.
 app.route('/webhooks', webhooks);
+
+// Scheduled-job triggers (e.g. reminder sweep) are platform-level — they iterate
+// operators internally and authenticate with a shared secret, so they also live
+// OUTSIDE the tenant middleware (no x-operator-slug header).
+app.route('/jobs', jobs);
 
 // Everything under /api is tenant-scoped.
 const api = new Hono<Env>();

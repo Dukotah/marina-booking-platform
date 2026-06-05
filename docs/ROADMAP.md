@@ -43,7 +43,7 @@ exercised against a live DB/keys (waiting on 0.5 Neon + service keys).
 | 1.4 | Availability calendar (color-coded) + capacity-aware time slots | ✅🧪 |
 | 1.5 | Stripe payments (test mode, PaymentIntents + Elements) | ✅🧪 (switched from Square → Stripe per D-013; needs Stripe keys to charge; 3DS/SCA is a follow-up) |
 | 1.6 | Order list + detail + cancel + refund (full & partial) | ✅🧪 (list + detail + cancel now **live-verified via full HTTP** — status/search/pagination filters, public-by-number fetch, staff cancel restores capacity + idempotency guard; refund still 🧪 — needs Stripe) |
-| 1.7 | Email confirmation + reminder (Resend) | ✅🧪 (send-path built **and now wired**: booking-create fires confirmation + staff-new-booking; refund fires the receipt — fire-and-forget, guarded by `isEmailConfigured()` so it's a true no-op without a key. Flows go live the moment `RESEND_API_KEY` is set. Reminder still needs a scheduled job; POS-sale confirmation is a trivial follow-up) |
+| 1.7 | Email confirmation + reminder (Resend) | ✅ (all flows wired + live-tested: booking-create fires confirmation + staff-alert; refund fires the receipt; **POS-sale fires the customer confirmation** (D-019); **reminder = idempotent `sendDueReminders` sweep + secret-gated `POST /jobs/reminders` for a cron**, with an `Order.reminder_sent_at` stamp so it sends exactly once (D-019). All fire-and-forget, `isEmailConfigured()`-guarded — a no-op without a key, live the moment `RESEND_API_KEY` is set) |
 | 1.8 | Day Gantt manifest (visual, color-coded) + week calendar | ✅🧪 |
 | 1.9 | Digital waiver signing + audit trail | ✅🧪 (waiver sign + audit **live-verified** via full HTTP path — signature recorded, item/customer flags flipped, staff list + auth guard) |
 | 1.10 | Dashboard home (revenue/occupancy KPIs, alerts, upcoming) | ✅🧪 |
@@ -86,6 +86,26 @@ I will build against sandboxes/free tiers and flag exactly when each is needed.
 
 ## Changelog
 
+- **2026-06-05** — **Reminder sweep + POS-sale confirmation — 1.7 fully ✅ (D-019).** Closed the
+  two 1.7 follow-ups. **Reminders:** no standing job runner (ARCHITECTURE § 4 defers Redis/BullMQ)
+  — instead an idempotent `sendDueReminders` sweep finds every UPCOMING booking whose timeslot is
+  within a look-ahead window (`leadHours`, default 24) and hasn't been reminded, sends each, and is
+  exposed at `POST /jobs/reminders` for any cron to ping. Idempotency is a new nullable
+  `Order.reminder_sent_at` column (migration `20260605150000_order_reminder_sent_at`, additive —
+  applied live, no RLS/grant change): a reminded booking is never re-selected, and a booking is
+  stamped once *dispatched to the provider* (delivered OR provider-error) so a flaky tick can't
+  retry-storm. The sweep loops operators through the RLS-scoped `forOperator` client (only the
+  operator *list* uses adminPrisma — the audited platform path). `/jobs` is mounted OUTSIDE the
+  tenant middleware (like `/webhooks`) and authed by a shared `JOBS_SECRET` (`Authorization: Bearer`
+  or `x-jobs-secret`), open in non-prod / fail-closed in prod (D-017 posture). **POS-sale
+  confirmation:** `POST /api/pos/sale` now fires `sendBookingConfirmation` (fire-and-forget,
+  `isEmailConfigured()`-guarded) for a real customer email on a booking sale — synthetic
+  `@pos.local` walk-in addresses are excluded (here and in the reminder selection); no staff alert
+  (a POS sale is made by staff, so it'd be noise). New live suite **4/4** (in-window booking
+  stamped; far-future + CANCELLED untouched; idempotent re-run; HTTP open-in-dev + JOBS_SECRET 401/200).
+  Added `JOBS_SECRET` + `RESEND_FROM_EMAIL` to `.env.example`. api **134 → 138**; grand total
+  **211 → 215 green** (core 69 + isolation 8 + api 138). typecheck 9/9. Held locally, not pushed
+  (Vercel quota).
 - **2026-06-05** — **Gift-card management: ADJUST + reversible void (D-018).** Wired the last
   modeled-but-unused gift-card ledger type (`ADJUST`) and the freeze controls — finishes
   gift-card management (issue → tender → refund → **correct/void**). No schema change (enum +

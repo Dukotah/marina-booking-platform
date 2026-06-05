@@ -383,6 +383,9 @@ model Order {
   promo_code_id        String?
   heard_about_us       String?
   is_returning_guest   Boolean      @default(false)
+  // Set once a pre-arrival reminder email has been sent, so the scheduled
+  // reminder job is idempotent and never double-sends (see services/reminders.ts).
+  reminder_sent_at     DateTime?
   created_at           DateTime     @default(now())
   updated_at           DateTime     @updatedAt
 
