@@ -1,10 +1,12 @@
 /**
  * Reports API — read-only analytics for staff with `report:read` permission.
  *
- *   GET /api/reports/revenue         JSON revenue summary over a date range
- *   GET /api/reports/revenue.csv     Same data as CSV download
- *   GET /api/reports/bookings        JSON booking counts by status + top activities
- *   GET /api/reports/bookings.csv    Same data as CSV download
+ *   GET /api/reports/revenue          JSON revenue summary over a date range
+ *   GET /api/reports/revenue.csv      Same data as CSV download
+ *   GET /api/reports/bookings         JSON booking counts by status + top activities
+ *   GET /api/reports/bookings.csv     Same data as CSV download
+ *   GET /api/reports/by-location      JSON per-location roll-up (multi-location chains)
+ *   GET /api/reports/by-location.csv  Same data as CSV download
  *
  * All endpoints are staff-gated (requireStaff + assertPermission 'report:read').
  * All data access goes through `c.var.db` (the RLS-scoped tenant client).
@@ -284,6 +286,92 @@ async function buildBookingsReport(
 }
 
 // ---------------------------------------------------------------------------
+// Per-location roll-up helpers (multi-location chains — D-002)
+// ---------------------------------------------------------------------------
+
+interface LocationStat {
+  /** Location id, or 'unassigned' for activities with no location set. */
+  locationId: string;
+  locationName: string;
+  bookingCount: number; // number of booking line items
+  totalQuantity: number; // sum of participant/unit quantity
+  /** Gross booking value = sum(unit_price_cents * quantity), pre-fee/pre-tax. */
+  grossCents: number;
+}
+
+interface LocationReport {
+  from: string;
+  to: string;
+  byLocation: LocationStat[];
+  /** Roll-up across every location (the chain total). */
+  total: { bookingCount: number; totalQuantity: number; grossCents: number };
+}
+
+const UNASSIGNED = 'unassigned';
+
+/**
+ * Per-location roll-up over the booking line items in range. Revenue is attributed
+ * at the *item* level (`unit_price_cents * quantity`) because that's the only money
+ * figure unambiguously tied to a single location — an order can span locations, but
+ * each item maps to exactly one activity → one location. Order-level tax/tip/fees are
+ * intentionally excluded here (they aren't split per location); use /revenue for the
+ * operator-wide P&L figures. CANCELLED orders are excluded, matching /revenue.
+ */
+async function buildLocationReport(
+  db: Env['Variables']['db'],
+  from: Date,
+  to: Date,
+): Promise<LocationReport> {
+  const items = await db.orderItem.findMany({
+    where: {
+      order: { status: { in: [...REVENUE_STATUSES] }, created_at: { gte: from, lt: to } },
+    },
+    select: {
+      quantity: true,
+      unit_price_cents: true,
+      activity: {
+        select: { location_id: true, location: { select: { name: true } } },
+      },
+    },
+  });
+
+  const locMap = new Map<string, LocationStat>();
+  const total = { bookingCount: 0, totalQuantity: 0, grossCents: 0 };
+
+  for (const item of items) {
+    const locationId = item.activity.location_id ?? UNASSIGNED;
+    const locationName = item.activity.location?.name ?? 'Unassigned';
+    const gross = item.unit_price_cents * item.quantity;
+
+    const stat = locMap.get(locationId) ?? {
+      locationId,
+      locationName,
+      bookingCount: 0,
+      totalQuantity: 0,
+      grossCents: 0,
+    };
+    stat.bookingCount += 1;
+    stat.totalQuantity += item.quantity;
+    stat.grossCents += gross;
+    locMap.set(locationId, stat);
+
+    total.bookingCount += 1;
+    total.totalQuantity += item.quantity;
+    total.grossCents += gross;
+  }
+
+  // Highest-grossing location first.
+  const byLocation = Array.from(locMap.values()).sort((a, b) => b.grossCents - a.grossCents);
+
+  return {
+    from: from.toISOString().slice(0, 10),
+    to: new Date(to.getTime() - 1).toISOString().slice(0, 10),
+    byLocation,
+    total,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // GET /revenue — JSON revenue summary
 // ---------------------------------------------------------------------------
 
@@ -405,6 +493,72 @@ reports.get('/bookings.csv', requireStaff, async (c) => {
   for (const act of report.topActivities) {
     lines.push(csvRow([act.activityId, act.activityName, act.bookingCount, act.totalQuantity]));
   }
+
+  return c.body(lines.join('\r\n'));
+});
+
+// ---------------------------------------------------------------------------
+// GET /by-location — JSON per-location roll-up
+// ---------------------------------------------------------------------------
+
+reports.get('/by-location', requireStaff, async (c) => {
+  assertPermission(c.var.auth, 'report:read');
+
+  const range = parseDateRange(c.req.query('from'), c.req.query('to'));
+  if (!range) {
+    return c.json({ error: 'Invalid date range. Use ?from=YYYY-MM-DD&to=YYYY-MM-DD' }, 400);
+  }
+
+  const report = await buildLocationReport(c.var.db, range.from, range.to);
+  return c.json({ report });
+});
+
+// ---------------------------------------------------------------------------
+// GET /by-location.csv — CSV download of the per-location roll-up
+// ---------------------------------------------------------------------------
+
+reports.get('/by-location.csv', requireStaff, async (c) => {
+  assertPermission(c.var.auth, 'report:read');
+
+  const range = parseDateRange(c.req.query('from'), c.req.query('to'));
+  if (!range) {
+    return c.json({ error: 'Invalid date range. Use ?from=YYYY-MM-DD&to=YYYY-MM-DD' }, 400);
+  }
+
+  const report = await buildLocationReport(c.var.db, range.from, range.to);
+
+  const filename = `by-location-${report.from}-to-${report.to}.csv`;
+  c.header('Content-Type', 'text/csv; charset=utf-8');
+  c.header('Content-Disposition', `attachment; filename="${filename}"`);
+
+  const lines: string[] = [];
+  lines.push(csvRow(['Report', 'Per-Location Roll-up']));
+  lines.push(csvRow(['Period', `${report.from} to ${report.to}`]));
+  lines.push('');
+  lines.push(csvRow(['Location ID', 'Location', 'Booking Count', 'Total Quantity', 'Gross Cents', 'Gross USD']));
+  for (const loc of report.byLocation) {
+    lines.push(
+      csvRow([
+        loc.locationId,
+        loc.locationName,
+        loc.bookingCount,
+        loc.totalQuantity,
+        loc.grossCents,
+        centsToUSD(loc.grossCents),
+      ]),
+    );
+  }
+  lines.push('');
+  lines.push(
+    csvRow([
+      '',
+      'TOTAL (all locations)',
+      report.total.bookingCount,
+      report.total.totalQuantity,
+      report.total.grossCents,
+      centsToUSD(report.total.grossCents),
+    ]),
+  );
 
   return c.body(lines.join('\r\n'));
 });

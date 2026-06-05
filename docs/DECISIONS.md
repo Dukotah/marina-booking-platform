@@ -488,3 +488,36 @@ applied live to Neon. Held locally, not pushed (Vercel quota).
 idempotent endpoint + an external cron, not standing queue infrastructure. A DB stamp makes
 "exactly once" a query invariant rather than app bookkeeping, and the secret-gated platform
 endpoint keeps the trigger off the tenant surface while staying safe by default.
+
+## D-020 — Multi-location roll-up reporting; item-level location attribution (2026-06-05) — Accepted
+
+Multi-location chains are the #1 target growth customer and the reason the whole platform is
+architected as it is (D-001/D-002); Phase 3 lists "multi-location dashboards + roll-up
+reporting". Started it backend-first by extending the existing reports route (D-2.4 pattern):
+`GET /api/reports/by-location` (+ `.csv`), report:read-gated, date-range filtered.
+
+- **Attribute at the *item* level, not the order level.** An order can span locations (items
+  for activities at different sites), and the order's money fields (total/tax/tip/discount/
+  refund) aren't split per item — so attributing order totals to a single location would be a
+  lie. Instead the roll-up sums **booking line items** to their activity's location, with gross
+  = `unit_price_cents * quantity` (the one money figure unambiguously tied to one location).
+  Counts (`bookingCount`, `totalQuantity`) and gross per location, plus a chain-wide roll-up
+  total whose figures equal the sum of the location rows by construction (a tested invariant).
+- **Scope boundary (deliberate).** This reports per-location *gross booking value* + volume, not
+  a full per-location P&L — order-level tax/tip/fees/refunds stay on `/revenue` (operator-wide),
+  because splitting them per location needs an allocation policy we haven't decided. Activities
+  with no location land under an `unassigned` row. CANCELLED orders are excluded, matching
+  `/revenue`. A future slice can add per-location net once an allocation rule is chosen, and
+  filter the other reports by `?locationId=`.
+- **No schema change.** Location already sits between Operator and Activity (ARCHITECTURE § 3);
+  this is pure read-side aggregation over `OrderItem → Activity → Location`, RLS-scoped via
+  `c.var.db` like the rest of reports.
+
+Verified: typecheck 9/9, **api +3 live cases** (two fresh locations each with their own
+activity/rate/slot/booking → exact per-location gross/qty, row-sum == roll-up total invariant,
+report:read 401-without-staff, CSV carries the TOTAL row). Held locally, not pushed (Vercel quota).
+
+**Why:** the multi-location promise has to show up where an operator feels it — "how is each
+site doing" — and the honest, unambiguous version of that is item-level attribution. Building it
+on the existing reports route keeps it a small, consistent slice while realizing a core
+differentiator at the data layer.

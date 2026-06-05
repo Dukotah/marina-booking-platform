@@ -69,6 +69,10 @@ Resource/asset management · guide scheduling · package builder + upsells ·
 **multi-location dashboards + roll-up reporting** · dynamic pricing · kiosk mode ·
 channel/OTA + affiliate management · accounting exports (QuickBooks/Xero).
 
+| # | Item | Status |
+|---|---|---|
+| 3.x | **Multi-location roll-up reporting (backend)** — `GET /reports/by-location` (+`.csv`): item-level location attribution (gross = unit×qty), per-location volume + a chain roll-up total (D-020) | 🟦 backend live-verified 3/3. Admin dashboards on top of it (+ per-location filtering of `/revenue`,`/bookings`, per-location net) are follow-ups |
+
 ## Go-live checklist (before selling)
 
 - [ ] Cross-tenant isolation tests pass
@@ -86,6 +90,20 @@ I will build against sandboxes/free tiers and flag exactly when each is needed.
 
 ## Changelog
 
+- **2026-06-05** — **Multi-location roll-up reporting — backend (Phase 3, D-020).** Started the
+  multi-location dashboards/roll-up Phase-3 item (the core D-001/D-002 differentiator) backend-first
+  by extending the reports route: `GET /api/reports/by-location` (+ `.csv`), report:read-gated,
+  date-range filtered. Attribution is **item-level** — each booking line maps to its activity's
+  location with gross = `unit_price_cents × quantity` (the only money figure unambiguously tied to
+  one site; an order can span locations, and order-level tax/tip/fees aren't split per location, so
+  those stay on `/revenue`). Returns per-location bookingCount/totalQuantity/grossCents + a chain
+  roll-up total whose figures equal the sum of the location rows by construction (a tested
+  invariant); activities with no location land under `unassigned`; CANCELLED excluded. No schema
+  change (Location already sits between Operator and Activity). New live suite **3/3** (two fresh
+  locations → exact per-location gross/qty, row-sum == total invariant, 401-without-staff, CSV
+  carries the TOTAL row). api **138 → 141**; grand total **215 → 218 green** (core 69 + isolation 8
+  + api 141). typecheck 9/9. Admin dashboards + per-location filtering of the other reports are
+  follow-ups. Held locally, not pushed (Vercel quota).
 - **2026-06-05** — **Reminder sweep + POS-sale confirmation — 1.7 fully ✅ (D-019).** Closed the
   two 1.7 follow-ups. **Reminders:** no standing job runner (ARCHITECTURE § 4 defers Redis/BullMQ)
   — instead an idempotent `sendDueReminders` sweep finds every UPCOMING booking whose timeslot is
