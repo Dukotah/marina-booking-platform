@@ -260,9 +260,11 @@ export async function createBooking(
         promo_code_id: promoCodeId,
         is_returning_guest: isReturningGuest,
         items: {
+          // operator_id is derived from the parent order via the tenant-composite
+          // relation ([operator_id, order_id]); passing it explicitly is now rejected
+          // and the DB guarantees the item shares the order's tenant.
           create: [
             {
-              operator_id: operatorId,
               activity_id: activity.id,
               rate_id: rate.id,
               timeslot_id: timeslot.id,

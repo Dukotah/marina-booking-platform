@@ -140,3 +140,36 @@ both while bringing up the cross-tenant isolation suite (roadmap 0.8):
 **Why:** Multi-tenant isolation is the product's core promise (AGENTS.md rule 2).
 Getting the role model right makes RLS actually enforce; documenting the FK gap keeps
 us honest about what RLS does and does not cover, with a concrete plan to close it.
+
+## D-011 — Tenant-composite foreign keys close the FK-attach gap (2026-06-04) — Accepted
+
+Implemented the D-010(2) fix (ROADMAP 0.13). Migration `tenant_composite_fks`:
+
+- Added `@@unique([operator_id, id])` to the parent tables that intra-tenant children
+  point at: `Activity`, `Rate`, `Timeslot`, `Order`, `Customer`, `Waiver`.
+- Rewrote the **required** intra-tenant relations to **composite FKs** `(operator_id,
+  parent_id) -> parent(operator_id, id)`: `Rate.activity`, `Timeslot.activity`,
+  `Order.customer`, `OrderItem.{order,activity,rate,timeslot}`, `Payment.order`,
+  `Note.order`, `OrderEvent.order`, `WaiverSignature.waiver`. Postgres FK checks bypass
+  RLS, but a child stamped `operator_id = A` referencing B's parent finds no `(A,
+  parent_id)` row, so the insert now errors. The previously `it.skip`-ped isolation
+  assertion is un-skipped and passes; the live suite is **8/8**.
+
+**Two consequences worth knowing:**
+1. **Prisma allows `operator_id` to be shared across multiple composite relations** on
+   one model (e.g. `OrderItem`'s four), and on a **nested create** it *derives*
+   `operator_id` from the parent — so `items: { create: { operator_id, ... } }` is now
+   rejected; drop the explicit `operator_id` (the DB then guarantees the child shares
+   the parent's tenant). Top-level creates still take `operator_id` as before. Only the
+   booking service + the isolation test needed this edit; typecheck catches the rest.
+2. **Residual (intentionally not converted this pass):** *optional/nullable* relations
+   — `Fee.activity`, `WaiverSignature.{order_item,customer}`, `Activity.location`,
+   `Resource.location` — plus the `StaffLocation` join (has no `operator_id`) and the
+   implicit `ActivityResources` m2m. These are lower-risk (nullable refs / join rows the
+   app creates) and left as single-column FKs; revisit if we ever expose them to
+   tenant-controlled input. App-layer create paths should still validate parent
+   ownership for these.
+
+**Why:** closes the one known integrity hole in D-010 with a DB-enforced guarantee,
+making cross-tenant attach impossible rather than merely unlikely — the product's core
+isolation promise now holds at the schema level, not just via RLS + app discipline.

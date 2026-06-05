@@ -251,6 +251,9 @@ model Activity {
   order_items OrderItem[]
   resources   Resource[]  @relation("ActivityResources")
 
+  // Target of tenant-composite FKs (D-010 / 0.13): children reference
+  // [operator_id, id] so the DB refuses a child whose parent is another tenant's.
+  @@unique([operator_id, id])
   @@index([operator_id])
   @@index([operator_id, category])
 }
@@ -259,7 +262,8 @@ model Rate {
   id               String      @id @default(cuid())
   operator_id      String
   activity_id      String
-  activity         Activity    @relation(fields: [activity_id], references: [id], onDelete: Cascade)
+  // Tenant-composite FK: (operator_id, activity_id) -> Activity(operator_id, id).
+  activity         Activity    @relation(fields: [operator_id, activity_id], references: [operator_id, id], onDelete: Cascade)
   name_internal    String
   name_external    String
   price_cents      Int
@@ -271,6 +275,7 @@ model Rate {
   sort_index       Int         @default(0)
   order_items      OrderItem[]
 
+  @@unique([operator_id, id])
   @@index([operator_id])
   @@index([activity_id])
 }
@@ -279,7 +284,8 @@ model Timeslot {
   id              String         @id @default(cuid())
   operator_id     String
   activity_id     String
-  activity        Activity       @relation(fields: [activity_id], references: [id], onDelete: Cascade)
+  // Tenant-composite FK: (operator_id, activity_id) -> Activity(operator_id, id).
+  activity        Activity       @relation(fields: [operator_id, activity_id], references: [operator_id, id], onDelete: Cascade)
   datetime        DateTime
   capacity_total  Int
   capacity_booked Int            @default(0)
@@ -288,6 +294,7 @@ model Timeslot {
   created_at      DateTime       @default(now())
   order_items     OrderItem[]
 
+  @@unique([operator_id, id])
   @@index([operator_id])
   @@index([activity_id, datetime])
 }
@@ -338,6 +345,7 @@ model Customer {
   waiver_signatures WaiverSignature[]
 
   @@unique([operator_id, email])
+  @@unique([operator_id, id])
   @@index([operator_id])
 }
 
@@ -351,7 +359,8 @@ model Order {
   operator             Operator     @relation(fields: [operator_id], references: [id], onDelete: Cascade)
   order_number         String       @unique
   customer_id          String
-  customer             Customer     @relation(fields: [customer_id], references: [id])
+  // Tenant-composite FK: (operator_id, customer_id) -> Customer(operator_id, id).
+  customer             Customer     @relation(fields: [operator_id, customer_id], references: [operator_id, id])
   status               OrderStatus  @default(UPCOMING)
   created_by           OrderChannel @default(CUSTOMER)
   subtotal_cents       Int
@@ -373,6 +382,7 @@ model Order {
   notes    Note[]
   history  OrderEvent[]
 
+  @@unique([operator_id, id])
   @@index([operator_id])
   @@index([operator_id, status])
   @@index([customer_id])
@@ -382,13 +392,15 @@ model OrderItem {
   id               String          @id @default(cuid())
   operator_id      String
   order_id         String
-  order            Order           @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  // All four relations below are tenant-composite FKs ((operator_id, fk) ->
+  // parent(operator_id, id)); they share operator_id, which Postgres allows.
+  order            Order           @relation(fields: [operator_id, order_id], references: [operator_id, id], onDelete: Cascade)
   activity_id      String
-  activity         Activity        @relation(fields: [activity_id], references: [id])
+  activity         Activity        @relation(fields: [operator_id, activity_id], references: [operator_id, id])
   rate_id          String
-  rate             Rate            @relation(fields: [rate_id], references: [id])
+  rate             Rate            @relation(fields: [operator_id, rate_id], references: [operator_id, id])
   timeslot_id      String
-  timeslot         Timeslot        @relation(fields: [timeslot_id], references: [id])
+  timeslot         Timeslot        @relation(fields: [operator_id, timeslot_id], references: [operator_id, id])
   quantity         Int             @default(1)
   unit_price_cents Int
   status           OrderItemStatus @default(UPCOMING)
@@ -416,7 +428,7 @@ model Payment {
   id                       String           @id @default(cuid())
   operator_id              String
   order_id                 String
-  order                    Order            @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  order                    Order            @relation(fields: [operator_id, order_id], references: [operator_id, id], onDelete: Cascade)
   method                   PaymentMethod    @default(CARD)
   status                   PaymentStatus    @default(PAID)
   amount_cents             Int
@@ -437,7 +449,7 @@ model Note {
   id          String   @id @default(cuid())
   operator_id String
   order_id    String
-  order       Order    @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  order       Order    @relation(fields: [operator_id, order_id], references: [operator_id, id], onDelete: Cascade)
   content     String
   author      String
   created_at  DateTime @default(now())
@@ -450,7 +462,7 @@ model OrderEvent {
   id          String   @id @default(cuid())
   operator_id String
   order_id    String
-  order       Order    @relation(fields: [order_id], references: [id], onDelete: Cascade)
+  order       Order    @relation(fields: [operator_id, order_id], references: [operator_id, id], onDelete: Cascade)
   type        String
   description String
   actor       String?
@@ -529,6 +541,7 @@ model Waiver {
   created_at             DateTime          @default(now())
   signatures             WaiverSignature[]
 
+  @@unique([operator_id, id])
   @@index([operator_id])
 }
 
@@ -536,7 +549,7 @@ model WaiverSignature {
   id            String     @id @default(cuid())
   operator_id   String
   waiver_id     String
-  waiver        Waiver     @relation(fields: [waiver_id], references: [id], onDelete: Cascade)
+  waiver        Waiver     @relation(fields: [operator_id, waiver_id], references: [operator_id, id], onDelete: Cascade)
   order_item_id String?
   order_item    OrderItem? @relation(fields: [order_item_id], references: [id])
   customer_id   String?

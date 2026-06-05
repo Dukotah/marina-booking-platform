@@ -30,7 +30,8 @@ database.** As of last verification:
   `app_user` role (provisioned by `pnpm db:approle`) is what tenant queries connect
   through — required because Neon's `neondb_owner` has BYPASSRLS (see D-010).
 - **Tests:** `@marina/core` 69/69. `@marina/database` cross-tenant isolation suite runs
-  **live against Neon RLS: 7 pass / 1 skip** (the skip = the D-010 FK-attach gap).
+  **live against Neon: 8/8** (D-010 FK-attach gap closed by 0.13 / D-011 — tenant-composite
+  FKs; the previously-skipped attach case is un-skipped and passing).
 - Secrets live in `.env` (gitignored). `DATABASE_URL`/`DIRECT_URL` (owner) +
   `APP_DATABASE_URL`/`APP_DB_PASSWORD` (app_user) are set.
 
@@ -47,14 +48,18 @@ operator app — Vercel deploy currently failing, see below).
 
 ## Next steps, in order
 
-1. **Clerk secret key** — `.env` has the publishable key; paste the `sk_test_...` secret
-   into `CLERK_SECRET_KEY`, then wire Clerk to replace the `x-dev-staff-id` shim (0.7).
+1. **Wire Clerk (0.7)** — both keys are now in `.env` (`CLERK_SECRET_KEY` filled this
+   session). Build the Clerk middleware + sign-in/sign-up pages and replace the
+   `x-dev-staff-id` dev shim end-to-end (api `requireStaff`, admin `lib/session`). Do
+   NOT add Clerk keys to Vercel until those pages exist or the admin app will bounce to a
+   nonexistent login.
 2. **Square sandbox keys** — developer.squareup.com was blocked for the browser agent;
    create the app + fill `SQUARE_*` to charge a test booking (1.5).
-3. **Fix marina-admin Vercel deploy** — builds green locally; needs the actual Vercel
-   build log to diagnose (env- or Linux-specific). marina-web is already live.
-4. **0.13 hardening** — tenant-composite FKs to close the D-010 cross-tenant FK gap.
-5. Smoke-test the full booking flow end-to-end once Clerk + Square are in.
+3. **marina-admin Vercel runtime** — build is fixed and it deploys; it needs the DB env
+   vars set on the Vercel project (it queries the DB directly, D-007). Until then it
+   shows a graceful "Live data unavailable" notice (not a crash). See
+   `docs/BROWSER-TAKEOVER.md` → "set marina-admin DB env vars". marina-web is already live.
+4. Smoke-test the full booking flow end-to-end once Clerk + Square are in.
 
 ## Things only the owner / a browser can do (blocked-on-owner)
 
@@ -70,7 +75,10 @@ when each is needed.
   packages.
 - Client components must import shell **leaf files**, not the server-only barrel.
 - `noUncheckedIndexedAccess` is off (D-009).
-- Prisma `create` calls need explicit `operator_id`.
+- Prisma **top-level** `create` calls need explicit `operator_id`; but **nested** creates
+  under a tenant-composite parent (e.g. `order.create({ items: { create: [...] } })`)
+  must NOT pass `operator_id` — Prisma derives it from the parent (D-011). Typecheck
+  catches violations.
 - Migrate `package.json#prisma` → `prisma.config.ts` before Prisma 7 (deprecation
   warning, non-blocking for now).
 

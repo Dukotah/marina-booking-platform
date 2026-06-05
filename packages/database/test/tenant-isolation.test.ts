@@ -109,8 +109,10 @@ async function seedTenant(operatorId: string, suffix: string): Promise<SeededTen
         total_cents: 35000,
         balance_due_cents: 35000,
         items: {
+          // operator_id is derived from the parent order via the tenant-composite
+          // relation ([operator_id, order_id]) — passing it explicitly is now rejected,
+          // and this guarantees the child can't belong to a different tenant.
           create: {
-            operator_id: operator.id,
             activity_id: activity.id,
             rate_id: rate.id,
             timeslot_id: timeslot.id,
@@ -277,18 +279,17 @@ describe.skipIf(!HAS_DB)('cross-tenant isolation (RLS + tenant-scoped client)', 
     expect(await dbB.customer.count()).toBe(1);
   });
 
-  // KNOWN GAP (docs/DECISIONS.md D-010, ROADMAP 0.13): Postgres foreign-key checks
-  // bypass RLS, so a tenant CAN create one of its own rows that references another
-  // tenant's row by id. The referencing row stays owned/readable only by the attacker
-  // and the referenced row remains invisible to them, so exposure is limited — but it
-  // is a real integrity gap. The fix is tenant-composite FKs (@@unique([operator_id,
-  // id]) on parents). Skipped (not deleted) until that hardening lands.
-  it.skip("A cannot ATTACH a child row to B's parent (cross-tenant foreign key)", async () => {
+  // CLOSED (docs/DECISIONS.md D-010 → D-011, ROADMAP 0.13): tenant-composite FKs now
+  // make Postgres itself refuse a child row whose parent lives in another tenant.
+  // Postgres FK checks bypass RLS, but the FK is on (operator_id, parent_id) ->
+  // parent(operator_id, id), so an A-owned row referencing B's parent has no matching
+  // (A, parent_id) row and the insert errors. This was the one isolation case skipped
+  // under the old single-column FKs; it now runs and must reject.
+  it("A cannot ATTACH a child row to B's parent (cross-tenant foreign key)", async () => {
     const dbA = forOperator(OP_A);
 
-    // Create a rate under A but pointing at B's activity. Once tenant-composite FKs
-    // land, (operator_id=A, activity_id=B's) will not match any Activity and the
-    // insert must error.
+    // Create a rate under A but pointing at B's activity. With tenant-composite FKs,
+    // (operator_id=A, activity_id=B's) matches no Activity row, so the insert errors.
     await expect(
       dbA.rate.create({
         data: {

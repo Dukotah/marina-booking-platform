@@ -21,12 +21,12 @@ booking vertical slice for the seed client (Lake Sonoma Marina) running on it.
 | 0.5 | Neon dev database connected + first migration run | ✅ (Neon US-West; migration `init` applied; RLS applied; `app_user` non-bypass role provisioned) |
 | 0.6 | Seed script — Lake Sonoma Marina (19 activities, rates, fees, waiver, config) | ✅ (seeded live — operator `lsra`, 19 activities) |
 | 0.7 | Auth + RBAC (Clerk operators/staff, magic link customers) | ⏸️ (needs Clerk keys) |
-| 0.8 | Cross-tenant isolation tests (must fail to access other tenants) | ✅ (live vs Neon RLS — 7/7 pass: reads, writes, WITH CHECK, bulk ops, symmetric; 1 case skipped → 0.13) |
+| 0.8 | Cross-tenant isolation tests (must fail to access other tenants) | ✅ (live vs Neon — now **8/8**: reads, writes, WITH CHECK, bulk ops, symmetric, **+ cross-tenant FK attach** un-skipped after 0.13) |
 | 0.9 | Auth/RBAC package (@marina/auth) — permission checks, AuthContext | ✅ |
 | 0.10 | API skeleton (Hono) — tenant-resolution middleware, RLS-scoped client per request, dev auth shim, catalog route; boots + tenant guard verified | ✅ |
 | 0.11 | Customer portal shell (apps/web, Next 14 + Tailwind) — catalog page wired to API, white-label brand var, graceful no-DB state | ✅ |
 | 0.12 | Admin dashboard shell (apps/admin, Next 14 + Tailwind) — dashboard-first KPI layout + nav | ✅ |
-| 0.13 | **Hardening: tenant-composite FKs** — `@@unique([operator_id, id])` on parents + composite child relations so the DB refuses cross-tenant FK references (closes the D-010 gap; un-skips the isolation case) | ⬜ |
+| 0.13 | **Hardening: tenant-composite FKs** — `@@unique([operator_id, id])` on parents + composite child relations so the DB refuses cross-tenant FK references (closes the D-010 gap; un-skips the isolation case) | ✅ (migration `tenant_composite_fks` applied live; isolation suite now 8/8; see D-011) |
 
 ## Phase 1 — MVP (sellable booking core)
 
@@ -78,6 +78,20 @@ I will build against sandboxes/free tiers and flag exactly when each is needed.
 
 ## Changelog
 
+- **2026-06-04** — **0.13 tenant-composite FKs — Phase 0 hardening complete (D-011).**
+  Closed the D-010 cross-tenant FK-attach gap: added `@@unique([operator_id, id])` to
+  parent tables (Activity, Rate, Timeslot, Order, Customer, Waiver) and rewrote the
+  required intra-tenant relations as composite FKs `(operator_id, parent_id) ->
+  parent(operator_id, id)` (Rate/Timeslot→Activity, Order→Customer,
+  OrderItem→order/activity/rate/timeslot, Payment/Note/OrderEvent→Order,
+  WaiverSignature→Waiver). Migration `tenant_composite_fks` applied live to Neon (zero
+  drift). Postgres now refuses a child row whose parent is another tenant's. Un-skipped
+  the cross-tenant FK-attach isolation case — **live suite 8/8** (was 7/1-skip). Ripple:
+  nested creates derive `operator_id` from the parent now, so dropped the explicit
+  `operator_id` in the booking service's `items.create` (typecheck caught it). Residual
+  (nullable/optional relations + StaffLocation + ActivityResources m2m) left as
+  single-column, documented in D-011. Verified: typecheck 9/9, build 3/3, core 69/69,
+  isolation 8/8.
 - **2026-06-04** — **marina-admin Vercel deploy fix + customer-portal API wiring.**
   Root-caused the admin deploy failure as a Prisma/runtime packaging issue and fixed
   it: added the `rhel-openssl-3.0.x` Prisma binaryTarget (Vercel Linux engine); moved
