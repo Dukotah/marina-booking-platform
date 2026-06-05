@@ -59,7 +59,7 @@ customer self-service reschedule.
 |---|---|---|
 | 2.1 | **Customer self-service reschedule** — `rescheduleBooking` service (capacity move + `self_reschedule_hours` window) + staff `POST /orders/:id/reschedule` + customer `POST /orders/:orderNumber/self-reschedule` (email-gated) + **web account slot-picker UI** (RescheduleFlow → server actions) | ✅ full-stack (backend live-verified 5/5; web typechecks + builds) |
 | 2.2 | **Gift cards (backend)** — `GiftCard` + `GiftCardTransaction` models (signed ledger, tenant-composite FK) + `issueGiftCard`/`redeemGiftCard`/`getGiftCardByCode` service (atomic, overspend-safe conditional decrement) + staff `POST /giftcards` (issue) · `GET /giftcards` (list) · `POST /giftcards/:code/redeem` + public `GET /giftcards/:code/balance` | ✅ backend live-verified 6/6 (D-014). Admin UI is a follow-up |
-| 2.3 | **Gift card as tender** — `applyGiftCardToOrder` service (one atomic tx: overspend-safe card draw-down + `Payment{GIFT_CARD}` + order balance update + signed ledger entry stamped with the order id + audit event) + staff `POST /payments/gift-card` | ✅ backend live-verified 5/5 (D-015). Needs no Stripe (stored value). Customer-checkout tender (ties into customer auth) is the follow-up |
+| 2.3 | **Gift card as tender** — `applyGiftCardToOrder` service (one atomic tx: overspend-safe card draw-down + `Payment{GIFT_CARD}` + order balance update + signed ledger entry stamped with the order id + audit event) + staff `POST /payments/gift-card` + **customer self-service** `POST /payments/customer/gift-card` (token-gated, own-order-only) | ✅ backend live-verified — staff 5/5 (D-015) + customer 3/3 (D-017 token). Needs no Stripe (stored value) |
 | 2.4 | **Reports + CSV export** — staff (`report:read`) `GET /reports/revenue` + `/reports/bookings` (date-range filtered; gross/discount/tax/tip/refund/net + per-day breakdown; status + top-activity counts) and `.csv` downloads | ✅ backend live-verified 15/15 |
 | 2.5 | **Gift card payment refund** — `refundGiftCardPayment` service (one atomic tx: credit the originating card back via the payment's linked ledger entry + positive `REFUND` entry + advance Payment status + roll order back) wired into a now-tender-polymorphic `POST /payments/:id/refund` (GIFT_CARD → card credit, no Stripe; card → Stripe) | ✅ backend live-verified (D-016). Closes the stored-value money loop (issue → tender → refund) |
 
@@ -86,6 +86,14 @@ I will build against sandboxes/free tiers and flag exactly when each is needed.
 
 ## Changelog
 
+- **2026-06-05** — **Customer self-service gift-card tender (2.3 complete).** With customer
+  auth in place (D-017), added `POST /api/payments/customer/gift-card`: token-gated, and a
+  customer may pay down ONLY their own order (ownership checked against the token's email; a
+  mismatched/other-customer token 404s without leaking). Reuses the same atomic, overspend-safe
+  `applyGiftCardToOrder` as the staff endpoint; the ledger entry is attributed to
+  `customer:<email>`. Live 3/3 (401 without token, cross-customer 404 + balance untouched,
+  owner pays down own order). api **122 → 125**; grand total **199 → 202 green**. typecheck 9/9.
+  Closes the customer-checkout follow-up flagged in D-015. Held locally, not pushed.
 - **2026-06-05** — **Customer email-OTP auth — backend (0.7, D-017).** Passwordless guest
   login: `CustomerOtp` model (sha256 of the code only, 10-min expiry, attempt cap; migration
   `20260605140000_customer_otp` applied live + RLS/grants). Service `customer-auth.ts`:

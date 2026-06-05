@@ -1,9 +1,10 @@
 /**
  * Payments API — charge a booking and refund it (Stripe, test-first).
  *
- *   POST /api/payments/charge        public  — charge a card against an order
- *   POST /api/payments/gift-card     staff   — apply a gift card as tender (order:write)
- *   POST /api/payments/:id/refund    staff   — full/partial refund (order:refund)
+ *   POST /api/payments/charge             public — charge a card against an order
+ *   POST /api/payments/gift-card          staff  — apply a gift card as tender (order:write)
+ *   POST /api/payments/customer/gift-card customer — pay your OWN order with a gift card
+ *   POST /api/payments/:id/refund         staff  — full/partial refund (order:refund)
  *
  * All money is integer cents. Every DB write is tenant-scoped (RLS via c.var.db)
  * and the multi-row mutations run inside a single tenant transaction so an order's
@@ -32,6 +33,7 @@ import {
 } from '../services/stripe.js';
 import { applyGiftCardToOrder, refundGiftCardPayment, GiftCardError } from '../services/giftcards.js';
 import { isEmailConfigured, sendRefundReceipt } from '../services/notifications.js';
+import { customerIdentityFromHeader } from '../services/customer-auth.js';
 
 export const payments = new Hono<Env>();
 
@@ -212,6 +214,47 @@ payments.post('/gift-card', requireStaff, async (c) => {
       parsed.data.code,
       { amountCents: parsed.data.amountCents, actor: c.var.auth.userId },
     );
+    return c.json(result, 201);
+  } catch (err) {
+    if (err instanceof GiftCardError) {
+      return c.json({ error: err.message, code: err.code }, err.status as 400);
+    }
+    throw err;
+  }
+});
+
+/**
+ * POST /api/payments/customer/gift-card — customer self-service gift-card tender.
+ * Requires a customer session token (Authorization: Bearer from
+ * /api/auth/customer/verify); a customer may only pay down THEIR OWN order. Reuses
+ * the same atomic, overspend-safe service as the staff endpoint.
+ */
+payments.post('/customer/gift-card', async (c) => {
+  const identity = await customerIdentityFromHeader(c.req.header('authorization'), c.var.operatorId);
+  if (!identity) {
+    return c.json({ error: 'Sign in to pay with a gift card' }, 401);
+  }
+
+  const parsed = giftCardTenderSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) {
+    return c.json({ error: 'Invalid request', issues: parsed.error.flatten() }, 400);
+  }
+
+  // The order must belong to the authenticated customer (match by email). Same 404
+  // whether it's missing or someone else's — don't leak which orders exist.
+  const order = await c.var.db.order.findFirst({
+    where: { id: parsed.data.orderId },
+    select: { customer: { select: { email: true } } },
+  });
+  if (!order || order.customer.email.toLowerCase() !== identity.email) {
+    return c.json({ error: 'We could not find a matching order' }, 404);
+  }
+
+  try {
+    const result = await applyGiftCardToOrder(c.var.operatorId, parsed.data.orderId, parsed.data.code, {
+      amountCents: parsed.data.amountCents,
+      actor: `customer:${identity.email}`,
+    });
     return c.json(result, 201);
   } catch (err) {
     if (err instanceof GiftCardError) {
