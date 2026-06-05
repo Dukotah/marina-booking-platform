@@ -42,7 +42,7 @@ exercised against a live DB/keys (waiting on 0.5 Neon + service keys).
 | 1.3 | Customer portal: catalog → date → time → rate → checkout | ✅🧪 (booking **service** now live-verified vs Neon — pricing/capacity/order graph; UI flow still 🧪) |
 | 1.4 | Availability calendar (color-coded) + capacity-aware time slots | ✅🧪 |
 | 1.5 | Stripe payments (test mode, PaymentIntents + Elements) | ✅🧪 (switched from Square → Stripe per D-013; needs Stripe keys to charge; 3DS/SCA is a follow-up) |
-| 1.6 | Order list + detail + cancel + refund (full & partial) | ✅🧪 (cancel **service** live-verified — restores timeslot capacity; refund still 🧪) |
+| 1.6 | Order list + detail + cancel + refund (full & partial) | ✅🧪 (list + detail + cancel now **live-verified via full HTTP** — status/search/pagination filters, public-by-number fetch, staff cancel restores capacity + idempotency guard; refund still 🧪 — needs Stripe) |
 | 1.7 | Email confirmation + reminder (Resend) | ✅🧪 (needs Resend key to send) |
 | 1.8 | Day Gantt manifest (visual, color-coded) + week calendar | ✅🧪 |
 | 1.9 | Digital waiver signing + audit trail | ✅🧪 (waiver sign + audit **live-verified** via full HTTP path — signature recorded, item/customer flags flipped, staff list + auth guard) |
@@ -83,6 +83,23 @@ I will build against sandboxes/free tiers and flag exactly when each is needed.
 
 ## Changelog
 
+- **2026-06-05** — **Live-verification sweep: orders, merchandise, POS, customers (HTTP).**
+  Ran a lean 4-agent parallel fan-out (Sonnet) to turn the remaining Phase-1/2 `✅🧪` API
+  surface into live-verified, each agent writing one new `app.request` integration suite
+  against the LSRA Neon tenant (proven template: `skipIf` no DB, dev-owner staff shim,
+  self-cleanup): **orders** (list status/search/pagination, public-by-number detail + 404,
+  staff cancel restores capacity + 401/409 idempotency — 16), **merchandise** (CRUD +
+  name/active filters + soft/hard delete + low-stock flag + 401s — 19), **POS** (CASH/COMP
+  sales create Order+Payment, `unitPriceCentsOverride`, capacity 409, search by
+  order/customer + type filter, 401/400 guards — 11), **customers** (list/search/tag, detail
+  + 404, create + dup-409, patch + empty-patch 400, 401s — 14). **No route bugs found** —
+  the agents touched no shared/route files. One test-only bug fixed: the POS suite deleted
+  in-test timeslots in a per-test `finally` before `afterAll` removed the referencing orders
+  (OrderItem→Timeslot composite FK violation) — now the slots are swept in `afterAll` after
+  their orders; also cleaned 2 orphan slots (`booked=1/20`) the failed first run left in the
+  seed tenant (a raw order delete doesn't restore slot capacity). api suite **24 → 84**;
+  grand total **101 → 161 green** (core 69 + isolation 8 + api 84). typecheck 9/9. Held
+  locally, not pushed (Vercel quota).
 - **2026-06-05** — **Gift cards backend slice (2.2) — live-verified (D-014).** New
   `GiftCard` + `GiftCardTransaction` models: balance in integer cents is authoritative
   and every change appends a *signed* ledger row (`+ISSUE/REFUND`, `−REDEEM`) so the
