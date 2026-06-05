@@ -23,24 +23,38 @@ export const dynamic = 'force-dynamic';
 
 /** Resolve the operator's brand color so the trend chart stays white-label. */
 async function getBrandColor(): Promise<string> {
-  const { operatorId } = await getOperatorContext();
-  const db = await getTenantDb();
-  const operator = await db.operator.findUnique({
-    where: { id: operatorId },
-    select: { brand_color: true },
-  });
-  return operator?.brand_color || '#0ea5e9';
+  const fallback = '#0ea5e9';
+  try {
+    const { operatorId } = await getOperatorContext();
+    const db = await getTenantDb();
+    const operator = await db.operator.findUnique({
+      where: { id: operatorId },
+      select: { brand_color: true },
+    });
+    return operator?.brand_color || fallback;
+  } catch {
+    // DB unreachable — getDashboardData surfaces the notice; just use the default.
+    return fallback;
+  }
 }
 
 export default async function DashboardPage() {
   const [data, brandColor] = await Promise.all([getDashboardData(), getBrandColor()]);
 
-  const { revenue, occupancy, upcomingCount, trend, upcoming, alerts } = data;
+  const { revenue, occupancy, upcomingCount, trend, upcoming, alerts, degraded } = data;
   const totalRevenue = trend.reduce((sum, p) => sum + p.cents, 0);
 
   return (
     <AdminShell>
       <PageHeader title="Dashboard" description="Your business at a glance." />
+
+      {degraded && (
+        <div className="mb-6 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <span className="font-medium">Live data unavailable.</span> Couldn&apos;t reach
+          the database, so the figures below are placeholders. Check that the
+          deployment&apos;s database environment variables are set.
+        </div>
+      )}
 
       {/* KPI row */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">

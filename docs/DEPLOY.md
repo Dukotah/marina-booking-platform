@@ -25,10 +25,19 @@ their defaults — Vercel installs from the repo root (workspace-aware) and runs
 
 **marina-admin**
 - `API_URL` = deployed API base URL (later)
+- DB env (REQUIRED at runtime — admin queries the DB **directly**, decision D-007):
+  `DATABASE_URL` (Neon pooled, owner), `DIRECT_URL` (Neon direct), `APP_DATABASE_URL`
+  (`app_user` NOBYPASSRLS pooled — required for real tenant isolation), and
+  `APP_DB_PASSWORD` if your `APP_DATABASE_URL` references it.
 - Clerk keys (Phase 0.7): `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`
+- `API_URL` = deployed API base URL (later)
 
-Both apps build and deploy fine with NO env vars set (verified: `next build` green for
-web + admin) — they just render placeholder/empty states until the API + DB exist.
+Both apps **build** with no env vars set. At **runtime**, `marina-web` degrades
+gracefully (fetches via `API_URL`, shows a "not connected" state). `marina-admin`
+queries the DB directly: it now degrades to an empty dashboard with a notice when the
+DB is unreachable, but to show **real** data its Vercel project MUST have the DB env
+vars above. (An earlier version of this doc wrongly claimed admin needed no env — the
+missing DB vars are exactly what caused its first runtime 500.)
 
 ## Two ways to stand up the projects
 

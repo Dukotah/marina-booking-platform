@@ -110,6 +110,30 @@ export interface DashboardData {
   trend: RevenuePoint[];
   upcoming: UpcomingBooking[];
   alerts: DashboardAlert[];
+  /**
+   * True when live data could not be loaded (e.g. the database is unreachable or
+   * env vars are not configured on this deployment). The page renders an empty,
+   * zeroed dashboard plus a notice rather than throwing a 500.
+   */
+  degraded: boolean;
+}
+
+/** A zeroed dashboard with a flat 14-day trend, used when the DB is unreachable. */
+function emptyDashboard(now: Date, degraded: boolean): DashboardData {
+  const todayStart = startOfDay(now);
+  const trend: RevenuePoint[] = Array.from({ length: TREND_DAYS }, (_, i) => {
+    const d = addDays(todayStart, i - (TREND_DAYS - 1));
+    return { date: d.toISOString().slice(0, 10), cents: 0 };
+  });
+  return {
+    revenue: { todayCents: 0, weekCents: 0, monthCents: 0 },
+    occupancy: { capacityTotal: 0, capacityBooked: 0, ratio: 0, slices: [] },
+    upcomingCount: 0,
+    trend,
+    upcoming: [],
+    alerts: [],
+    degraded,
+  };
 }
 
 /**
@@ -372,47 +396,56 @@ async function buildAlerts(
  * operator from the session, then runs all reads through the RLS client.
  */
 export async function getDashboardData(): Promise<DashboardData> {
-  const { operatorId } = await getOperatorContext();
-  const db = await getTenantDb();
   const now = new Date();
+  try {
+    const { operatorId } = await getOperatorContext();
+    const db = await getTenantDb();
 
-  const todayStart = startOfDay(now);
-  const tomorrowStart = addDays(todayStart, 1);
-  const weekStart = startOfWeek(now);
-  const monthStart = startOfMonth(now);
+    const todayStart = startOfDay(now);
+    const tomorrowStart = addDays(todayStart, 1);
+    const weekStart = startOfWeek(now);
+    const monthStart = startOfMonth(now);
 
-  const [
-    todayCents,
-    weekCents,
-    monthCents,
-    upcomingCount,
-    occupancy,
-    trend,
-    upcoming,
-    alerts,
-  ] = await Promise.all([
-    sumRevenue(db, operatorId, todayStart, tomorrowStart),
-    sumRevenue(db, operatorId, weekStart, tomorrowStart),
-    sumRevenue(db, operatorId, monthStart, tomorrowStart),
-    db.orderItem.count({
-      where: {
-        operator_id: operatorId,
-        status: 'UPCOMING',
-        timeslot: { datetime: { gte: now } },
-      },
-    }),
-    buildOccupancy(db, operatorId, now),
-    buildTrend(db, operatorId, now),
-    buildUpcoming(db, operatorId, now),
-    buildAlerts(db, operatorId, now),
-  ]);
+    const [
+      todayCents,
+      weekCents,
+      monthCents,
+      upcomingCount,
+      occupancy,
+      trend,
+      upcoming,
+      alerts,
+    ] = await Promise.all([
+      sumRevenue(db, operatorId, todayStart, tomorrowStart),
+      sumRevenue(db, operatorId, weekStart, tomorrowStart),
+      sumRevenue(db, operatorId, monthStart, tomorrowStart),
+      db.orderItem.count({
+        where: {
+          operator_id: operatorId,
+          status: 'UPCOMING',
+          timeslot: { datetime: { gte: now } },
+        },
+      }),
+      buildOccupancy(db, operatorId, now),
+      buildTrend(db, operatorId, now),
+      buildUpcoming(db, operatorId, now),
+      buildAlerts(db, operatorId, now),
+    ]);
 
-  return {
-    revenue: { todayCents, weekCents, monthCents },
-    occupancy,
-    upcomingCount,
-    trend,
-    upcoming,
-    alerts,
-  };
+    return {
+      revenue: { todayCents, weekCents, monthCents },
+      occupancy,
+      upcomingCount,
+      trend,
+      upcoming,
+      alerts,
+      degraded: false,
+    };
+  } catch (err) {
+    // The admin app talks to the DB directly (D-007); if it's unreachable (missing
+    // env vars on this deployment, network blip, etc.) render an empty dashboard
+    // with a notice instead of throwing a 500. See lib/session for the connection.
+    console.error('[dashboard] failed to load live data — rendering degraded:', err);
+    return emptyDashboard(now, true);
+  }
 }
