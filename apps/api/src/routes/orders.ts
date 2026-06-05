@@ -5,17 +5,25 @@
  *   GET    /                  staff  — list orders with status/date/search filters
  *   GET    /:orderNumber      public-by-order-number OR staff — fetch one order
  *   POST   /:id/cancel        staff  — cancel an order, restoring capacity
+ *   POST   /:id/reschedule    staff  — move a booking to another timeslot
+ *   POST   /:orderNumber/self-reschedule  public — customer self-service reschedule
  *
  * All data access goes through `c.var.db` (the RLS-scoped tenant client). Prices are
  * NEVER taken from the client — see services/booking.ts.
  */
 import { Hono } from 'hono';
+import { z } from 'zod';
 import { assertPermission } from '@marina/auth';
 import { bookingInputSchema } from '@marina/core';
 import type { Prisma } from '@marina/database';
 import type { Env } from '../context.js';
 import { requireStaff } from '../middleware/auth.js';
-import { createBooking, cancelBooking, BookingError } from '../services/booking.js';
+import {
+  createBooking,
+  cancelBooking,
+  rescheduleBooking,
+  BookingError,
+} from '../services/booking.js';
 
 export const orders = new Hono<Env>();
 
@@ -199,6 +207,81 @@ orders.post('/:id/cancel', requireStaff, async (c) => {
       reason: reason || undefined,
     });
     return c.json({ order: serializeOrder(order) });
+  } catch (err) {
+    if (err instanceof BookingError) {
+      return c.json({ error: err.message, code: err.code }, err.status as 400);
+    }
+    throw err;
+  }
+});
+
+// --- POST /:id/reschedule : move a booking to another slot (staff) ----------
+
+const staffRescheduleSchema = z.object({
+  timeslotId: z.string().min(1, 'timeslotId is required'),
+  /** Disambiguate which item to move on a multi-item order. */
+  orderItemId: z.string().min(1).optional(),
+});
+
+orders.post('/:id/reschedule', requireStaff, async (c) => {
+  assertPermission(c.var.auth, 'order:write');
+
+  const id = c.req.param('id');
+  const parsed = staffRescheduleSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) {
+    return c.json({ error: 'Invalid request', issues: parsed.error.issues }, 400);
+  }
+
+  try {
+    const order = await rescheduleBooking(c.var.operatorId, id, parsed.data.timeslotId, {
+      actor: c.var.auth.userId,
+      channel: 'STAFF', // staff bypass the self-service window
+      orderItemId: parsed.data.orderItemId,
+    });
+    return c.json({ order: order ? serializeOrder(order) : null });
+  } catch (err) {
+    if (err instanceof BookingError) {
+      return c.json({ error: err.message, code: err.code }, err.status as 400);
+    }
+    throw err;
+  }
+});
+
+// --- POST /:orderNumber/self-reschedule : customer self-service -------------
+
+const selfRescheduleSchema = z.object({
+  /** Identity check (magic-link stub): must match the order's customer email. */
+  email: z.string().trim().toLowerCase().email('A valid email is required'),
+  timeslotId: z.string().min(1, 'timeslotId is required'),
+  orderItemId: z.string().min(1).optional(),
+});
+
+orders.post('/:orderNumber/self-reschedule', async (c) => {
+  const orderNumber = c.req.param('orderNumber');
+  const parsed = selfRescheduleSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) {
+    return c.json({ error: 'Invalid request', issues: parsed.error.issues }, 400);
+  }
+
+  // Resolve the order by number (RLS-scoped) and verify the email matches before
+  // touching anything — the lightweight identity gate for the self-service flow.
+  const found = await c.var.db.order.findFirst({
+    where: { order_number: orderNumber },
+    select: { id: true, customer: { select: { email: true } } },
+  });
+  if (!found || found.customer.email.toLowerCase() !== parsed.data.email) {
+    // Same response whether the order is missing or the email is wrong — don't leak
+    // which order numbers exist.
+    return c.json({ error: 'We could not find a booking matching those details' }, 404);
+  }
+
+  try {
+    const order = await rescheduleBooking(c.var.operatorId, found.id, parsed.data.timeslotId, {
+      actor: 'customer',
+      channel: 'CUSTOMER', // enforces the activity's self-reschedule window
+      orderItemId: parsed.data.orderItemId,
+    });
+    return c.json({ order: order ? serializeOrder(order) : null });
   } catch (err) {
     if (err instanceof BookingError) {
       return c.json({ error: err.message, code: err.code }, err.status as 400);

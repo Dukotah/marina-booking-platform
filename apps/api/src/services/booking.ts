@@ -406,3 +406,145 @@ export async function cancelBooking(
     return updated;
   });
 }
+
+/**
+ * Move a booking's item to a different timeslot of the SAME activity — the
+ * customer self-service reschedule (and the staff equivalent). Runs in a tenant
+ * transaction so RLS scopes every write and the capacity move is atomic:
+ *   - validates the new slot belongs to the item's activity, isn't cancelled, and
+ *     has room for the item's quantity;
+ *   - for the CUSTOMER channel, enforces the activity's `self_reschedule_hours`
+ *     window against the CURRENT slot (staff/kiosk bypass the window);
+ *   - restores capacity on the old slot and takes it on the new one (recomputing
+ *     each slot's display status), repoints the item, and logs an OrderEvent.
+ *
+ * Operates on the order's single active item by default; pass `orderItemId` to
+ * disambiguate a multi-item order.
+ */
+export async function rescheduleBooking(
+  operatorId: string,
+  orderId: string,
+  newTimeslotId: string,
+  options: { actor?: string; channel?: BookingChannel; orderItemId?: string } = {},
+) {
+  const channel: BookingChannel = options.channel ?? 'CUSTOMER';
+
+  return withTenant(operatorId, async (tx) => {
+    const order = await tx.order.findFirst({ where: { id: orderId }, include: { items: true } });
+    if (!order) {
+      throw new BookingError('ORDER_NOT_FOUND', 'Order not found', 404);
+    }
+    if (order.status === 'CANCELLED') {
+      throw new BookingError('ORDER_CANCELLED', 'This order has been cancelled', 409);
+    }
+
+    // Pick the item to move: the named one, or the sole active item.
+    const activeItems = order.items.filter((i) => i.status !== 'CANCELLED');
+    let item;
+    if (options.orderItemId) {
+      item = activeItems.find((i) => i.id === options.orderItemId);
+      if (!item) throw new BookingError('ITEM_NOT_FOUND', 'Order item not found on this order', 404);
+    } else if (activeItems.length === 1) {
+      item = activeItems[0]!;
+    } else if (activeItems.length === 0) {
+      throw new BookingError('NO_ACTIVE_ITEMS', 'This order has nothing to reschedule', 409);
+    } else {
+      throw new BookingError('AMBIGUOUS_ITEM', 'Specify which item to reschedule', 400);
+    }
+
+    if (item.timeslot_id === newTimeslotId) {
+      throw new BookingError('SAME_TIMESLOT', 'The booking is already on that timeslot', 400);
+    }
+
+    // Current slot + the activity's self-reschedule policy window.
+    const currentSlot = await tx.timeslot.findFirst({
+      where: { id: item.timeslot_id },
+      select: { id: true, datetime: true, capacity_total: true, capacity_booked: true, status: true },
+    });
+    const activity = await tx.activity.findFirst({
+      where: { id: item.activity_id },
+      select: { self_reschedule_hours: true },
+    });
+
+    if (channel === 'CUSTOMER' && currentSlot) {
+      const windowHours = activity?.self_reschedule_hours ?? 0;
+      const cutoffMs = currentSlot.datetime.getTime() - windowHours * 3_600_000;
+      if (Date.now() > cutoffMs) {
+        throw new BookingError(
+          'RESCHEDULE_WINDOW_CLOSED',
+          `Online reschedule closes ${windowHours} hour(s) before the start time. Please contact us.`,
+          409,
+        );
+      }
+    }
+
+    // New slot: must belong to the same activity, be bookable, and have room.
+    const newSlot = await tx.timeslot.findFirst({
+      where: { id: newTimeslotId, activity_id: item.activity_id },
+      select: { id: true, capacity_total: true, capacity_booked: true, status: true },
+    });
+    if (!newSlot) {
+      throw new BookingError('TIMESLOT_NOT_FOUND', 'That timeslot is not available for this activity', 404);
+    }
+    if (newSlot.status === 'CANCELLED') {
+      throw new BookingError('TIMESLOT_CANCELLED', 'That timeslot has been cancelled', 409);
+    }
+    const remaining = newSlot.capacity_total - newSlot.capacity_booked;
+    if (item.quantity > remaining) {
+      throw new BookingError(
+        'INSUFFICIENT_CAPACITY',
+        remaining <= 0
+          ? 'That timeslot is fully booked'
+          : `Only ${remaining} spot(s) remain for that timeslot`,
+        409,
+      );
+    }
+
+    // Release the old slot's capacity (defensive floor at 0).
+    if (currentSlot) {
+      const oldBooked = Math.max(0, currentSlot.capacity_booked - item.quantity);
+      await tx.timeslot.update({
+        where: { id: currentSlot.id },
+        data: {
+          capacity_booked: oldBooked,
+          status:
+            currentSlot.status === 'CANCELLED'
+              ? 'CANCELLED'
+              : computeSlotStatus(currentSlot.capacity_total, oldBooked),
+        },
+      });
+    }
+
+    // Take capacity on the new slot and repoint the item.
+    const newBooked = newSlot.capacity_booked + item.quantity;
+    await tx.timeslot.update({
+      where: { id: newSlot.id },
+      data: { capacity_booked: newBooked, status: computeSlotStatus(newSlot.capacity_total, newBooked) },
+    });
+    await tx.orderItem.update({ where: { id: item.id }, data: { timeslot_id: newTimeslotId } });
+
+    await tx.orderEvent.create({
+      data: {
+        operator_id: operatorId,
+        order_id: order.id,
+        type: 'RESCHEDULED',
+        description: `Booking ${order.order_number} rescheduled via ${channel.toLowerCase()} channel`,
+        actor: options.actor ?? null,
+        metadata: {
+          orderItemId: item.id,
+          fromTimeslotId: currentSlot?.id ?? null,
+          toTimeslotId: newTimeslotId,
+          quantity: item.quantity,
+        } as Prisma.InputJsonValue,
+      },
+    });
+
+    return tx.order.findFirst({
+      where: { id: order.id },
+      include: {
+        items: { include: { activity: true, rate: true, timeslot: true } },
+        customer: true,
+      },
+    });
+  });
+}

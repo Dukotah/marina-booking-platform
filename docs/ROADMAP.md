@@ -55,6 +55,10 @@ Merchandise POS (integrated) · gift cards · promo codes · customer CRM ·
 reports + CSV export · staff roles/permissions UI · SMS (Twilio) ·
 customer self-service reschedule.
 
+| # | Item | Status |
+|---|---|---|
+| 2.1 | **Customer self-service reschedule** — `rescheduleBooking` service (capacity move + `self_reschedule_hours` window) + staff `POST /orders/:id/reschedule` + customer `POST /orders/:orderNumber/self-reschedule` (email-gated) | ✅ backend (live-verified 5/5); web account slot-picker UI still TODO |
+
 ## Phase 3 — Power features (the moat for complex customers)
 
 Resource/asset management · guide scheduling · package builder + upsells ·
@@ -78,6 +82,18 @@ I will build against sandboxes/free tiers and flag exactly when each is needed.
 
 ## Changelog
 
+- **2026-06-04** — **Customer self-service reschedule (2.1) — backend + live-verified.**
+  New `rescheduleBooking` service moves a booking's item to another slot of the same
+  activity: releases the old slot's capacity, takes the new one (recomputing status),
+  repoints the item, logs a `RESCHEDULED` event, and enforces the activity's
+  `self_reschedule_hours` window for the CUSTOMER channel (staff bypass). Endpoints: staff
+  `POST /orders/:id/reschedule` (order:write) + customer `POST
+  /orders/:orderNumber/self-reschedule` (email-gated, 404s without leaking order numbers).
+  Live suite 5/5 (capacity move, capacity guard, window enforcement, HTTP success +
+  wrong-email 404). Also added `apps/api/vitest.config.ts` (fileParallelism:false) — the
+  live suites share one Neon tenant + singleton Prisma client, so they must run
+  sequentially (a parallel afterAll `$disconnect()` was tearing the pool out mid-run).
+  API suite now 18; grand total 95 green. Remaining: the web account slot-picker UI.
 - **2026-06-04** — **Payments switched from Square → Stripe (D-013).** Removed the
   `square` SDK + `services/square.ts`; added `services/stripe.ts` (PaymentIntents) with
   the same interface the routes used, so `routes/payments.ts` only swapped imports +

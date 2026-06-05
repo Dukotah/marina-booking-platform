@@ -32,12 +32,12 @@ database.** As of last verification:
 - **Tests:** `@marina/core` 69/69. `@marina/database` cross-tenant isolation suite runs
   **live against Neon: 8/8** (D-010 FK-attach gap closed by 0.13 / D-011 — tenant-composite
   FKs; the previously-skipped attach case is un-skipped and passing). `@marina/api`
-  integration suites run **live: 13/13** — booking (pricing/capacity/order-graph, overbook
-  rejection, cancel restore), availability (slot generation + idempotency, day rollup,
-  booking reflected in capacity), waivers (full HTTP via `app.request`: sign + flag flips,
-  minor-guardian guard, active template, staff list + 401 guard), and promo (percent-off
-  applied + redemption increment, inactive/expired code rejected). All live suites skip
-  without `DATABASE_URL`, so plain `pnpm test` stays green (core 69 runs). Grand total 90.
+  integration suites run **live: 18/18** — booking, availability, waivers (full HTTP),
+  promo, and reschedule (capacity move + `self_reschedule_hours` window + self-service HTTP
+  email gate). NOTE: api suites share one Neon tenant + a singleton Prisma client, so
+  `apps/api/vitest.config.ts` sets `fileParallelism:false` (must run sequentially). All
+  live suites skip without `DATABASE_URL`, so plain `pnpm test` stays green (core 69 runs).
+  Grand total 95.
 - Secrets live in `.env` (gitignored). `DATABASE_URL`/`DIRECT_URL` (owner) +
   `APP_DATABASE_URL`/`APP_DB_PASSWORD` (app_user) are set.
 
