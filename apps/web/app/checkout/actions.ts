@@ -19,6 +19,7 @@ import { bookingInputSchema, promoValidateSchema } from '@marina/core';
 import {
   createBooking,
   submitPayment,
+  confirmPayment,
   validatePromo,
   isApiError,
   type CreateBookingPayload,
@@ -56,9 +57,31 @@ export async function checkPromo(
   }
 }
 
-/** Discriminated result so the client can branch on success vs. a friendly error. */
+/**
+ * Discriminated result so the client can branch on success, a 3DS challenge, or a
+ * friendly error.
+ *
+ * 3-D Secure / SCA control flow (why this is split across server + client):
+ *   1. `placeOrder` (server action) creates the order and calls the charge API.
+ *   2. If the bank requires a challenge the charge API returns REQUIRES_ACTION;
+ *      `placeOrder` cannot run the 3DS modal (server actions have no browser), so
+ *      it returns `{ ok: true, requiresAction: true, clientSecret, ... }` to the
+ *      CheckoutClient (a client component).
+ *   3. CheckoutClient runs `stripe.handleNextAction({ clientSecret })` in the
+ *      browser to show the modal. On success it calls `finalizePayment` (server
+ *      action) which retrieves the now-succeeded PaymentIntent and records the
+ *      Payment row idempotently, returning the normal success result.
+ *   4. On challenge cancel/failure the client shows the existing decline UX.
+ */
 export type CheckoutActionResult =
-  | { ok: true; order: OrderSummary; payment: PaymentResult }
+  | { ok: true; requiresAction?: false; order: OrderSummary; payment: PaymentResult }
+  | {
+      ok: true;
+      requiresAction: true;
+      order: OrderSummary;
+      clientSecret: string;
+      paymentIntentId: string;
+    }
   | { ok: false; error: string; code?: string };
 
 /** Shape the client sends to the action (mirrors the shared booking schema). */
@@ -183,6 +206,71 @@ export async function placeOrder(
       ok: false,
       error: 'The payment was declined. Please try a different card.',
       code: 'PAYMENT_DECLINED',
+    };
+  }
+
+  // 3-D Secure / SCA: the charge isn't settled — hand the client secret back to the
+  // browser, which runs the challenge and then calls `finalizePayment`. See the
+  // CheckoutActionResult doc comment for the full sequence.
+  if (payment.status === 'REQUIRES_ACTION') {
+    if (!payment.clientSecret || !payment.paymentIntentId) {
+      return {
+        ok: false,
+        error: 'The payment could not be completed. Please try a different card.',
+        code: 'PAYMENT_FAILED',
+      };
+    }
+    return {
+      ok: true,
+      requiresAction: true,
+      order,
+      clientSecret: payment.clientSecret,
+      paymentIntentId: payment.paymentIntentId,
+    };
+  }
+
+  return { ok: true, order, payment };
+}
+
+/**
+ * Finalize a payment after the browser completed the 3-D Secure / SCA challenge.
+ * Called by CheckoutClient once `stripe.handleNextAction` resolves successfully.
+ * Retrieves the PaymentIntent server-side and records the Payment row idempotently
+ * (the API guards against double-insert). Returns the same discriminated result so
+ * the client can proceed to the confirmation page exactly like the happy path.
+ */
+export async function finalizePayment(
+  order: OrderSummary,
+  paymentIntentId: string,
+): Promise<CheckoutActionResult> {
+  let payment: PaymentResult;
+  try {
+    payment = await confirmPayment(order.id, paymentIntentId);
+  } catch (err) {
+    return {
+      ok: false,
+      error: isApiError(err)
+        ? err.message
+        : 'We could not confirm your payment. Please try again.',
+      code: isApiError(err) ? err.code : 'PAYMENT_FAILED',
+    };
+  }
+
+  if (payment.status === 'FAILED') {
+    return {
+      ok: false,
+      error: 'The payment was declined. Please try a different card.',
+      code: 'PAYMENT_DECLINED',
+    };
+  }
+
+  // Still pending after the challenge — surface a recoverable error rather than
+  // looping the modal indefinitely.
+  if (payment.status === 'REQUIRES_ACTION') {
+    return {
+      ok: false,
+      error: 'Payment authentication was not completed. Please try again.',
+      code: 'PAYMENT_REQUIRES_ACTION',
     };
   }
 

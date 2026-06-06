@@ -13,9 +13,16 @@
  *
  * Charge model: the browser collects a card with Stripe.js / Elements and creates
  * a PaymentMethod, whose id is sent to us as `sourceId`. We create + confirm a
- * PaymentIntent with that payment method in one synchronous call. Cards that
- * require 3-D Secure / SCA would come back `requires_action`; we treat anything
- * other than `succeeded` as a decline for now (full SCA handling is a follow-up).
+ * PaymentIntent with that payment method in one synchronous call.
+ *
+ * 3-D Secure / SCA: when the confirmed PaymentIntent comes back `requires_action`
+ * (the bank wants the cardholder to complete a challenge) we do NOT treat it as a
+ * decline. `createPayment` instead returns a discriminated `requires_action`
+ * result carrying the PaymentIntent's `client_secret`; the route relays it to the
+ * browser, which runs `stripe.handleNextAction({ clientSecret })` to show the 3DS
+ * modal, then calls the confirm endpoint to finalize. Genuine declines
+ * (`requires_payment_method`, card errors, etc.) still error as before. See
+ * `confirmPaymentIntent` for the post-challenge finalize read.
  *
  * All amounts crossing this boundary are integer USD cents (the platform-wide
  * money convention) — which is exactly Stripe's unit, so no conversion is needed.
@@ -76,8 +83,13 @@ export function getStripeClient(): Stripe {
   return cachedClient;
 }
 
-/** Normalized payment result the routes persist. */
-export interface StripePaymentResult {
+/**
+ * A settled charge — the PaymentIntent reached `succeeded` and the routes can
+ * record a Payment row from it. `kind: 'succeeded'` discriminates it from the
+ * 3DS-pending shape below.
+ */
+export interface StripePaymentSucceeded {
+  kind: 'succeeded';
   paymentId: string;
   status: string;
   amountCents: number;
@@ -86,6 +98,26 @@ export interface StripePaymentResult {
   cardholderName: string | null;
   receiptUrl: string | null;
 }
+
+/**
+ * A PaymentIntent that needs a browser 3-D Secure / SCA challenge before it can
+ * settle. Carries the `client_secret` the browser feeds to
+ * `stripe.handleNextAction()` and the intent id the confirm endpoint retrieves to
+ * finalize. No Payment row is recorded for this state — the money isn't captured
+ * yet.
+ */
+export interface StripePaymentRequiresAction {
+  kind: 'requires_action';
+  paymentIntentId: string;
+  clientSecret: string;
+  amountCents: number;
+}
+
+/**
+ * Discriminated result of `createPayment`. Branch on `kind`. (Genuine declines do
+ * not appear here — they throw `StripePaymentError`.)
+ */
+export type StripePaymentResult = StripePaymentSucceeded | StripePaymentRequiresAction;
 
 /** Normalized refund result the routes persist. */
 export interface StripeRefundResult {
@@ -113,8 +145,55 @@ function toPaymentError(err: unknown): StripePaymentError {
 }
 
 /**
+ * Map a `succeeded` PaymentIntent (with `latest_charge` expanded) into our
+ * normalized success shape. Shared by `createPayment` (synchronous success) and
+ * `confirmPaymentIntent` (post-3DS finalize) so both record identical Payment data.
+ * `fallbackAmountCents` is used only if Stripe omits `amount_received`.
+ */
+function toSucceededResult(
+  intent: Stripe.PaymentIntent,
+  fallbackAmountCents: number,
+): StripePaymentSucceeded {
+  const charge =
+    intent.latest_charge && typeof intent.latest_charge !== 'string'
+      ? intent.latest_charge
+      : null;
+  const card = charge?.payment_method_details?.card ?? null;
+
+  return {
+    kind: 'succeeded',
+    paymentId: intent.id,
+    status: intent.status,
+    amountCents:
+      typeof intent.amount_received === 'number' && intent.amount_received > 0
+        ? intent.amount_received
+        : fallbackAmountCents,
+    cardBrand: card?.brand ?? null,
+    cardLastFour: card?.last4 ?? null,
+    cardholderName: charge?.billing_details?.name ?? null,
+    receiptUrl: charge?.receipt_url ?? null,
+  };
+}
+
+/**
+ * True when an intent is mid-3DS: either Stripe is explicitly asking for client
+ * action, or it needs confirmation but has already attached a `next_action`.
+ */
+function intentNeedsAction(intent: Stripe.PaymentIntent): boolean {
+  return (
+    intent.status === 'requires_action' ||
+    (intent.status === 'requires_confirmation' && Boolean(intent.next_action))
+  );
+}
+
+/**
  * Charge a card. `sourceId` is the PaymentMethod id produced client-side by
  * Stripe.js / Elements. `idempotencyKey` makes retries safe.
+ *
+ * Returns a discriminated result: `{ kind: 'succeeded', ... }` when the charge
+ * settled outright, or `{ kind: 'requires_action', clientSecret, ... }` when the
+ * card needs a 3-D Secure / SCA challenge (the caller relays the client secret to
+ * the browser to complete it). Genuine declines throw `StripePaymentError`.
  */
 export async function createPayment(input: {
   orderId: string;
@@ -143,32 +222,81 @@ export async function createPayment(input: {
       { idempotencyKey: input.idempotencyKey },
     );
 
+    // 3-D Secure / SCA: surface a structured result instead of throwing, so the
+    // browser can run the challenge and then finalize via /confirm. The intent's
+    // client_secret is the credential the browser needs for handleNextAction.
+    if (intentNeedsAction(intent)) {
+      if (!intent.client_secret) {
+        // Shouldn't happen for a card intent that needs action, but guard so we
+        // never hand the client an unusable shape.
+        throw new StripePaymentError('Payment requires authentication but is missing its client secret.', 502);
+      }
+      return {
+        kind: 'requires_action',
+        paymentIntentId: intent.id,
+        clientSecret: intent.client_secret,
+        amountCents: input.amountCents,
+      };
+    }
+
     if (intent.status !== 'succeeded') {
-      // requires_action (3DS), requires_payment_method (declined), etc.
+      // requires_payment_method (declined), canceled, etc. — a real decline.
       throw new StripePaymentError(
-        intent.status === 'requires_action'
-          ? 'This card needs additional authentication. Please try another card.'
-          : 'The card was declined. Please try a different card.',
+        'The card was declined. Please try a different card.',
         402,
         intent.status,
       );
     }
 
-    const charge =
-      intent.latest_charge && typeof intent.latest_charge !== 'string'
-        ? intent.latest_charge
-        : null;
-    const card = charge?.payment_method_details?.card ?? null;
+    return toSucceededResult(intent, input.amountCents);
+  } catch (err) {
+    throw toPaymentError(err);
+  }
+}
 
-    return {
-      paymentId: intent.id,
-      status: intent.status,
-      amountCents: typeof intent.amount_received === 'number' ? intent.amount_received : input.amountCents,
-      cardBrand: card?.brand ?? null,
-      cardLastFour: card?.last4 ?? null,
-      cardholderName: charge?.billing_details?.name ?? null,
-      receiptUrl: charge?.receipt_url ?? null,
-    };
+/**
+ * Post-3DS finalize read: retrieve a PaymentIntent (after the browser completed
+ * the challenge) and normalize it. Returns the same discriminated union as
+ * `createPayment`:
+ *   - `succeeded`         → caller records the Payment row,
+ *   - `requires_action`   → still pending (browser must complete the challenge),
+ *   - otherwise throws    → treated as a decline/failure by the caller.
+ *
+ * This performs a read (retrieve), not a confirm — Stripe.js already confirmed the
+ * intent in the browser via handleNextAction; we only need the authoritative state.
+ */
+export async function confirmPaymentIntent(input: {
+  paymentIntentId: string;
+  fallbackAmountCents: number;
+}): Promise<StripePaymentResult> {
+  const stripe = getStripeClient();
+  try {
+    const intent = await stripe.paymentIntents.retrieve(input.paymentIntentId, {
+      expand: ['latest_charge'],
+    });
+
+    if (intent.status === 'succeeded') {
+      return toSucceededResult(intent, input.fallbackAmountCents);
+    }
+
+    if (intentNeedsAction(intent)) {
+      if (!intent.client_secret) {
+        throw new StripePaymentError('Payment requires authentication but is missing its client secret.', 502);
+      }
+      return {
+        kind: 'requires_action',
+        paymentIntentId: intent.id,
+        clientSecret: intent.client_secret,
+        amountCents: input.fallbackAmountCents,
+      };
+    }
+
+    // requires_payment_method / canceled / processing-stuck → treat as failed.
+    throw new StripePaymentError(
+      'The payment could not be completed. Please try a different card.',
+      402,
+      intent.status,
+    );
   } catch (err) {
     throw toPaymentError(err);
   }

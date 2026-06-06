@@ -164,16 +164,33 @@ export interface OrderSummary {
   createdAt: string;
 }
 
-/** Outcome of submitting a payment for an order. */
+/**
+ * Outcome of submitting a payment for an order.
+ *
+ * `REQUIRES_ACTION` is the 3-D Secure / SCA case: the charge is NOT settled yet —
+ * the card needs a browser challenge. `clientSecret` + `paymentIntentId` are
+ * present only then; the browser runs Stripe.js handleNextAction on the client
+ * secret, then calls `confirmPayment(orderId, paymentIntentId)` to finalize.
+ */
 export interface PaymentResult {
   orderId: string;
   orderNumber: string;
   paymentId: string;
-  status: 'PAID' | 'PARTIAL_REFUND' | 'REFUNDED' | 'FAILED' | 'PRE_AUTHORIZED';
+  status:
+    | 'PAID'
+    | 'PARTIAL_REFUND'
+    | 'REFUNDED'
+    | 'FAILED'
+    | 'PRE_AUTHORIZED'
+    | 'REQUIRES_ACTION';
   amountCents: number;
   balanceDueCents: number;
   cardLastFour: string | null;
   cardBrand: string | null;
+  /** Present only when status is REQUIRES_ACTION — feed to Stripe.js handleNextAction. */
+  clientSecret?: string;
+  /** Present only when status is REQUIRES_ACTION — pass to confirmPayment to finalize. */
+  paymentIntentId?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -388,16 +405,90 @@ export async function verifyOtp(
 }
 
 /**
+ * Raw API responses for the charge/confirm endpoints. The API returns either a
+ * settled `{ payment, order }` (201) or, for 3DS, `{ status: 'REQUIRES_ACTION',
+ * clientSecret, paymentIntentId }` (200). We normalize both into `PaymentResult`.
+ */
+type ChargeApiResponse =
+  | {
+      status: 'REQUIRES_ACTION';
+      clientSecret: string;
+      paymentIntentId: string;
+    }
+  | {
+      payment: {
+        id: string;
+        status: PaymentResult['status'];
+        amountCents: number;
+        cardBrand: string | null;
+        cardLastFour: string | null;
+        processorTransactionId: string | null;
+        receiptUrl: string | null;
+      };
+      order: { id: string; amountPaidCents: number; balanceDueCents: number };
+    };
+
+/** Normalize a charge/confirm API response into the flat `PaymentResult` shape. */
+function toPaymentResult(orderId: string, res: ChargeApiResponse): PaymentResult {
+  if (!('payment' in res)) {
+    return {
+      orderId,
+      orderNumber: '',
+      paymentId: res.paymentIntentId,
+      status: 'REQUIRES_ACTION',
+      amountCents: 0,
+      balanceDueCents: 0,
+      cardLastFour: null,
+      cardBrand: null,
+      clientSecret: res.clientSecret,
+      paymentIntentId: res.paymentIntentId,
+    };
+  }
+  return {
+    orderId: res.order.id,
+    orderNumber: '',
+    paymentId: res.payment.id,
+    status: res.payment.status,
+    amountCents: res.payment.amountCents,
+    balanceDueCents: res.order.balanceDueCents,
+    cardLastFour: res.payment.cardLastFour,
+    cardBrand: res.payment.cardBrand,
+  };
+}
+
+/**
  * Submit a payment for an order using a tokenized payment source.
+ *
+ * Returns `status: 'PAID'` when the charge settles outright, or
+ * `status: 'REQUIRES_ACTION'` (with `clientSecret` + `paymentIntentId`) when the
+ * card needs a 3-D Secure / SCA challenge — see `confirmPayment` for the finalize.
  * @param sourceId Stripe PaymentMethod id from Stripe Elements (sent as `sourceId`).
  */
 export async function submitPayment(
   orderId: string,
   sourceId: string,
 ): Promise<PaymentResult> {
-  const data = await request<{ payment: PaymentResult }>(
-    `/api/orders/${encodeURIComponent(orderId)}/payments`,
-    { method: 'POST', body: { sourceId } },
-  );
-  return data.payment;
+  const data = await request<ChargeApiResponse>('/api/payments/charge', {
+    method: 'POST',
+    body: { orderId, sourceId },
+  });
+  return toPaymentResult(orderId, data);
+}
+
+/**
+ * Finalize a 3-D Secure / SCA payment after the browser completes the challenge.
+ * The API retrieves the PaymentIntent and, if it has succeeded, records the
+ * Payment row (idempotently). Returns the same `PaymentResult` shape as
+ * `submitPayment` (status PAID on success, or REQUIRES_ACTION if still pending).
+ * @param paymentIntentId The intent id returned by `submitPayment` REQUIRES_ACTION.
+ */
+export async function confirmPayment(
+  orderId: string,
+  paymentIntentId: string,
+): Promise<PaymentResult> {
+  const data = await request<ChargeApiResponse>('/api/payments/confirm', {
+    method: 'POST',
+    body: { orderId, paymentIntentId },
+  });
+  return toPaymentResult(orderId, data);
 }

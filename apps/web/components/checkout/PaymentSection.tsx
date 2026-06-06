@@ -8,6 +8,12 @@
  * parent can obtain a single-use PaymentMethod id at submit time and pass it to
  * the booking action (which charges it server-side via a PaymentIntent).
  *
+ * 3-D Secure / SCA: when the server reports REQUIRES_ACTION, the parent calls
+ * `confirmAction(clientSecret)` (also exposed on the imperative handle). Because
+ * Stripe.js lives here in the browser, this is where `handleNextAction` runs to
+ * show the 3DS modal — a server action cannot. On success the parent finalizes via
+ * the `finalizePayment` server action. See CheckoutClient.onSubmit for the wiring.
+ *
  * When Stripe is not configured (no publishable key — the common early dev
  * state), it renders a clear "payments not configured" notice instead of a card
  * field; the parent guards submit on `stripe.configured`, so `tokenize()` is never
@@ -33,6 +39,16 @@ export interface PaymentSectionHandle {
   tokenize: () => Promise<
     { ok: true; sourceId: string } | { ok: false; error: string }
   >;
+  /**
+   * Run the 3-D Secure / SCA challenge for a PaymentIntent that came back
+   * REQUIRES_ACTION. Calls Stripe.js `handleNextAction(clientSecret)` to show the
+   * modal in the browser. Resolves `{ ok: true }` once the cardholder completes it
+   * (the intent is then succeeded/processing server-side), or `{ ok: false }` if
+   * they cancel or it fails — the parent then finalizes / shows the decline UX.
+   */
+  confirmAction: (
+    clientSecret: string,
+  ) => Promise<{ ok: true } | { ok: false; error: string }>;
   /** True when a live, ready-to-tokenize card field is mounted. */
   isReady: () => boolean;
 }
@@ -86,6 +102,22 @@ const CardForm = forwardRef<PaymentSectionHandle, { testMode: boolean }>(
             };
           }
           return { ok: true, sourceId: paymentMethod.id };
+        },
+        confirmAction: async (clientSecret: string) => {
+          if (!stripe) {
+            return { ok: false, error: 'The payment form is not ready yet. Please try again.' };
+          }
+          // Shows the bank's 3DS modal; resolves once the cardholder completes (or
+          // cancels) the challenge. handleNextAction does not capture the funds —
+          // the server /confirm step does, after reading the updated intent.
+          const { error } = await stripe.handleNextAction({ clientSecret });
+          if (error) {
+            return {
+              ok: false,
+              error: error.message ?? 'Card authentication was not completed. Please try again.',
+            };
+          }
+          return { ok: true };
         },
       }),
       [stripe, elements, ready],

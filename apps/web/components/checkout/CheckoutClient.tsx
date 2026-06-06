@@ -23,7 +23,7 @@ import { AlertTriangle } from 'lucide-react';
 import { calculatePricing } from '@marina/core';
 import { Button, Card, CardContent, CardHeader, CardTitle } from '@marina/ui';
 import type { StripeConfig } from '@/app/checkout/stripe-config';
-import { placeOrder } from '@/app/checkout/actions';
+import { placeOrder, finalizePayment } from '@/app/checkout/actions';
 import { OrderSummary } from './OrderSummary';
 import { CustomerFields } from './CustomerFields';
 import { ParticipantFields } from './ParticipantFields';
@@ -175,6 +175,26 @@ export function CheckoutClient({
 
       if (!result.ok) {
         setSubmitError(result.error);
+        return;
+      }
+
+      // 3-D Secure / SCA: the order exists but the charge needs a browser
+      // challenge. Run handleNextAction here (Stripe.js is client-side), then
+      // finalize server-side. See actions.ts CheckoutActionResult for the sequence.
+      if (result.requiresAction) {
+        const challenge = await paymentRef.current?.confirmAction(result.clientSecret);
+        if (!challenge || !challenge.ok) {
+          setSubmitError(
+            challenge?.error ?? 'Card authentication was not completed. Please try again.',
+          );
+          return;
+        }
+        const finalized = await finalizePayment(result.order, result.paymentIntentId);
+        if (!finalized.ok) {
+          setSubmitError(finalized.error);
+          return;
+        }
+        router.push(`/confirmation/${encodeURIComponent(finalized.order.orderNumber)}`);
         return;
       }
 

@@ -24,10 +24,12 @@ import type { Env } from '../context.js';
 import { requireStaff } from '../middleware/auth.js';
 import {
   createPayment,
+  confirmPaymentIntent,
   refundPayment,
   isStripeConfigured,
   StripeNotConfiguredError,
   StripePaymentError,
+  type StripePaymentSucceeded,
 } from '../services/stripe.js';
 
 export const payments = new Hono<Env>();
@@ -42,11 +44,116 @@ const chargeSchema = z.object({
   idempotencyKey: z.string().min(1).max(45).optional(),
 });
 
+const confirmSchema = z.object({
+  /** The order the PaymentIntent belongs to (so we can attach the Payment row). */
+  orderId: z.string().min(1),
+  /** The Stripe PaymentIntent id the browser just completed the 3DS challenge on. */
+  paymentIntentId: z.string().min(1),
+});
+
 const refundSchema = z.object({
   /** Amount to refund, integer cents. Defaults to the full remaining refundable. */
   amountCents: z.number().int().positive().optional(),
   reason: z.string().max(192).optional(),
 });
+
+/**
+ * Record a settled Stripe charge against an order in one tenant transaction:
+ * create the Payment row, advance amount_paid / balance_due, and log an
+ * OrderEvent. Shared by the synchronous /charge success path and the post-3DS
+ * /confirm finalize path so both persist identical data.
+ *
+ * IDEMPOTENT: if a Payment already exists for this PaymentIntent
+ * (processor_transaction_id) we do NOT insert again or touch the balance — we
+ * return the existing row. This makes /confirm safe to call more than once and
+ * keeps it from racing the payment_intent.succeeded webhook into a double charge.
+ */
+async function recordSettledPayment(
+  c: Context<Env>,
+  order: { id: string; total_cents: number; amount_paid_cents: number },
+  amountCents: number,
+  result: StripePaymentSucceeded,
+): Promise<{
+  payment: {
+    id: string;
+    status: string;
+    amount_cents: number;
+    card_brand: string | null;
+    card_last_four: string | null;
+    processor_transaction_id: string | null;
+  };
+  amountPaidCents: number;
+  balanceDueCents: number;
+  alreadyRecorded: boolean;
+}> {
+  return withTenant(c.var.operatorId, async (tx) => {
+    // Idempotency guard: never double-insert for the same PaymentIntent.
+    const existing = await tx.payment.findFirst({
+      where: { processor_transaction_id: result.paymentId, processor: 'STRIPE' },
+    });
+    if (existing) {
+      const current = await tx.order.findUnique({ where: { id: order.id } });
+      return {
+        payment: existing,
+        amountPaidCents: current?.amount_paid_cents ?? order.amount_paid_cents,
+        balanceDueCents:
+          current?.balance_due_cents ?? order.total_cents - order.amount_paid_cents,
+        alreadyRecorded: true,
+      };
+    }
+
+    const newAmountPaid = order.amount_paid_cents + amountCents;
+    const newBalanceDue = order.total_cents - newAmountPaid;
+
+    const created = await tx.payment.create({
+      data: {
+        id: createId(),
+        operator_id: c.var.operatorId,
+        order_id: order.id,
+        method: 'CARD',
+        status: 'PAID',
+        amount_cents: amountCents,
+        card_brand: result.cardBrand,
+        card_last_four: result.cardLastFour,
+        cardholder_name: result.cardholderName,
+        processor: 'STRIPE',
+        processor_transaction_id: result.paymentId,
+      },
+    });
+
+    await tx.order.update({
+      where: { id: order.id },
+      data: {
+        amount_paid_cents: newAmountPaid,
+        balance_due_cents: newBalanceDue,
+      },
+    });
+
+    await tx.orderEvent.create({
+      data: {
+        id: createId(),
+        operator_id: c.var.operatorId,
+        order_id: order.id,
+        type: 'PAYMENT',
+        description: `Charged card ending ${result.cardLastFour ?? '????'}`,
+        actor: 'customer',
+        metadata: {
+          paymentId: created.id,
+          processorTransactionId: result.paymentId,
+          amountCents,
+          receiptUrl: result.receiptUrl,
+        },
+      },
+    });
+
+    return {
+      payment: created,
+      amountPaidCents: newAmountPaid,
+      balanceDueCents: newBalanceDue,
+      alreadyRecorded: false,
+    };
+  });
+}
 
 /** Map a Stripe service error to a clean JSON response. */
 function stripeErrorResponse(c: Context<Env>, err: unknown) {
@@ -96,7 +203,7 @@ payments.post('/charge', async (c) => {
     );
   }
 
-  // Charge Square OUTSIDE the DB transaction (external network call).
+  // Charge Stripe OUTSIDE the DB transaction (external network call).
   let result;
   try {
     result = await createPayment({
@@ -109,70 +216,120 @@ payments.post('/charge', async (c) => {
     return stripeErrorResponse(c, err);
   }
 
-  // Record the settled charge atomically against the order.
-  const newAmountPaid = order.amount_paid_cents + amountCents;
-  const newBalanceDue = order.total_cents - newAmountPaid;
-
-  const payment = await withTenant(c.var.operatorId, async (tx) => {
-    const created = await tx.payment.create({
-      data: {
-        id: createId(),
-        operator_id: c.var.operatorId,
-        order_id: order.id,
-        method: 'CARD',
-        status: 'PAID',
-        amount_cents: amountCents,
-        card_brand: result.cardBrand,
-        card_last_four: result.cardLastFour,
-        cardholder_name: result.cardholderName,
-        processor: 'STRIPE',
-        processor_transaction_id: result.paymentId,
+  // 3-D Secure / SCA: the card needs a browser challenge before it can settle. Do
+  // NOT record a Payment row yet (nothing is captured). Respond 200 with the
+  // client secret; the browser runs handleNextAction then calls POST /confirm to
+  // finalize. See the 3DS sequence comment in apps/web/.../PaymentSection / actions.
+  if (result.kind === 'requires_action') {
+    return c.json(
+      {
+        status: 'REQUIRES_ACTION',
+        clientSecret: result.clientSecret,
+        paymentIntentId: result.paymentIntentId,
       },
-    });
+      200,
+    );
+  }
 
-    await tx.order.update({
-      where: { id: order.id },
-      data: {
-        amount_paid_cents: newAmountPaid,
-        balance_due_cents: newBalanceDue,
-      },
-    });
-
-    await tx.orderEvent.create({
-      data: {
-        id: createId(),
-        operator_id: c.var.operatorId,
-        order_id: order.id,
-        type: 'PAYMENT',
-        description: `Charged card ending ${result.cardLastFour ?? '????'}`,
-        actor: 'customer',
-        metadata: {
-          paymentId: created.id,
-          processorTransactionId: result.paymentId,
-          amountCents,
-          receiptUrl: result.receiptUrl,
-        },
-      },
-    });
-
-    return created;
-  });
+  // Settled outright — record the charge atomically against the order.
+  const recorded = await recordSettledPayment(c, order, amountCents, result);
 
   return c.json(
     {
       payment: {
-        id: payment.id,
-        status: payment.status,
-        amountCents: payment.amount_cents,
-        cardBrand: payment.card_brand,
-        cardLastFour: payment.card_last_four,
-        processorTransactionId: payment.processor_transaction_id,
+        id: recorded.payment.id,
+        status: recorded.payment.status,
+        amountCents: recorded.payment.amount_cents,
+        cardBrand: recorded.payment.card_brand,
+        cardLastFour: recorded.payment.card_last_four,
+        processorTransactionId: recorded.payment.processor_transaction_id,
         receiptUrl: result.receiptUrl,
       },
       order: {
         id: order.id,
-        amountPaidCents: newAmountPaid,
-        balanceDueCents: newBalanceDue,
+        amountPaidCents: recorded.amountPaidCents,
+        balanceDueCents: recorded.balanceDueCents,
+      },
+    },
+    201,
+  );
+});
+
+/**
+ * POST /api/payments/confirm — public. Post-3DS finalize step.
+ *
+ * After the browser completes the 3-D Secure / SCA challenge (via Stripe.js
+ * handleNextAction on the client secret returned by /charge), it calls this to
+ * settle the booking. We retrieve the authoritative PaymentIntent state from
+ * Stripe:
+ *   - `succeeded`        → record the Payment row (idempotently — see
+ *                          recordSettledPayment) and return it like /charge does,
+ *   - `requires_action`  → still pending; return REQUIRES_ACTION again,
+ *   - otherwise          → treated as a decline (Stripe error response).
+ */
+payments.post('/confirm', async (c) => {
+  if (!isStripeConfigured()) {
+    return c.json({ error: 'payments not configured' }, 501);
+  }
+
+  const body = await c.req.json().catch(() => null);
+  const parsed = confirmSchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ error: 'Invalid request', issues: parsed.error.flatten() }, 400);
+  }
+  const { orderId, paymentIntentId } = parsed.data;
+
+  const order = await c.var.db.order.findUnique({ where: { id: orderId } });
+  if (!order) {
+    return c.json({ error: 'Order not found' }, 404);
+  }
+
+  // Retrieve the PaymentIntent's authoritative state after the browser challenge.
+  let result;
+  try {
+    result = await confirmPaymentIntent({
+      paymentIntentId,
+      // The intent's own amount_received is the source of truth on success; this
+      // is only a fallback if Stripe omits it.
+      fallbackAmountCents: order.balance_due_cents,
+    });
+  } catch (err) {
+    return stripeErrorResponse(c, err);
+  }
+
+  // Still mid-challenge (e.g. confirm called too early) — tell the client to retry
+  // the action. No Payment row recorded.
+  if (result.kind === 'requires_action') {
+    return c.json(
+      {
+        status: 'REQUIRES_ACTION',
+        clientSecret: result.clientSecret,
+        paymentIntentId: result.paymentIntentId,
+      },
+      200,
+    );
+  }
+
+  // Succeeded — record the Payment row (idempotent; safe if the webhook or a
+  // double-submit got here first). amount_received from Stripe is authoritative.
+  const amountCents = result.amountCents;
+  const recorded = await recordSettledPayment(c, order, amountCents, result);
+
+  return c.json(
+    {
+      payment: {
+        id: recorded.payment.id,
+        status: recorded.payment.status,
+        amountCents: recorded.payment.amount_cents,
+        cardBrand: recorded.payment.card_brand,
+        cardLastFour: recorded.payment.card_last_four,
+        processorTransactionId: recorded.payment.processor_transaction_id,
+        receiptUrl: result.receiptUrl,
+      },
+      order: {
+        id: order.id,
+        amountPaidCents: recorded.amountPaidCents,
+        balanceDueCents: recorded.balanceDueCents,
       },
     },
     201,
