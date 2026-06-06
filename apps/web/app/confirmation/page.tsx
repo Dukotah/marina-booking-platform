@@ -229,7 +229,7 @@ export default async function ConfirmationPage({
         <p className="mt-8 text-center text-sm text-slate-500">
           Need to make a change?{' '}
           <a
-            href="/lookup"
+            href="/account"
             className="font-medium underline-offset-2 hover:underline"
             style={{ color: 'var(--brand-color)' }}
           >

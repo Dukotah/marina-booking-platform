@@ -3,6 +3,7 @@ import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
 import { AuthorizationError } from '@marina/auth';
 import type { Env } from './context.js';
+import { captureError } from './lib/observability.js';
 import { tenantMiddleware } from './middleware/tenant.js';
 import { activities } from './routes/activities.js';
 import { availability } from './routes/availability.js';
@@ -58,7 +59,14 @@ app.onError((err, c) => {
   if (err instanceof AuthorizationError) {
     return c.json({ error: err.message, permission: err.permission }, 403);
   }
-  console.error(err);
+  // Unexpected failure: report through the observability seam (env-gated SDK
+  // forwarding, structured console otherwise) before returning a clean 500.
+  captureError(err, {
+    source: 'api/onError',
+    method: c.req.method,
+    path: c.req.path,
+    operatorId: c.get('operatorId'),
+  });
   return c.json({ error: 'Internal server error' }, 500);
 });
 

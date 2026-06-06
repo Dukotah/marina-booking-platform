@@ -194,11 +194,11 @@ export function CheckoutClient({
           setSubmitError(finalized.error);
           return;
         }
-        router.push(`/confirmation/${encodeURIComponent(finalized.order.orderNumber)}`);
+        router.push(`/confirmation?order=${encodeURIComponent(finalized.order.orderNumber)}`);
         return;
       }
 
-      router.push(`/confirmation/${encodeURIComponent(result.order.orderNumber)}`);
+      router.push(`/confirmation?order=${encodeURIComponent(result.order.orderNumber)}`);
     } catch {
       setSubmitError('Something went wrong completing your booking. Please try again.');
     } finally {

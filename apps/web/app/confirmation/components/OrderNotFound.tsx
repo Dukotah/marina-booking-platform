@@ -44,7 +44,7 @@ export function OrderNotFound({
       )}
       <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
         <Link
-          href="/lookup"
+          href="/account"
           className="rounded-lg px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-90"
           style={{ backgroundColor: 'var(--brand-color)' }}
         >

@@ -12,7 +12,20 @@
  * All money fields are integer cents (see @marina/types money helpers).
  */
 
-const API_URL = process.env.API_URL ?? 'http://localhost:3001';
+/**
+ * Base URL for the marina API.
+ *
+ * This client runs in BOTH contexts: Server Components / route handlers (where
+ * the server-only `API_URL` is available) and `"use client"` components — the
+ * availability/reschedule pickers (TimeSlotPicker, AvailabilityCalendar,
+ * RescheduleSlotPicker) call `getAvailability`/`getActivity` straight from the
+ * browser. In the browser, Next only inlines `NEXT_PUBLIC_*` vars, so a bare
+ * `API_URL` is `undefined` there and would silently fall back to localhost in
+ * production. We therefore prefer `NEXT_PUBLIC_API_URL` (defined in both
+ * contexts), then the server-only `API_URL`, then a localhost dev default.
+ */
+const API_URL =
+  process.env.NEXT_PUBLIC_API_URL ?? process.env.API_URL ?? 'http://localhost:3001';
 const OPERATOR_SLUG = process.env.OPERATOR_SLUG ?? 'lake-sonoma';
 
 /** Cookie name for the customer OTP session (mirrors apps/api customer-session). */
@@ -194,6 +207,83 @@ export interface PaymentResult {
 }
 
 // ---------------------------------------------------------------------------
+// API wire shapes (nested) → flat OrderSummary transform
+// ---------------------------------------------------------------------------
+//
+// The API's order serializer (apps/api/src/routes/orders.ts `serializeOrder`) is
+// the source of truth and returns a NESTED shape: the customer is an object, and
+// each line item carries `activity`/`rate`/`timeslot` sub-objects. The pages in
+// this app (confirmation, account/bookings, manage panel, price breakdown) all
+// consume the FLAT `OrderSummary`/`OrderLineItem` above (e.g. `customerName`,
+// `item.activityName`, `item.datetime`). We map nested→flat here, in one seam, so
+// the serializer stays authoritative and the pages keep their simple shape.
+
+/** Line item exactly as the API serializes it (nested relations). */
+interface ApiOrderLineItem {
+  id: string;
+  quantity: number;
+  unitPriceCents: number;
+  status?: string;
+  driverName?: string | null;
+  activity: { id: string; name: string };
+  rate: { id: string; name: string; durationMinutes: number };
+  timeslot: { id: string; datetime: string };
+}
+
+/** Order exactly as the API serializes it (nested customer + items). */
+interface ApiOrder {
+  id: string;
+  orderNumber: string;
+  status: OrderSummary['status'];
+  subtotalCents: number;
+  discountCents: number;
+  taxCents: number;
+  processingFeeCents: number;
+  tipCents: number;
+  totalCents: number;
+  amountPaidCents: number;
+  balanceDueCents: number;
+  createdAt: string;
+  customer: {
+    id: string;
+    firstName: string;
+    lastName: string;
+    email: string;
+    phone?: string | null;
+  };
+  items: ApiOrderLineItem[];
+}
+
+/** Flatten the API's nested order into the `OrderSummary` the pages expect. */
+function toOrderSummary(api: ApiOrder): OrderSummary {
+  return {
+    id: api.id,
+    orderNumber: api.orderNumber,
+    status: api.status,
+    customerName: `${api.customer.firstName} ${api.customer.lastName}`.trim(),
+    customerEmail: api.customer.email,
+    subtotalCents: api.subtotalCents,
+    discountCents: api.discountCents,
+    taxCents: api.taxCents,
+    processingFeeCents: api.processingFeeCents,
+    tipCents: api.tipCents,
+    totalCents: api.totalCents,
+    amountPaidCents: api.amountPaidCents,
+    balanceDueCents: api.balanceDueCents,
+    createdAt: api.createdAt,
+    items: api.items.map((item) => ({
+      id: item.id,
+      activityId: item.activity.id,
+      activityName: item.activity.name,
+      rateName: item.rate.name,
+      datetime: item.timeslot.datetime,
+      quantity: item.quantity,
+      unitPriceCents: item.unitPriceCents,
+    })),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Request payloads
 // ---------------------------------------------------------------------------
 
@@ -356,19 +446,19 @@ export async function validatePromo(
 export async function createBooking(
   payload: CreateBookingPayload,
 ): Promise<OrderSummary> {
-  const data = await request<{ order: OrderSummary }>('/api/bookings', {
+  const data = await request<{ order: ApiOrder }>('/api/bookings', {
     method: 'POST',
     body: payload,
   });
-  return data.order;
+  return toOrderSummary(data.order);
 }
 
 /** Fetch an order by its public order number (used on the confirmation page). */
 export async function getOrder(orderNumber: string): Promise<OrderSummary> {
-  const data = await request<{ order: OrderSummary }>(
+  const data = await request<{ order: ApiOrder }>(
     `/api/orders/${encodeURIComponent(orderNumber)}`,
   );
-  return data.order;
+  return toOrderSummary(data.order);
 }
 
 /**
@@ -383,7 +473,7 @@ export async function selfReschedule(
   orderNumber: string,
   input: { timeslotId: string; orderItemId?: string },
 ): Promise<OrderSummary> {
-  const data = await request<{ order: OrderSummary }>(
+  const data = await request<{ order: ApiOrder }>(
     `/api/orders/${encodeURIComponent(orderNumber)}/self-reschedule`,
     {
       method: 'POST',
@@ -393,7 +483,7 @@ export async function selfReschedule(
       },
     },
   );
-  return data.order;
+  return toOrderSummary(data.order);
 }
 
 // --- Customer auth (email OTP → session) -----------------------------------

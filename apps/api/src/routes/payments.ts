@@ -170,7 +170,7 @@ function stripeErrorResponse(c: Context<Env>, err: unknown) {
 }
 
 /**
- * POST /api/payments/charge — public. Charges a card via Square, records a
+ * POST /api/payments/charge — public. Charges a card via Stripe, records a
  * Payment row, advances the order's amount_paid / balance_due, and logs an
  * OrderEvent. Public because customers pay during checkout (no staff session).
  */
@@ -338,7 +338,7 @@ payments.post('/confirm', async (c) => {
 
 /**
  * POST /api/payments/:id/refund — staff (order:refund). Refunds a Payment fully
- * or partially via Square, updates the Payment's refunded_cents + status, rolls
+ * or partially via Stripe, updates the Payment's refunded_cents + status, rolls
  * the order's amount_paid / balance_due back, and logs an OrderEvent.
  */
 payments.post('/:id/refund', requireStaff, async (c) => {
@@ -376,7 +376,7 @@ payments.post('/:id/refund', requireStaff, async (c) => {
     );
   }
 
-  // Issue the refund with Square OUTSIDE the DB transaction.
+  // Issue the refund with Stripe OUTSIDE the DB transaction.
   let result;
   try {
     result = await refundPayment({
