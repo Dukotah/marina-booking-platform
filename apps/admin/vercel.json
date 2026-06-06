@@ -1,5 +1,10 @@
 {
   "framework": "nextjs",
   "buildCommand": "prisma generate --schema=../../packages/database/prisma/schema.prisma && next build",
-  "outputDirectory": ".next"
+  "outputDirectory": ".next",
+  "git": {
+    "deploymentEnabled": {
+      "feat/finish-mvp-buildable": false
+    }
+  }
 }

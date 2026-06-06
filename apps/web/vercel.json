@@ -1,0 +1,7 @@
+{
+  "git": {
+    "deploymentEnabled": {
+      "feat/finish-mvp-buildable": false
+    }
+  }
+}
