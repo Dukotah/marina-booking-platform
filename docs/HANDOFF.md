@@ -52,24 +52,40 @@ operator app — Vercel deploy currently failing, see below).
 `pnpm db:migrate` → `pnpm db:rls` → `pnpm db:approle` → `pnpm db:seed`. All need the
 `.env` values exported (the scripts read `process.env`; there is no dotenv autoload).
 
+> **2026-06-05 update:** the `feat/finish-mvp-buildable` branch closed the buildable
+> code gaps below — customer OTP auth (0.7), Stripe 3DS (1.5), reschedule UI (2.1) — and
+> a hardening pass that fixed real end-to-end bugs (nested-vs-flat order serializer, dead
+> post-payment `/confirmation/<n>` redirect, browser `API_URL`, dead `/lookup` links) and
+> added error boundaries + an observability seam. All code-verified (typecheck 9/9, 3
+> builds, core 69/69) but NOT live-rendered — no `.env`/DB/keys on the build machine. The
+> remaining work is almost entirely **provision accounts + live smoke test**, plus a few
+> documented follow-ups (OTP rate-limiting, webhook idempotent-create, wire an error SDK).
+> Also: a fresh clone needs `pnpm db:generate` BEFORE typecheck passes (5 Prisma-type
+> errors otherwise) — worth a one-liner in setup docs.
+
 ## Next steps, in order
 
-1. **Turn Clerk on (0.7, staff half DONE — D-012).** Clerk is fully wired for staff:
-   admin `middleware.ts` + `/sign-in`,`/sign-up`, API bearer verification — all gated by
-   `REQUIRE_CLERK_AUTH` (default off, dev fallback still active). To go live: in the Clerk
-   dashboard set sign-in URLs (`/sign-in`,`/sign-up`) + allowed origins, create your staff
-   user (its Clerk id must equal a `StaffMember.auth_user_id`), then set
-   `REQUIRE_CLERK_AUTH=true` on admin (Vercel) + API (Railway). **Remaining 0.7:**
-   magic-link/OTP **customer** auth on web (today an order-number+email stub).
-2. **Stripe test keys** (D-013 — switched off Square) — create a Stripe account, fill
-   `STRIPE_SECRET_KEY` + `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` (and `STRIPE_WEBHOOK_SECRET`
-   for the `/webhooks/stripe` endpoint) to charge a test booking (1.5). NOTE: 3DS/SCA
-   cards aren't handled yet (a non-`succeeded` PaymentIntent is treated as a decline).
-3. **marina-admin Vercel runtime** — build is fixed and it deploys; it needs the DB env
-   vars set on the Vercel project (it queries the DB directly, D-007). Until then it
-   shows a graceful "Live data unavailable" notice (not a crash). See
-   `docs/BROWSER-TAKEOVER.md` → "set marina-admin DB env vars". marina-web is already live.
-4. Smoke-test the full booking flow end-to-end once Clerk + Stripe are in.
+1. **Provision the external accounts** (the real gate to onboarding — all blocked-on-owner):
+   - **Clerk** (0.7 staff, D-012) — set sign-in URLs + origins, create your staff user
+     (Clerk id == `StaffMember.auth_user_id`), then `REQUIRE_CLERK_AUTH=true` on admin
+     (Vercel) + API (Railway). Customer OTP auth is now built (stateless, in `apps/api`
+     `routes/auth.ts` + `lib/customer-session.ts`) and needs `AUTH_SECRET` set + `RESEND_API_KEY`
+     to actually email codes (works in dev via the `devCode`).
+   - **Stripe test keys** (D-013) — `STRIPE_SECRET_KEY` + `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`
+     (+ `STRIPE_WEBHOOK_SECRET`) to charge a test booking. 3DS/SCA is now handled
+     (`requires_action` → browser challenge → `POST /payments/confirm`, idempotent).
+   - **Resend key** — confirmation/reminder emails + the OTP code email.
+   - **marina-admin Vercel DB env vars** (D-007) — admin queries the DB directly; until set
+     it shows a graceful "Live data unavailable" notice. See `docs/BROWSER-TAKEOVER.md`.
+   - **`NEXT_PUBLIC_API_URL`** — now required for the browser pickers to hit the API in prod
+     (falls back to `API_URL`/localhost); set it on the web Vercel project.
+2. **Live smoke-test the whole flow** once the above are in — this is the big one. Browse →
+   book → 3DS card → confirmation; customer OTP login → view booking → reschedule. Several
+   features are `🧪` (code-verified, never live-rendered) and the order-serializer fix in
+   particular wants a real render to confirm the nested→flat mapping.
+3. Knock out the documented follow-ups: OTP brute-force rate-limiting, webhook
+   idempotent-create for the closed-tab 3DS case, pick + wire an error-tracking SDK into
+   the `captureError` seams.
 
 ## Things only the owner / a browser can do (blocked-on-owner)
 

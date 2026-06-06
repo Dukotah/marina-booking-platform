@@ -20,7 +20,7 @@ booking vertical slice for the seed client (Lake Sonoma Marina) running on it.
 | 0.4 | Postgres RLS policies (prisma/rls.sql) + tenant-scoped Prisma client (forOperator/withTenant) | ✅ (written; applies on first DB connect) |
 | 0.5 | Neon dev database connected + first migration run | ✅ (Neon US-West; migration `init` applied; RLS applied; `app_user` non-bypass role provisioned) |
 | 0.6 | Seed script — Lake Sonoma Marina (19 activities, rates, fees, waiver, config) | ✅ (seeded live — operator `lsra`, 19 activities) |
-| 0.7 | Auth + RBAC (Clerk operators/staff, magic link customers) | 🟦 (staff/operator Clerk **wired + verified** — admin middleware + /sign-in,/sign-up + API bearer verification, gated behind `REQUIRE_CLERK_AUTH`; flip on after Clerk dashboard setup, see D-012. Magic-link **customer** auth on web still pending) |
+| 0.7 | Auth + RBAC (Clerk operators/staff, magic link customers) | ✅🧪 (staff/operator Clerk **wired + verified** — see D-012; **customer email-OTP auth built** — stateless HMAC challenge → httpOnly session cookie, decoy challenge prevents order enumeration, Resend-gated w/ dev fallback. 🧪 not live-rendered; needs OTP rate-limiting follow-up) |
 | 0.8 | Cross-tenant isolation tests (must fail to access other tenants) | ✅ (live vs Neon — now **8/8**: reads, writes, WITH CHECK, bulk ops, symmetric, **+ cross-tenant FK attach** un-skipped after 0.13) |
 | 0.9 | Auth/RBAC package (@marina/auth) — permission checks, AuthContext | ✅ |
 | 0.10 | API skeleton (Hono) — tenant-resolution middleware, RLS-scoped client per request, dev auth shim, catalog route; boots + tenant guard verified | ✅ |
@@ -41,7 +41,7 @@ exercised against a live DB/keys (waiting on 0.5 Neon + service keys).
 | 1.2 | Activity CRUD (simplified wizard, generic categories) | ✅🧪 |
 | 1.3 | Customer portal: catalog → date → time → rate → checkout | ✅🧪 (booking **service** now live-verified vs Neon — pricing/capacity/order graph; UI flow still 🧪) |
 | 1.4 | Availability calendar (color-coded) + capacity-aware time slots | ✅🧪 |
-| 1.5 | Stripe payments (test mode, PaymentIntents + Elements) | ✅🧪 (switched from Square → Stripe per D-013; needs Stripe keys to charge; 3DS/SCA is a follow-up) |
+| 1.5 | Stripe payments (test mode, PaymentIntents + Elements) | ✅🧪 (switched from Square → Stripe per D-013; needs Stripe keys to charge; **3DS/SCA now handled** — `requires_action` → browser challenge → idempotent `/payments/confirm`) |
 | 1.6 | Order list + detail + cancel + refund (full & partial) | ✅🧪 (cancel **service** live-verified — restores timeslot capacity; refund still 🧪) |
 | 1.7 | Email confirmation + reminder (Resend) | ✅🧪 (needs Resend key to send) |
 | 1.8 | Day Gantt manifest (visual, color-coded) + week calendar | ✅🧪 |
@@ -57,7 +57,7 @@ customer self-service reschedule.
 
 | # | Item | Status |
 |---|---|---|
-| 2.1 | **Customer self-service reschedule** — `rescheduleBooking` service (capacity move + `self_reschedule_hours` window) + staff `POST /orders/:id/reschedule` + customer `POST /orders/:orderNumber/self-reschedule` (email-gated) | ✅ backend (live-verified 5/5); web account slot-picker UI still TODO |
+| 2.1 | **Customer self-service reschedule** — `rescheduleBooking` service (capacity move + `self_reschedule_hours` window) + staff `POST /orders/:id/reschedule` + customer `POST /orders/:orderNumber/self-reschedule` (email-gated) | ✅ backend (live-verified 5/5); **web account slot-picker UI built** (🧪 — not live-rendered) |
 
 ## Phase 3 — Power features (the moat for complex customers)
 
@@ -70,8 +70,8 @@ channel/OTA + affiliate management · accounting exports (QuickBooks/Xero).
 - [ ] Cross-tenant isolation tests pass
 - [ ] Payment + refund flows tested end-to-end in Stripe (test → live)
 - [ ] Waiver capture legally reviewed + audit trail verified
-- [ ] Zero broken routes (route test sweep)
-- [ ] Backups + error monitoring configured
+- [x] Zero broken routes (route sweep — fixed dead /confirmation/<n> redirect, /lookup links; /manifest vs /calendar confirmed distinct)
+- [ ] Backups + error monitoring configured (error boundaries + env-gated captureError seam added; pick + wire an SDK)
 - [ ] Custom domain / subdomain white-label verified for a test tenant
 
 ## Blocked-on-owner (deferred external accounts)
@@ -81,6 +81,31 @@ key · Twilio (later) · Cloudflare R2 · Vercel + Railway deploy accounts.
 I will build against sandboxes/free tiers and flag exactly when each is needed.
 
 ## Changelog
+
+- **2026-06-05** — **"Finish buildable code" sweep (branch `feat/finish-mvp-buildable`).**
+  Four agent-built features + a hardening pass, all on a fresh clone with the green bar
+  kept (typecheck 9/9, web+admin+api builds, core 69/69). NOTE: no `.env`/DB/keys on this
+  machine, so everything is code-verified (typecheck/build/reason) but NOT live-rendered —
+  live exercise still pending owner accounts.
+  (1) **Customer email-OTP auth** (0.7 customer half) — stateless HMAC challenge → 6-digit
+  code (Resend-gated, dev fallback) → httpOnly session cookie; decoy challenge blocks order
+  enumeration; constant-time compare; order-access routes accept the session in addition to
+  the legacy email param. (2) **Stripe 3DS/SCA** (1.5 follow-up) — `requires_action` now
+  drives a browser challenge instead of a decline; new idempotent `POST /payments/confirm`
+  finalizes post-challenge (guards on `processor_transaction_id`, can't double-charge or
+  race the webhook). (3) **Customer reschedule slot-picker UI** (2.1) — in-account flow over
+  the existing self-reschedule endpoint, capacity-aware slot cards, window note, multi-item
+  chooser; identity via session cookie. (4) **Hardening** — fixed real pre-existing bugs:
+  the order serializer returns NESTED but the web pages consume FLAT with no transform
+  (confirmation/account/price-breakdown would render `undefined`) → added one
+  `toOrderSummary` seam; post-payment redirect hit a non-existent `/confirmation/<n>` (404,
+  incl. the 3DS path) → `/confirmation?order=`; browser used non-public `API_URL` (localhost
+  in prod) → `NEXT_PUBLIC_API_URL`; dead `/lookup` links → `/account`. Added
+  error/global-error/not-found boundaries to web+admin (no more white-screen crashes) + an
+  env-gated `captureError` observability seam (no vendor SDK yet) wired into the boundaries
+  and Hono `onError`. Follow-ups: OTP brute-force rate-limiting; webhook idempotent
+  create for the closed-tab 3DS case; pick + wire an error-tracking SDK; live smoke test
+  the whole flow once Neon/Stripe/Resend keys are in.
 
 - **2026-06-04** — **Customer self-service reschedule (2.1) — backend + live-verified.**
   New `rescheduleBooking` service moves a booking's item to another slot of the same
