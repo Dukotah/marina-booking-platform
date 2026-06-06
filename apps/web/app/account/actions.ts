@@ -18,12 +18,16 @@
  */
 
 import { cookies } from 'next/headers';
+import { revalidatePath } from 'next/cache';
 import {
   requestOtp as apiRequestOtp,
   verifyOtp as apiVerifyOtp,
+  selfReschedule as apiSelfReschedule,
   isApiError,
   CUSTOMER_SESSION_COOKIE,
+  type OrderSummary,
 } from '@/lib/api';
+import { getCustomerSession } from './session';
 
 /** Session cookie max age — mirror the API's 7-day session token lifetime. */
 const SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
@@ -141,6 +145,64 @@ export async function verifyOtp(
   });
 
   return { ok: true };
+}
+
+// --- rescheduleBooking ------------------------------------------------------
+
+export interface RescheduleSuccess {
+  ok: true;
+  /** The refreshed order so the client can reflect the new slot immediately. */
+  order: OrderSummary;
+}
+
+export type RescheduleResult = RescheduleSuccess | ActionFailure;
+
+/**
+ * Customer self-service reschedule of one booked item to a new timeslot.
+ *
+ * Identity is the httpOnly session cookie (forwarded by lib/api.ts as a Bearer
+ * token), NOT a URL param — we only read the cookie here to confirm the caller
+ * is signed in and to pin the order number, so a tampered client can't target a
+ * different order. The API independently verifies the session and enforces the
+ * activity's `self_reschedule_hours` window for the CUSTOMER channel; we surface
+ * its friendly message verbatim when it rejects (e.g. window closed).
+ */
+export async function rescheduleBooking(
+  input: { timeslotId: string; orderItemId?: string },
+): Promise<RescheduleResult> {
+  const session = getCustomerSession();
+  if (!session) {
+    return { ok: false, error: 'Your session has expired. Please sign in again.' };
+  }
+
+  const timeslotId = String(input.timeslotId ?? '').trim();
+  if (!timeslotId) {
+    return { ok: false, error: 'Please choose a new time before confirming.' };
+  }
+  const orderItemId = input.orderItemId ? String(input.orderItemId).trim() : undefined;
+
+  try {
+    const order = await apiSelfReschedule(session.orderNumber, {
+      timeslotId,
+      ...(orderItemId ? { orderItemId } : {}),
+    });
+    // Drop the cached bookings view so a refresh shows the moved slot.
+    revalidatePath('/account/bookings');
+    return { ok: true, order };
+  } catch (err) {
+    if (isApiError(err)) {
+      if (err.status === 0) {
+        return {
+          ok: false,
+          error: 'We could not reach the booking system. Please try again in a moment.',
+        };
+      }
+      // The API returns a friendly, customer-safe message for the window/capacity
+      // cases (RESCHEDULE_WINDOW_CLOSED, SLOT_FULL, SAME_TIMESLOT, etc.) — show it.
+      return { ok: false, error: err.message || 'We could not move your booking. Please try again.' };
+    }
+    return { ok: false, error: 'Something went wrong. Please try again.' };
+  }
 }
 
 // --- signOut ----------------------------------------------------------------

@@ -371,6 +371,31 @@ export async function getOrder(orderNumber: string): Promise<OrderSummary> {
   return data.order;
 }
 
+/**
+ * Customer self-service reschedule: move a booked item to a new timeslot of the
+ * SAME activity. Identity comes from the forwarded session cookie (request()
+ * attaches it as a Bearer token), so no email/order is needed in the URL beyond
+ * the order number. `orderItemId` disambiguates a multi-item order. The API
+ * enforces the activity's self-reschedule window for the CUSTOMER channel and
+ * returns the updated order (or rejects with a friendly ApiError message).
+ */
+export async function selfReschedule(
+  orderNumber: string,
+  input: { timeslotId: string; orderItemId?: string },
+): Promise<OrderSummary> {
+  const data = await request<{ order: OrderSummary }>(
+    `/api/orders/${encodeURIComponent(orderNumber)}/self-reschedule`,
+    {
+      method: 'POST',
+      body: {
+        timeslotId: input.timeslotId,
+        ...(input.orderItemId ? { orderItemId: input.orderItemId } : {}),
+      },
+    },
+  );
+  return data.order;
+}
+
 // --- Customer auth (email OTP → session) -----------------------------------
 
 /** Response from requesting an OTP. `devCode` is only present in non-production. */

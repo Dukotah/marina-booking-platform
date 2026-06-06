@@ -6,7 +6,7 @@ import { formatUSD, formatLongDate, formatTime, formatDateTime } from '@/lib/for
 import { getOrder, isApiError, type OrderSummary, type OrderLineItem } from '@/lib/api';
 import SiteHeader from '@/components/layout/SiteHeader';
 import SiteFooter from '@/components/layout/SiteFooter';
-import { ManagePanel } from '../manage-panel';
+import { ManagePanel, type ManageableItem } from '../manage-panel';
 import { SignOutButton } from '../sign-out-button';
 import { getCustomerSession } from '../session';
 
@@ -98,7 +98,14 @@ export default async function BookingsPage() {
 
   const badge = statusBadge(order.status);
   const changeable = order.status === 'UPCOMING' && upcoming.length > 0;
-  const rebookActivityId = order.items[0]?.activityId ?? null;
+  // Only upcoming items are movable; map to the shape the manage panel needs.
+  const manageableItems = upcoming.map((item) => ({
+    id: item.id,
+    activityId: item.activityId,
+    activityName: item.activityName,
+    rateName: item.rateName,
+    datetime: item.datetime,
+  }));
 
   return (
     <Shell>
@@ -130,7 +137,8 @@ export default async function BookingsPage() {
         orderNumber={order.orderNumber}
         operatorName={brand.name}
         changeable={changeable}
-        rebookActivityId={rebookActivityId}
+        accentColor={brand.color}
+        items={manageableItems}
       />
 
       {upcoming.length > 0 && (
@@ -190,7 +198,8 @@ function ManagePanelSection(props: {
   orderNumber: string;
   operatorName: string;
   changeable: boolean;
-  rebookActivityId: string | null;
+  accentColor: string;
+  items: ManageableItem[];
 }) {
   return (
     <section className="mb-8">
@@ -199,7 +208,8 @@ function ManagePanelSection(props: {
         operatorName={props.operatorName}
         contactEmail={operatorContactEmail()}
         changeable={props.changeable}
-        rebookActivityId={props.rebookActivityId}
+        accentColor={props.accentColor}
+        items={props.items}
       />
     </section>
   );

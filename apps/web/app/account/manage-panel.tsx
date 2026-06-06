@@ -1,24 +1,38 @@
 'use client';
 
 /**
- * Self-service manage panel: cancel + reschedule entry points for a booking.
+ * Self-service manage panel: reschedule + cancel entry points for a booking.
  *
- * IMPORTANT: there is no public customer-facing cancel endpoint yet — the API's
- * cancel route is staff-only (requires staff auth). So self-service cancel here
- * is a guided "request cancellation" entry point that opens a prefilled email to
- * the operator, rather than mutating the order directly. When a public
- * customer-cancel endpoint (gated by the magic-link session) lands, swap the
- * mailto for a server action calling it. See slice followups.
+ * RESCHEDULE is now a real in-account flow (roadmap 2.1): it opens a modal slot
+ * picker (RescheduleSlotPicker) that calls the API self-reschedule endpoint via a
+ * server action. Identity is the httpOnly session cookie (forwarded as a Bearer
+ * token by lib/api.ts) — never an order#/email in the URL. For multi-item orders
+ * the customer first chooses which reservation to move (orderItemId). The older
+ * "rebook by booking a new slot" link is gone (it created a brand-new order).
  *
- * Reschedule links the customer to the activity's booking page (rebook a new
- * slot), since drag-to-reschedule is an operator/manifest capability.
+ * CANCEL: there is still no public customer-facing cancel endpoint (the API's
+ * cancel route is staff-only), so cancel remains a guided "request cancellation"
+ * mailto to the operator. When a session-gated customer-cancel endpoint lands,
+ * swap the mailto for a server action.
  *
  * White-label: all copy uses the tenant's operator name (brand). No platform or
  * marina-specific branding.
  */
 
 import { useState } from 'react';
-import Link from 'next/link';
+import { Dialog } from '@marina/ui';
+import { formatLongDate, formatTime } from '@/lib/format';
+import { RescheduleSlotPicker } from '@/components/reschedule/RescheduleSlotPicker';
+
+/** A reschedulable line item, threaded from the bookings page. */
+export interface ManageableItem {
+  id: string;
+  activityId: string;
+  activityName: string;
+  rateName: string;
+  /** ISO datetime the item is currently booked for. */
+  datetime: string;
+}
 
 interface ManagePanelProps {
   orderNumber: string;
@@ -27,8 +41,10 @@ interface ManagePanelProps {
   contactEmail: string | null;
   /** True when the booking is still upcoming and therefore changeable. */
   changeable: boolean;
-  /** First activity id, used as a convenient "rebook" target when present. */
-  rebookActivityId: string | null;
+  /** Brand accent color (hex) for selected affordances in the picker. */
+  accentColor: string;
+  /** Upcoming, still-movable items. Empty when there's nothing to reschedule. */
+  items: ManageableItem[];
 }
 
 export function ManagePanel({
@@ -36,9 +52,13 @@ export function ManagePanel({
   operatorName,
   contactEmail,
   changeable,
-  rebookActivityId,
+  accentColor,
+  items,
 }: ManagePanelProps) {
   const [confirmingCancel, setConfirmingCancel] = useState(false);
+  const [rescheduleOpen, setRescheduleOpen] = useState(false);
+  // Which item is being moved. For single-item orders this is auto-selected.
+  const [activeItemId, setActiveItemId] = useState<string | null>(null);
 
   if (!changeable) {
     return (
@@ -59,6 +79,19 @@ export function ManagePanel({
     );
   }
 
+  const canReschedule = items.length > 0;
+  const activeItem = items.find((i) => i.id === activeItemId) ?? null;
+
+  const openReschedule = () => {
+    // Auto-pick when there's only one movable item; otherwise prompt to choose.
+    setActiveItemId(items.length === 1 ? (items[0]?.id ?? null) : null);
+    setRescheduleOpen(true);
+  };
+  const closeReschedule = () => {
+    setRescheduleOpen(false);
+    setActiveItemId(null);
+  };
+
   const cancelSubject = `Cancellation request — order ${orderNumber}`;
   const cancelBody =
     `Hello ${operatorName},\n\n` +
@@ -77,19 +110,17 @@ export function ManagePanel({
       </h2>
 
       <div className="grid gap-3 sm:grid-cols-2">
-        <Link
-          href={
-            rebookActivityId
-              ? `/activities/${encodeURIComponent(rebookActivityId)}`
-              : '/'
-          }
-          className="flex flex-col rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-brand hover:shadow-md"
+        <button
+          type="button"
+          onClick={openReschedule}
+          disabled={!canReschedule}
+          className="flex flex-col rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-brand hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-slate-200 disabled:hover:shadow-sm"
         >
           <span className="text-base font-semibold text-slate-900">Reschedule</span>
           <span className="mt-1 text-sm text-slate-600">
-            Pick a new date or time by booking a different slot.
+            Move your reservation to another date or time.
           </span>
-        </Link>
+        </button>
 
         <button
           type="button"
@@ -132,6 +163,47 @@ export function ManagePanel({
           </div>
         </div>
       )}
+
+      <Dialog
+        open={rescheduleOpen}
+        onClose={closeReschedule}
+        title="Reschedule your booking"
+        description={
+          activeItem
+            ? undefined
+            : 'Which reservation would you like to move?'
+        }
+      >
+        {activeItem ? (
+          <RescheduleSlotPicker
+            orderItemId={activeItem.id}
+            activityId={activeItem.activityId}
+            activityName={activeItem.activityName}
+            rateName={activeItem.rateName}
+            currentDatetime={activeItem.datetime}
+            accentColor={accentColor}
+            onDone={closeReschedule}
+          />
+        ) : (
+          <ul className="space-y-2">
+            {items.map((item) => (
+              <li key={item.id}>
+                <button
+                  type="button"
+                  onClick={() => setActiveItemId(item.id)}
+                  className="flex w-full flex-col rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-brand hover:shadow-md"
+                >
+                  <span className="font-semibold text-slate-900">{item.activityName}</span>
+                  <span className="text-sm text-slate-600">{item.rateName}</span>
+                  <span className="mt-1 text-sm font-medium text-slate-900">
+                    {formatLongDate(item.datetime)} · {formatTime(item.datetime)}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Dialog>
     </div>
   );
 }
