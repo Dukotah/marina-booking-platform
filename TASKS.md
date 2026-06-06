@@ -16,7 +16,12 @@ Branch: `phase-1-cockpit` (committed locally; not pushed — Vercel quota, see D
 | 1.5 | **Reports: By-Location tab** — per-location gross/volume roll-up + chain total + CSV (D-020). | done |
 | 1.6 | **Reports: Accounting tab** — payment-level transactions journal keyed by cash date, per-tender reconciliation + CSV (D-021). | done |
 | 1.7 | **POS gift-card tender** — accept a gift card as a tender in the POS payment panel (backend D-015 exists). | done |
-| 1.8 | **Verification + cleanup pass** — stand the full stack up once, browser-smoke every route + the touched flows (incl. the 1.1 login E2E), run touched live suites green, fix any broken page/empty state, stage the clean Phase-1 PR. | doing |
+| 1.8 | **Verification + cleanup pass** — stand the full stack up once, browser-smoke every route + the touched flows (incl. the 1.1 login E2E), run touched live suites green, fix any broken page/empty state, stage the clean Phase-1 PR. | done |
+
+**Phase 1 (Wire the Cockpit) — COMPLETE.** Live-verified vs Neon: admin→API seam
+(D-029/D-030), isolation 8/8, touched suites 35/35, all routes render 200 (2 pre-existing
+500s fixed, D-031), customer login loop. typecheck 9/9, both apps build. Next: Phase 2
+(self-serve operator front door).
 
 ## Notes / decisions pending within the phase
 - **1.2 / 1.3 data path:** admin reads via direct DB (D-007), but gift-card &

@@ -41,7 +41,20 @@
   parallel Sonnet agents, then did the integration pass myself: fixed an invalid
   `'PENDING'` order status and a client/server-boundary import (shell barrel → leaf).
   Verified: **typecheck 9/9, admin build green (26 routes), web build green.**
-- **Now:** Task 1.8 — live verification. Standing up the API against Neon to smoke the
-  new admin→API seam + run the touched live suites. Full browser click-through is the
-  RAM-aware part (this machine is memory-tight) — doing server-side contract verification
-  first, then a UI smoke.
+- **✅ Task 1.8 — Live verification (Phase 1 COMPLETE).** Stood the full stack up
+  against Neon — first time the frontend was actually *run*. Findings + fixes:
+  - **Admin→API seam was broken:** tenant middleware only resolved `x-operator-slug`/Host,
+    so admin calls 400'd. Fixed with a validated `x-operator-id` server-to-server path
+    (**D-030**); re-ran **isolation 8/8 live** (no regression). Re-seeded the Neon dev
+    tenant for the `dev-owner` staff. Then smoked all 5 admin endpoints (200) + a live
+    gift-card write + correct 401/404 negatives.
+  - **Touched API suites live: 35/35.** **Every route renders 200** — admin 21/21, web all
+    (incl. real activity detail).
+  - **Caught + fixed 2 pre-existing 500s** the build couldn't catch (FE never run before):
+    `/activities` (cell functions → client DataTable) and `/settings` (mapped a client
+    export server-side). **D-031.** Zero broken routes now.
+  - **Customer login loop verified live** (request → devCode → verify → token, single-use).
+  - typecheck 9/9, both apps build, servers torn down.
+- **Decisions logged:** D-029 (admin→API), D-030 (tenant x-operator-id), D-031 (RSC boundary).
+- **Next:** Phase 2 — the self-serve operator front door (public signup → provision tenant
+  → guided onboarding → live bookable storefront).

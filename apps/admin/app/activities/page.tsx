@@ -1,33 +1,18 @@
 import Link from 'next/link';
 import { Plus } from 'lucide-react';
-import { AdminShell, PageHeader, DataTable, type Column } from '../../components/shell';
-import { ActivityRowActions } from '../../components/activities/ActivityRowActions';
-import { CATEGORY_LABELS, type ActivityCategory } from '../../components/activities/types';
-import { formatUSD } from '../../lib/format';
+import { AdminShell, PageHeader } from '../../components/shell';
+import { ActivitiesTable, type ActivityRow } from '../../components/activities/ActivitiesTable';
+import { type ActivityCategory } from '../../components/activities/types';
 import { getTenantDb, currentPermissions } from '../../lib/session';
 
 export const dynamic = 'force-dynamic';
 
 /**
  * Activities list — the catalog overview. Tenant-scoped read (RLS + explicit
- * operator filter is implicit through the tenant client). Each row shows category,
- * status, channel visibility, a price-from summary, and inline toggle/edit
- * controls (gated by activity:write).
+ * operator filter is implicit through the tenant client). Renders the table via a
+ * Client Component (ActivitiesTable) because the column `cell` render functions
+ * can't cross the server→client boundary; the page passes only serializable rows.
  */
-interface ActivityRow {
-  id: string;
-  name_external: string;
-  name_internal: string;
-  category: ActivityCategory;
-  status: 'ACTIVE' | 'INACTIVE';
-  visible_online: boolean;
-  visible_kiosk: boolean;
-  visible_register: boolean;
-  color: string;
-  rateCount: number;
-  fromPriceCents: number | null;
-}
-
 export default async function ActivitiesPage() {
   const db = await getTenantDb();
   const perms = await currentPermissions();
@@ -69,94 +54,6 @@ export default async function ActivitiesPage() {
     };
   });
 
-  const columns: Array<Column<ActivityRow>> = [
-    {
-      id: 'name',
-      header: 'Activity',
-      cell: (row) => (
-        <Link href={`/activities/${row.id}`} className="flex items-center gap-3 hover:underline">
-          <span
-            className="inline-block h-3 w-3 shrink-0 rounded-full"
-            style={{ backgroundColor: row.color }}
-            aria-hidden
-          />
-          <span className="min-w-0">
-            <span className="block truncate font-medium text-slate-900">{row.name_external}</span>
-            {row.name_internal !== row.name_external ? (
-              <span className="block truncate text-xs text-slate-400">{row.name_internal}</span>
-            ) : null}
-          </span>
-        </Link>
-      ),
-    },
-    {
-      id: 'category',
-      header: 'Category',
-      cell: (row) => <span className="text-slate-600">{CATEGORY_LABELS[row.category]}</span>,
-    },
-    {
-      id: 'status',
-      header: 'Status',
-      cell: (row) => (
-        <span
-          className={
-            row.status === 'ACTIVE'
-              ? 'inline-flex rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700'
-              : 'inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500'
-          }
-        >
-          {row.status === 'ACTIVE' ? 'Active' : 'Inactive'}
-        </span>
-      ),
-    },
-    {
-      id: 'visibility',
-      header: 'Visible',
-      cell: (row) => {
-        const tags = [
-          row.visible_online && 'Online',
-          row.visible_kiosk && 'Kiosk',
-          row.visible_register && 'Register',
-        ].filter(Boolean) as string[];
-        return tags.length ? (
-          <span className="text-xs text-slate-500">{tags.join(' · ')}</span>
-        ) : (
-          <span className="text-xs text-slate-400">Hidden</span>
-        );
-      },
-    },
-    {
-      id: 'rates',
-      header: 'Rates',
-      align: 'right',
-      cell: (row) => <span className="text-slate-600">{row.rateCount}</span>,
-    },
-    {
-      id: 'price',
-      header: 'From',
-      align: 'right',
-      cell: (row) =>
-        row.fromPriceCents !== null ? (
-          <span className="font-medium text-slate-900">{formatUSD(row.fromPriceCents)}</span>
-        ) : (
-          <span className="text-slate-400">—</span>
-        ),
-    },
-    {
-      id: 'actions',
-      header: '',
-      align: 'right',
-      cell: (row) => (
-        <ActivityRowActions
-          activityId={row.id}
-          status={row.status}
-          visibleOnline={row.visible_online}
-          canWrite={canWrite}
-        />
-      ),
-    },
-  ];
-
   return (
     <AdminShell>
       <PageHeader
@@ -175,21 +72,7 @@ export default async function ActivitiesPage() {
         }
       />
 
-      <DataTable
-        columns={columns}
-        rows={rows}
-        getRowKey={(row) => row.id}
-        emptyState={
-          <div className="space-y-2">
-            <p>No activities yet.</p>
-            {canWrite ? (
-              <Link href="/activities/new" className="font-medium text-slate-900 underline">
-                Create your first activity
-              </Link>
-            ) : null}
-          </div>
-        }
-      />
+      <ActivitiesTable rows={rows} canWrite={canWrite} />
     </AdminShell>
   );
 }

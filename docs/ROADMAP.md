@@ -81,7 +81,8 @@ channel/OTA + affiliate management · accounting exports (QuickBooks/Xero).
 - [ ] Cross-tenant isolation tests pass
 - [ ] Payment + refund flows tested end-to-end in Stripe (test → live)
 - [ ] Waiver capture legally reviewed + audit trail verified
-- [ ] Zero broken routes (route test sweep)
+- [x] Zero broken routes (route test sweep) — admin 21/21 + web all routes render 200 live
+  (2026-06-06 server-render smoke); two pre-existing 500s fixed (D-031). Re-run after new pages.
 - [ ] Backups + error monitoring configured
 - [ ] Custom domain / subdomain white-label verified for a test tenant
 
@@ -93,6 +94,27 @@ I will build against sandboxes/free tiers and flag exactly when each is needed.
 
 ## Changelog
 
+- **2026-06-06** — **Phase 1 live verification + zero-broken-routes (task 1.8).** Stood the
+  full stack up against Neon and verified the cockpit end-to-end — the first time the frontend
+  has actually been *run*, not just compiled.
+  - **Admin→API seam (D-029) fixed + proven:** the tenant middleware only resolved
+    `x-operator-slug`/Host, so every admin→API call 400'd. Added a validated `x-operator-id`
+    server-to-server path (**D-030**); then smoked all five admin-consumed endpoints live →
+    200, plus a real gift-card **write** (issued by `dev-owner`) and correct negatives
+    (404 bad tenant, 401 no staff). Re-seeded the Neon dev tenant to pick up the `dev-owner`
+    OWNER staff (the 06-04 re-seed gap).
+  - **Isolation re-verified live 8/8** after the middleware change — no regression.
+  - **Touched API suites live: 35/35** (gift cards, resources, waiver templates, by-location,
+    transactions, POS).
+  - **Server-render smoke: every route 200.** Admin **21/21** routes and web **all** routes
+    (incl. a real activity detail page) render live. The smoke caught **two pre-existing 500s**
+    (latent because the FE was never run) — `/activities` (passed `cell` functions to a client
+    DataTable) and `/settings` (mapped a `'use client'` export from the server) — both **fixed**
+    (D-031). Also fixed `ResourcesClient` importing the shell barrel (Clerk server-only).
+  - **Customer login loop verified live:** request → `devCode` (Resend didn't deliver → the
+    D-017 graceful fallback the UI surfaces) → verify → 7-day token, single-use enforced.
+  - Final: typecheck 9/9, both apps build, all servers torn down (RAM-tight machine).
+  **Phase 1 (Wire the Cockpit) is complete.** Held locally, not pushed (Vercel quota).
 - **2026-06-06** — **Cockpit sweep: 5 backend pillars surfaced in the admin UI (Phase 1, tasks 1.2–1.7).**
   Built the admin UI for every shipped-but-unreachable backend capability, via a new shared
   server-to-server API client (`apps/admin/lib/apiClient.ts`, D-029) so the money/capacity

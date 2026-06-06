@@ -814,3 +814,63 @@ Clerk enforcement is owner-gated/off today, so the shim path is correct now.
 already hardened and tested, with the least new surface and zero risk to the proven
 backend — at the cost of one deferred prod-auth wiring step that's already on the
 go-live list anyway.
+
+## D-030 — Tenant middleware accepts a validated `x-operator-id` for trusted server-to-server (2026-06-06) — Accepted
+
+Live verification of the cockpit (task 1.8) surfaced that the documented
+server-to-server resolution path was broken: the admin's `dispatchConfirmationEmail`
+precedent (and the new D-029 `apiClient`) send `x-operator-id`, but the tenant
+middleware only resolved `x-operator-slug`/Host → every admin→API call 400'd ("No
+tenant specified"). The admin naturally holds the operator **id**, not the slug, and
+`resolve_operator_id` matches only `slug`/`custom_domain`, so even sending the id as
+the slug header would 404.
+
+**Decision:** add a resolution step 0 to `tenantMiddleware` — if `x-operator-id` is
+present, **validate it against an active `Operator`** (via `adminPrisma`) and scope to
+it; an unknown/inactive id is rejected (404), never used to set the RLS GUC. Falls
+through to the existing slug/Host resolution otherwise.
+
+- **Trust model unchanged:** this is the same posture as the existing `x-operator-slug`
+  header — a trusted internal-caller input. Public browser traffic resolves by Host;
+  the header paths are for server-to-server/dev callers behind the network boundary.
+  Accepting an id is no more permissive than accepting a slug, and it is validated
+  before use.
+- **Isolation re-verified:** because this touches isolation-critical code, the
+  cross-tenant isolation suite was re-run **live vs Neon → 8/8** after the change
+  (reads, writes, WITH CHECK, FK-attach, bulk, symmetric). No regression. Downstream
+  scoping is unchanged — it still goes through `forOperator(operatorId)` exactly as the
+  slug path does.
+
+**Why:** make the documented "server-to-server convenience" actually work (fixing both
+the new admin client and the pre-existing resend precedent) at the one correct place —
+the tenant boundary — with validation and a live isolation re-proof, rather than
+papering over it client-side with a slug lookup the admin doesn't have.
+
+## D-031 — Server pages must hand Client Components serializable props (RSC-boundary fixes) (2026-06-06) — Accepted
+
+The 1.8 server-render smoke (booting both apps in prod and hitting every route) caught
+two **pre-existing** runtime 500s — latent because the frontend had never actually been
+run (everything was `🧪`). Both are React Server Component boundary violations:
+
+1. **`/activities`** — a Server Component built `DataTable` column defs containing `cell`
+   render **functions** and passed them to the (client) `DataTable`. Functions can't
+   cross the server→client boundary. **Fix:** moved the table into a Client Component
+   (`components/activities/ActivitiesTable.tsx`); the page now passes only serializable
+   `rows` + `canWrite` — the same pattern the working customers/staff tables already use.
+2. **`/settings`** — the Server Component imported `SETTINGS_TABS` from the `'use client'`
+   `SettingsNav.tsx` and `.map()`ped it ("Attempted to call map() from the server but map
+   is on the client"). **Fix:** extracted the list into a client-safe `settings/tabs.ts`
+   (no `'use client'`), imported by both the client nav and the server page — mirroring the
+   `reports/kinds.ts` split.
+
+**General rule (recorded):** a Server Component may pass a Client Component only
+serializable props — never functions/render-props, and never map over a value imported
+from a `'use client'` module. Put shared constants/lists in a plain module, and put any
+columns/handlers inside the Client Component. (Companion to the D-009-era "client comps
+import shell LEAF files, not the server-only barrel" rule, which also bit `ResourcesClient`
+this phase.)
+
+**Why:** "zero broken routes" is a core product promise (CONTEXT § rock solid) and a
+go-live item. Build-green is necessary but not sufficient — only running the app catches
+request-time RSC violations, so the verification pass standing the app up is what made the
+product actually reachable.
