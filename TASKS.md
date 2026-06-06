@@ -1,4 +1,28 @@
-# Tasks — Phase 1: Wire the Cockpit
+# Tasks — Phase 2: The Front Door (self-serve tenancy)
+
+Branch: `phase-2-frontdoor` (committed locally; not pushed — Vercel quota, D-027).
+
+| # | Task | Owner | Status |
+|---|------|-------|--------|
+| 2.0 | **Provisioning foundation** — `provisionOperator` service + `POST /signup` + `GET /signup/slug-available` (pre-tenant, adminPrisma, outside tenant mw); unique slug + location_code; dev-open / Clerk-gated prod. Dev-operator cookie hook in admin session so the dev flow is end-to-end. (D-032) | me | done |
+| 2.1 | **Signup UI** — public admin `/signup`: business name → live slug check → owner name/email → POST /signup → redirect into onboarding. | agent | done |
+| 2.2 | **Onboarding → bookable** — extend `completeOnboarding`/wizard so a fresh tenant gets a default **rate** + initial **timeslots** + `visible_online` per starter activity → a genuinely bookable storefront. | agent | done |
+| 2.3 | **Storefront brand from operator** — web `getBrand` resolves from `GET /api/operator/public` (host/slug → operator), not env; true per-tenant white-label. | agent | done |
+| 2.4 | **Fresh-tenant route sweep + empty states** — provision an empty tenant, smoke every admin + web route, fix 500s/blank, graceful empty states + CTAs. | me | done |
+| 2.5 | **Verify + stage PR** — live: signup→onboarding→bookable storefront end-to-end; isolation 8/8; typecheck 9/9; both apps build. | me | done |
+
+**Phase 2 (The Front Door) — COMPLETE.** Live-verified vs Neon: `POST /signup` provisions a
+full tenant (slug/code unique, isolated — fresh owner can't see the seed tenant, isolation
+8/8); admin renders all routes 200 as a brand-new EMPTY tenant via the dev-context cookie;
+storefront brand + title now resolve from the operator (no env leak). Onboarding→bookable
+(rates + timeslots + visibility) is code-reviewed + builds; full wizard→storefront
+click-through is the remaining browser pass. typecheck 9/9, both apps build (admin 27 routes
+incl. `/signup`, web build green). Decisions D-032, D-033. **Next: Phase 3 (money & go-live)
+or deepen Phase 2 (Clerk-on signup, billing).**
+
+---
+
+# Tasks — Phase 1: Wire the Cockpit ✅ COMPLETE
 
 > Small, discrete, checkable. Status: `todo` · `doing` · `done`. Each task is done
 > only when typecheck + the relevant build pass and (where it applies) the live

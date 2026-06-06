@@ -282,6 +282,40 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 // Public API
 // ---------------------------------------------------------------------------
 
+/**
+ * The public brand/contact shape returned by GET /api/operator/public.
+ * Field names match the API's snake_case JSON payload exactly.
+ */
+export interface OperatorPublic {
+  slug: string;
+  name: string;
+  brand_color: string;
+  logo_dark_url: string | null;
+  logo_light_url: string | null;
+  timezone: string;
+  website: string | null;
+  phone: string | null;
+}
+
+/**
+ * Fetch the current tenant's public brand data. Returns `null` instead of
+ * throwing so callers can gracefully fall back to env/defaults when the API is
+ * unreachable, the operator slug is unresolvable, or the response is malformed.
+ * This is intentionally never-throw; the storefront must always render.
+ */
+export async function getOperatorPublic(): Promise<OperatorPublic | null> {
+  try {
+    return await request<OperatorPublic>('/api/operator/public', {
+      // Brand changes rarely; revalidate once per minute so it is fast but
+      // eventually consistent without requiring a full deployment.
+      revalidate: 60,
+    });
+  } catch {
+    // Network error, non-2xx, or malformed JSON — degrade silently.
+    return null;
+  }
+}
+
 /** The full bookable catalog (active, online-visible activities) for the tenant. */
 export async function getCatalog(): Promise<CatalogActivity[]> {
   const data = await request<{ activities: CatalogActivity[] }>('/api/activities');

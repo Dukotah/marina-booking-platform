@@ -6,8 +6,8 @@ import { getBrand, brandStyle } from '@/lib/brand';
  * the resolved tenant). White-label only — routes the customer back to the
  * catalog rather than showing a dead end.
  */
-export default function ActivityNotFound() {
-  const brand = getBrand();
+export default async function ActivityNotFound() {
+  const brand = await getBrand();
   return (
     <main
       style={brandStyle(brand)}

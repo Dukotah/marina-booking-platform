@@ -44,7 +44,7 @@ async function loadActivity(id: string): Promise<ActivityDetail | null> {
 }
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
-  const brand = getBrand();
+  const brand = await getBrand();
   try {
     const activity = await getActivity(params.id);
     return {
@@ -62,7 +62,7 @@ export default async function ActivityDetailPage({ params }: PageProps) {
   const activity = await loadActivity(params.id);
   if (!activity) notFound();
 
-  const brand = getBrand();
+  const brand = await getBrand();
   const accent = activity.color;
   const categoryLabel = CATEGORY_LABELS[activity.category];
 

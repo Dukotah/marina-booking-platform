@@ -51,8 +51,8 @@ function BrandMark({ brand }: { brand: Brand }) {
   );
 }
 
-export function SiteHeader() {
-  const brand = getBrand();
+export async function SiteHeader() {
+  const brand = await getBrand();
 
   return (
     <header

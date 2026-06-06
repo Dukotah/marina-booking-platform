@@ -19,7 +19,12 @@ import { NextResponse } from 'next/server';
 const HAS_CLERK = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
 const ENFORCE = process.env.REQUIRE_CLERK_AUTH === 'true' && HAS_CLERK;
 
-const isPublicRoute = createRouteMatcher(['/sign-in(.*)', '/sign-up(.*)']);
+// /signup is the self-serve operator onboarding landing page — always public so
+// prospective operators can reach it before they have any Clerk identity. When
+// REQUIRE_CLERK_AUTH is later turned on this keeps the page accessible without
+// a session. (Note: /sign-up is Clerk's built-in staff invite/first-user flow;
+// /signup — no hyphen — is our custom operator self-serve page.)
+const isPublicRoute = createRouteMatcher(['/sign-in(.*)', '/sign-up(.*)', '/signup(.*)']);
 
 export default HAS_CLERK
   ? clerkMiddleware(async (auth, req) => {

@@ -144,7 +144,7 @@ export default async function CheckoutPage({ searchParams }: CheckoutPageProps) 
   };
 
   const stripe = getStripeConfig();
-  const brand = getBrand();
+  const brand = await getBrand();
 
   return (
     <main className="mx-auto w-full max-w-5xl px-4 py-6 sm:py-10">

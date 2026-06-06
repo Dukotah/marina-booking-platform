@@ -20,6 +20,7 @@ import { operator } from './routes/operator.js';
 import { webhooks } from './routes/webhooks.js';
 import { jobs } from './routes/jobs.js';
 import { auth } from './routes/auth.js';
+import { signup } from './routes/signup.js';
 
 export const app = new Hono<Env>();
 
@@ -37,6 +38,11 @@ app.route('/webhooks', webhooks);
 // operators internally and authenticate with a shared secret, so they also live
 // OUTSIDE the tenant middleware (no x-operator-slug header).
 app.route('/jobs', jobs);
+
+// Self-serve operator signup provisions a brand-new tenant, so it runs BEFORE any
+// tenant exists — it lives OUTSIDE the tenant middleware (no x-operator-slug) and
+// uses the platform connection internally. (Phase 2, D-032.)
+app.route('/signup', signup);
 
 // Everything under /api is tenant-scoped.
 const api = new Hono<Env>();

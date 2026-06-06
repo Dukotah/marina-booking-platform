@@ -14,8 +14,8 @@ interface CatalogHeroProps {
   activityCount: number;
 }
 
-export function CatalogHero({ activityCount }: CatalogHeroProps) {
-  const brand = getBrand();
+export async function CatalogHero({ activityCount }: CatalogHeroProps) {
+  const brand = await getBrand();
   const onBrand = readableTextOn(brand.color);
 
   return (

@@ -874,3 +874,54 @@ this phase.)
 go-live item. Build-green is necessary but not sufficient — only running the app catches
 request-time RSC violations, so the verification pass standing the app up is what made the
 product actually reachable.
+
+## D-032 — Self-serve tenant provisioning: a platform endpoint outside the tenant boundary (2026-06-06) — Accepted
+
+Phase 2's front door needs to create a brand-new tenant from a public signup — the one
+operation that runs BEFORE any tenant scope exists.
+
+- **Service** `apps/api/src/services/provisioning.ts` `provisionOperator()` uses the
+  platform `adminPrisma` connection (like the seed), in one transaction creating:
+  Operator (unique slug + unique `location_code`, brand defaults, `plan:'trial'`) +
+  default Location + a starter liability Waiver + checkout config Integration + the first
+  OWNER StaffMember bound to the signup identity. Slug is normalized + validated against a
+  reserved list + checked unique (with a suggestion); `location_code` is derived from the
+  business-name initials and made unique (it's the order-number prefix).
+- **Endpoint** `POST /signup` (+ `GET /signup/slug-available`) is mounted **outside**
+  `tenantMiddleware` (alongside `/webhooks`, `/jobs`) because there is no tenant to resolve
+  yet. **Auth posture (mirrors D-012/D-017):** when Clerk is enforced, the OWNER
+  `auth_user_id` MUST come from a verified Clerk bearer (the just-created user) and the body
+  value is ignored; in dev it's open and a deterministic `owner-<cuid>` id is generated.
+  Public-prod abuse protection (rate limit / captcha) is a documented go-live follow-up.
+- **Isolation:** provisioning only ever CREATES a new operator + rows stamped with that new
+  `operator_id`; it never reads/writes another tenant. RLS is table-wide so the new tenant
+  is covered with no per-tenant DDL. Verified live: a fresh operator's owner cannot read the
+  seed tenant (403), and the isolation suite stays **8/8**.
+- **Dev handoff:** so a freshly-provisioned operator actually becomes the active admin
+  context in dev (the dev fallback is otherwise pinned to the seed operator), the signup flow
+  sets an `mb_dev_operator` cookie `{operatorId, authUserId}` that `getOperatorContext`'s
+  **dev path only** honors (validated against a real staff row; never consulted under Clerk).
+
+**Why:** tenant creation is inherently a pre-tenant, platform-level write — putting it behind
+the tenant middleware would be incoherent. Keeping it a thin validated endpoint over an
+adminPrisma transaction (the seed's proven shape) makes "a stranger can create a tenant"
+real, while the Clerk-gated identity + table-wide RLS keep it safe.
+
+## D-033 — Storefront brand resolves from the operator, not env (true per-tenant white-label) (2026-06-06) — Accepted
+
+The customer web storefront previously read its brand from `process.env` (`getBrand()` was
+sync), making it single-brand per deployment — incompatible with multi-tenant white-label.
+
+- `getBrand()` is now **async**, fetching `GET /api/operator/public` (the API resolves the
+  tenant from the `x-operator-slug`/host) and mapping name/color/logos to the `Brand` shape;
+  env values + neutral defaults remain a **graceful fallback** when the API is unreachable
+  (the build-time prerender hits this path harmlessly). All ~13 call sites now `await`.
+- The root layout's static `metadata.title` ('Book Your Adventure') was a white-label LEAK —
+  every tenant shared one browser-tab/share title. Replaced with an async `generateMetadata()`
+  that titles from the operator brand (`%s · <brand>` template). Verified live: with
+  `OPERATOR_SLUG=lake-sonoma` the storefront title is "Lake Sonoma Marina" and the env default
+  no longer appears anywhere.
+
+**Why:** white-label is the product's core promise (CONTEXT) — the storefront must render as
+the operator's brand everywhere, including metadata, resolved per request from the operator the
+host maps to, with a safe fallback so a brand-fetch failure never 500s the storefront.

@@ -13,7 +13,7 @@
 import { getCatalog, isApiError, type CatalogActivity } from '@/lib/api';
 import { SiteHeader } from '@/components/layout/SiteHeader';
 import { SiteFooter } from '@/components/layout/SiteFooter';
-import { brandStyle } from '@/lib/brand';
+import { getBrand, brandStyle } from '@/lib/brand';
 import { CatalogHero } from '@/components/catalog/CatalogHero';
 import { CatalogBrowser } from '@/components/catalog/CatalogBrowser';
 import { CatalogNotice } from '@/components/catalog/CatalogNotice';
@@ -25,20 +25,24 @@ export default async function HomePage() {
   let activities: CatalogActivity[] = [];
   let loadFailed = false;
 
-  try {
-    activities = await getCatalog();
-  } catch (err) {
-    // Network or non-2xx from the API. A missing-tenant style 404 is treated the
-    // same as any other failure here — the customer just sees a friendly notice.
-    loadFailed = true;
-    if (!isApiError(err)) {
-      // Re-surface truly unexpected (non-API) errors during development.
-      console.error('Unexpected catalog load error:', err);
-    }
-  }
+  const [brand] = await Promise.all([
+    getBrand(),
+    getCatalog().then(
+      (data) => { activities = data; },
+      (err) => {
+        // Network or non-2xx from the API. A missing-tenant style 404 is treated the
+        // same as any other failure here — the customer just sees a friendly notice.
+        loadFailed = true;
+        if (!isApiError(err)) {
+          // Re-surface truly unexpected (non-API) errors during development.
+          console.error('Unexpected catalog load error:', err);
+        }
+      },
+    ),
+  ]);
 
   return (
-    <div style={brandStyle()} className="flex min-h-screen flex-col">
+    <div style={brandStyle(brand)} className="flex min-h-screen flex-col">
       <SiteHeader />
 
       <main className="flex-1">

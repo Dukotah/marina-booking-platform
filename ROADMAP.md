@@ -40,21 +40,28 @@ UI, and the existing frontend is actually exercised, not just compiled.
 touched areas green, no nav item or feature dead-ends. A demo can reach every
 backend capability through the UI.
 
-## Phase 2 — The Front Door (self-serve tenancy)  ⬜
+## Phase 2 — The Front Door (self-serve tenancy)  🟦
 
 **Goal:** an operator we've never met can create their tenant and go live unaided.
 
-**Milestones**
-- Public **operator signup** → provisions an Operator + first OWNER staff + a
-  default Location, wired to Clerk (behind the existing `REQUIRE_CLERK_AUTH` flag).
-- **Guided first-run onboarding** (brand → location → first activity/rate →
-  publish) that lands a real, bookable storefront.
-- **Subdomain/tenant resolution** verified for a fresh tenant end-to-end (host →
-  operator → branded storefront + admin).
-- Empty-state everything: a brand-new tenant is never a broken or confusing page.
+**Milestones / tasks** (see TASKS.md)
+- **2.0 Provisioning foundation** (me): platform `provisionOperator` service +
+  `POST /signup` (pre-tenant, `adminPrisma`, outside tenant middleware) → Operator +
+  default Location + Waiver + checkout config + OWNER staff; unique slug + location_code;
+  dev-open, Clerk-gated in prod (D-032).
+- **2.1 Signup UI** (agent): public admin `/signup` — business name → live slug
+  availability → owner details → provision → into onboarding.
+- **2.2 Onboarding → genuinely bookable** (agent): the wizard must leave a fresh tenant
+  with a real bookable storefront — each starter activity gets a default **rate** +
+  initial **timeslots** + `visible_online` (today it creates activities only).
+- **2.3 Storefront tenant/brand resolution** (agent): the web storefront brand must come
+  from the resolved operator (`GET /api/operator/public`), not env — true white-label
+  per tenant.
+- **2.4 Empty-state + fresh-tenant route sweep** (me, integration): provision a brand-new
+  empty tenant and smoke every admin + web route → graceful empty states, zero 500s.
 
-**Definition of done:** a scripted "new operator" flow goes from signup to a live
-bookable activity with zero manual DB work; isolation still 8/8.
+**Definition of done:** a scripted "new operator" flow goes from signup → onboarding →
+a live bookable activity on a branded storefront with zero manual DB work; isolation 8/8.
 
 ## Phase 3 — Money & Go-Live Readiness  ⬜ (partly ⏸️ owner)
 

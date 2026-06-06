@@ -24,7 +24,7 @@ function safeNext(raw: string | undefined): string {
  * Passwordless customer sign-in (email-OTP, D-017). Already-signed-in customers
  * are sent straight to their destination. White-label throughout.
  */
-export default function LoginPage({
+export default async function LoginPage({
   searchParams,
 }: {
   searchParams: { next?: string };
@@ -36,7 +36,7 @@ export default function LoginPage({
     redirect(next);
   }
 
-  const brand = getBrand();
+  const brand = await getBrand();
 
   return (
     <div style={brandStyle(brand)} className="flex min-h-screen flex-col">

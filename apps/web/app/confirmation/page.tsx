@@ -16,7 +16,7 @@
 import type { Metadata } from 'next';
 import { formatLongDate, formatTime } from '@/lib/format';
 import { getOrder, isApiError, type OrderSummary } from '@/lib/api';
-import { getBrand, brandStyle } from '@/lib/brand';
+import { getBrand, brandStyle, type Brand } from '@/lib/brand';
 import SiteHeader from '@/components/layout/SiteHeader';
 import SiteFooter from '@/components/layout/SiteFooter';
 import { QrPlaceholder } from './components/QrPlaceholder';
@@ -58,8 +58,7 @@ const STATUS_STYLES: Record<OrderSummary['status'], string> = {
   NO_SHOW: 'bg-amber-50 text-amber-700 ring-amber-600/20',
 };
 
-function Shell({ children }: { children: React.ReactNode }) {
-  const brand = getBrand();
+function Shell({ brand, children }: { brand: Brand; children: React.ReactNode }) {
   return (
     <div style={brandStyle(brand)} className="flex min-h-screen flex-col">
       <SiteHeader />
@@ -77,11 +76,11 @@ export default async function ConfirmationPage({
 }) {
   const params = await Promise.resolve(searchParams);
   const orderNumber = firstParam(params.order) ?? firstParam(params.orderNumber);
-  const brand = getBrand();
+  const brand = await getBrand();
 
   if (!orderNumber) {
     return (
-      <Shell>
+      <Shell brand={brand}>
         <OrderNotFound
           title="No booking selected"
           message="We couldn't find a booking reference in this link. Look up your booking with your order number to see your confirmation."
@@ -106,7 +105,7 @@ export default async function ConfirmationPage({
 
   if (notFound || !order) {
     return (
-      <Shell>
+      <Shell brand={brand}>
         <OrderNotFound
           orderNumber={orderNumber}
           title={serviceError ? 'Booking temporarily unavailable' : 'Booking not found'}
@@ -124,7 +123,7 @@ export default async function ConfirmationPage({
   const isCancelled = order.status === 'CANCELLED';
 
   return (
-    <Shell>
+    <Shell brand={brand}>
       <div className="mx-auto max-w-3xl px-4 py-10">
         {/* Success header */}
         <div className="text-center">

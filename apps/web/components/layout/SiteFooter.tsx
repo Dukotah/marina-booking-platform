@@ -21,8 +21,8 @@ const LINKS: FooterLink[] = [
   { label: 'Privacy', href: '/privacy' },
 ];
 
-export function SiteFooter() {
-  const brand = getBrand();
+export async function SiteFooter() {
+  const brand = await getBrand();
   const year = new Date().getFullYear();
 
   return (

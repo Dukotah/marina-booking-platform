@@ -23,8 +23,8 @@ export const dynamic = 'force-dynamic';
  * (passwordless) or fall back to the order-number + email lookup. Fully
  * white-label — operator brand only, never platform branding.
  */
-export default function AccountPage() {
-  const brand = getBrand();
+export default async function AccountPage() {
+  const brand = await getBrand();
   const session = getCustomerSession();
 
   return (

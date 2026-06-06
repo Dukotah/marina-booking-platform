@@ -23,6 +23,10 @@ type Category = (typeof CATEGORY_OPTIONS)[number]['value'];
 interface ActivityDraft {
   name_external: string;
   category: Category;
+  /** Asking price in whole US dollars. */
+  price_dollars: string; // kept as string for controlled input; coerced to number on submit
+  /** Duration of the default "Standard" rate in minutes. */
+  duration_minutes: string; // same: string for input, coerced on submit
 }
 
 interface WizardState {
@@ -75,7 +79,7 @@ export function OnboardingWizard({ defaults }: { defaults: OnboardingDefaults })
       phone: defaults.phone,
     },
     location: { name: '', address: '', city: '', state: '', zip: '' },
-    activities: [{ name_external: '', category: 'BOAT' }],
+    activities: [{ name_external: '', category: 'BOAT', price_dollars: '', duration_minutes: '60' }],
   });
 
   const validHex = useMemo(
@@ -96,7 +100,13 @@ export function OnboardingWizard({ defaults }: { defaults: OnboardingDefaults })
     }));
   }
   function addActivity() {
-    setState((s) => ({ ...s, activities: [...s.activities, { name_external: '', category: 'OTHER' }] }));
+    setState((s) => ({
+      ...s,
+      activities: [
+        ...s.activities,
+        { name_external: '', category: 'OTHER', price_dollars: '', duration_minutes: '60' },
+      ],
+    }));
   }
   function removeActivity(index: number) {
     setState((s) => ({ ...s, activities: s.activities.filter((_, i) => i !== index) }));
@@ -113,6 +123,16 @@ export function OnboardingWizard({ defaults }: { defaults: OnboardingDefaults })
     } else if (current === 2) {
       const named = state.activities.filter((a) => a.name_external.trim());
       if (named.length === 0) next['activities'] = 'Add at least one activity';
+      named.forEach((a, i) => {
+        const price = Number(a.price_dollars);
+        if (!a.price_dollars.trim() || isNaN(price) || !Number.isInteger(price) || price < 1) {
+          next[`activities.${i}.price_dollars`] = 'Enter a whole-dollar price';
+        }
+        const dur = Number(a.duration_minutes);
+        if (!a.duration_minutes.trim() || isNaN(dur) || !Number.isInteger(dur) || dur < 15) {
+          next[`activities.${i}.duration_minutes`] = 'Min 15 min';
+        }
+      });
     }
     setErrors(next);
     return Object.keys(next).length === 0;
@@ -151,7 +171,12 @@ export function OnboardingWizard({ defaults }: { defaults: OnboardingDefaults })
       },
       activities: state.activities
         .filter((a) => a.name_external.trim())
-        .map((a) => ({ name_external: a.name_external.trim(), category: a.category })),
+        .map((a) => ({
+          name_external: a.name_external.trim(),
+          category: a.category,
+          price_dollars: Math.max(1, Math.round(Number(a.price_dollars) || 1)),
+          duration_minutes: Math.max(15, Math.round(Number(a.duration_minutes) || 60)),
+        })),
     };
 
     setServerError(null);
@@ -262,42 +287,78 @@ export function OnboardingWizard({ defaults }: { defaults: OnboardingDefaults })
           <div className="space-y-5">
             <Header
               title="What can people book?"
-              subtitle="Add a few starter activities. You can fully configure rates and schedules afterward."
+              subtitle="Add a few starter activities with a starting price. You can fully configure rates and schedules afterward."
             />
             {errors['activities'] ? (
               <p className="text-sm font-medium text-rose-600">{errors['activities']}</p>
             ) : null}
-            <div className="space-y-3">
+            <div className="space-y-4">
               {state.activities.map((a, i) => (
-                <div key={i} className="flex items-end gap-3">
-                  <Field label={`Activity ${i + 1}`} className="flex-1">
-                    <TextInput
-                      value={a.name_external}
-                      placeholder="e.g. 24' Pontoon Rental"
-                      onChange={(e) => setActivity(i, { name_external: e.target.value })}
-                    />
-                  </Field>
-                  <Field label="Type" className="w-40">
-                    <Select
-                      value={a.category}
-                      onChange={(e) => setActivity(i, { category: e.target.value as Category })}
+                <div key={i} className="rounded-lg border border-slate-200 p-4">
+                  <div className="flex items-start gap-3">
+                    <div className="flex-1 space-y-3">
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <Field label={`Activity ${i + 1}`} className="sm:col-span-2">
+                          <TextInput
+                            value={a.name_external}
+                            placeholder="e.g. 24' Pontoon Rental"
+                            onChange={(e) => setActivity(i, { name_external: e.target.value })}
+                          />
+                        </Field>
+                        <Field label="Type">
+                          <Select
+                            value={a.category}
+                            onChange={(e) => setActivity(i, { category: e.target.value as Category })}
+                          >
+                            {CATEGORY_OPTIONS.map((c) => (
+                              <option key={c.value} value={c.value}>
+                                {c.label}
+                              </option>
+                            ))}
+                          </Select>
+                        </Field>
+                        <div className="grid grid-cols-2 gap-3">
+                          <Field
+                            label="Price ($)"
+                            error={errors[`activities.${i}.price_dollars`]}
+                          >
+                            <TextInput
+                              type="number"
+                              min="1"
+                              step="1"
+                              placeholder="e.g. 75"
+                              value={a.price_dollars}
+                              invalid={Boolean(errors[`activities.${i}.price_dollars`])}
+                              onChange={(e) => setActivity(i, { price_dollars: e.target.value })}
+                            />
+                          </Field>
+                          <Field
+                            label="Duration (min)"
+                            error={errors[`activities.${i}.duration_minutes`]}
+                          >
+                            <TextInput
+                              type="number"
+                              min="15"
+                              step="15"
+                              placeholder="60"
+                              value={a.duration_minutes}
+                              invalid={Boolean(errors[`activities.${i}.duration_minutes`])}
+                              onChange={(e) => setActivity(i, { duration_minutes: e.target.value })}
+                            />
+                          </Field>
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => removeActivity(i)}
+                      disabled={state.activities.length === 1}
+                      aria-label={`Remove activity ${i + 1}`}
+                      className="mt-6 shrink-0 rounded-md p-2 text-rose-500 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40"
                     >
-                      {CATEGORY_OPTIONS.map((c) => (
-                        <option key={c.value} value={c.value}>
-                          {c.label}
-                        </option>
-                      ))}
-                    </Select>
-                  </Field>
-                  <button
-                    type="button"
-                    onClick={() => removeActivity(i)}
-                    disabled={state.activities.length === 1}
-                    aria-label={`Remove activity ${i + 1}`}
-                    className="mb-2 rounded-md p-2 text-rose-500 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    <Trash2 className="h-4 w-4" aria-hidden />
-                  </button>
+                      <Trash2 className="h-4 w-4" aria-hidden />
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -340,6 +401,11 @@ export function OnboardingWizard({ defaults }: { defaults: OnboardingDefaults })
                         <span className="text-xs text-slate-400">
                           ({CATEGORY_OPTIONS.find((c) => c.value === a.category)?.label})
                         </span>
+                        {a.price_dollars ? (
+                          <span className="text-xs text-slate-500">
+                            {' '}· ${a.price_dollars} / {a.duration_minutes || 60} min
+                          </span>
+                        ) : null}
                       </li>
                     ))}
                 </ul>

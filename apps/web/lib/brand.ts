@@ -2,18 +2,21 @@
  * White-label brand resolution for the customer portal.
  *
  * The portal must render as the OPERATOR's brand, never the platform's. Brand
- * data ultimately comes from the resolved tenant (Operator: name_external,
- * brand_color, logos). Until a public operator endpoint is wired, this reads
- * from environment so the value is still tenant-configurable per deployment and
- * never hardcodes a specific marina's branding.
+ * data comes from the resolved tenant via GET /api/operator/public (operator:
+ * name, brand_color, logos). Environment variables + neutral defaults serve as
+ * a graceful fallback when the API is unreachable so the storefront always
+ * renders — never 500s on a brand-fetch failure.
  *
  * The resolved brand color is applied to the `--brand-color` CSS variable (see
  * globals.css and tailwind.config.ts `brand`), so all brand-colored UI follows
  * the tenant automatically.
  */
 
+import { cache } from 'react';
+import { getOperatorPublic } from './api';
+
 export interface Brand {
-  /** Customer-facing operator name (Operator.name_external). */
+  /** Customer-facing operator name (Operator.name). */
   name: string;
   /** Hex brand color, e.g. "#0ea5e9" (Operator.brand_color). */
   color: string;
@@ -46,11 +49,8 @@ function safeColor(value: string | undefined | null): string {
   return DEFAULT_BRAND.color;
 }
 
-/**
- * Resolve the active tenant's brand. Currently env-backed (stubbed) but shaped
- * so it can be swapped for a fetched operator endpoint without touching callers.
- */
-export function getBrand(): Brand {
+/** Env-backed fallback brand — used when the API is unreachable or returns nothing. */
+function envBrand(): Brand {
   return {
     name: clean(process.env.BRAND_NAME) ?? DEFAULT_BRAND.name,
     color: safeColor(process.env.BRAND_COLOR),
@@ -61,10 +61,41 @@ export function getBrand(): Brand {
 }
 
 /**
+ * Resolve the active tenant's brand from the operator public API.
+ *
+ * Wrapped with React `cache()` so multiple server components awaiting this
+ * within the same render tree share a single fetch (deduplicated per request).
+ *
+ * Graceful degradation: if the API is unreachable or returns nothing, the
+ * function returns the env-backed / neutral default brand — it never throws,
+ * so a brand-fetch failure cannot cause a 500.
+ */
+export const getBrand: () => Promise<Brand> = cache(async (): Promise<Brand> => {
+  const fallback = envBrand();
+  try {
+    const op = await getOperatorPublic();
+    if (!op) return fallback;
+    return {
+      name: clean(op.name) ?? fallback.name,
+      color: safeColor(op.brand_color) ?? fallback.color,
+      logoLightUrl: clean(op.logo_light_url),
+      logoDarkUrl: clean(op.logo_dark_url),
+      // Tagline is not part of the public operator contract; keep env value.
+      tagline: fallback.tagline,
+    };
+  } catch {
+    // Defensive catch — getOperatorPublic itself never throws, but guard anyway.
+    return fallback;
+  }
+});
+
+/**
  * Inline style object that sets the `--brand-color` CSS variable. Spread onto a
  * top-level element (e.g. <body> wrapper or <header>) so Tailwind's `brand`
  * color and any `var(--brand-color)` usage reflect the tenant.
+ *
+ * Takes an already-resolved Brand so it stays synchronous at the render site.
  */
-export function brandStyle(brand: Brand = getBrand()): React.CSSProperties {
+export function brandStyle(brand: Brand): React.CSSProperties {
   return { ['--brand-color' as string]: brand.color };
 }

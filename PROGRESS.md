@@ -4,6 +4,28 @@
 > [`ROADMAP.md`](ROADMAP.md); board in [`TASKS.md`](TASKS.md); decisions in
 > [`docs/DECISIONS.md`](docs/DECISIONS.md).
 
+## 2026-06-06 — Phase 2: the self-serve front door (COMPLETE)
+
+- **A stranger can now create a tenant with zero manual DB work**, on branch
+  `phase-2-frontdoor` (staged locally, not pushed — Vercel quota).
+- **Foundation (me):** `provisionOperator` + `POST /signup` + `/signup/slug-available`
+  (pre-tenant, adminPrisma, outside tenant mw). Live-verified: slug free/taken/reserved,
+  201 provision, new tenant resolves by its slug, **isolation holds (fresh owner → 403 on
+  seed; suite 8/8)**. Dev-context cookie (`mb_dev_operator`) wired into `getOperatorContext`
+  so a dev signup actually becomes the active tenant. D-032.
+- **Team of 3 Sonnet agents (parallel):** (A) public admin `/signup` UI with live slug
+  check → provision → cookie → onboarding; (B) onboarding now creates rate + 21d of
+  timeslots + visible_online → a genuinely bookable storefront; (C) web `getBrand()` async,
+  resolves from `/api/operator/public` not env. I integrated + fixed a white-label leak (the
+  layout's static title → async `generateMetadata` off the operator brand). D-033.
+- **Live-verified:** admin renders ALL routes 200 as a brand-new EMPTY tenant (graceful empty
+  states, "Tomales Bay Kayaks" + "No activities yet"); storefront title/header = "Lake Sonoma
+  Marina" (from operator), zero env leak. typecheck 9/9; admin build green (27 routes incl.
+  `/signup`); web build green. Test operators cleaned up.
+- **Remaining (noted):** wizard→storefront click-through is a browser pass; Clerk-on signup +
+  public-prod abuse protection (rate limit/captcha) + per-tenant billing are follow-ups.
+- **Next:** Phase 3 (money & go-live) or deepen Phase 2.
+
 ## 2026-06-06 — Founder takeover: oriented, planned, building
 
 - **Read the whole project** (shared-brain docs + 26 decisions + the actual

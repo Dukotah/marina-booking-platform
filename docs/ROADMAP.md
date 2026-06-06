@@ -84,7 +84,9 @@ channel/OTA + affiliate management · accounting exports (QuickBooks/Xero).
 - [x] Zero broken routes (route test sweep) — admin 21/21 + web all routes render 200 live
   (2026-06-06 server-render smoke); two pre-existing 500s fixed (D-031). Re-run after new pages.
 - [ ] Backups + error monitoring configured
-- [ ] Custom domain / subdomain white-label verified for a test tenant
+- [~] Custom domain / subdomain white-label verified for a test tenant — per-tenant brand now
+  resolves from the operator (storefront name/title/header, no env leak; D-033). Custom-domain
+  mapping + a live subdomain deploy still pending.
 
 ## Blocked-on-owner (deferred external accounts)
 
@@ -94,6 +96,30 @@ I will build against sandboxes/free tiers and flag exactly when each is needed.
 
 ## Changelog
 
+- **2026-06-06** — **Phase 2: the self-serve front door — provisioning + signup + per-tenant
+  white-label (tasks 2.0–2.5).** A stranger can now create a tenant with zero manual DB work.
+  - **Provisioning foundation (me, D-032):** `provisionOperator` service + `POST /signup` +
+    `GET /signup/slug-available`, mounted OUTSIDE the tenant middleware (pre-tenant, adminPrisma).
+    Creates Operator (unique slug + location_code) + default Location + starter Waiver + checkout
+    config + OWNER staff. Dev-open / Clerk-bearer-gated in prod. Live-verified: slug
+    free/taken/reserved, 201 provision, new tenant resolves by its own slug, **isolation holds
+    (fresh owner → 403 on the seed tenant; suite 8/8)**.
+  - **Signup UI (agent):** public admin `/signup` — business name → live slug availability →
+    owner details → provision → sets the `mb_dev_operator` dev-context cookie → `/onboarding`.
+  - **Onboarding → bookable (agent):** the wizard now collects a price + duration per starter
+    activity and, in the same tenant tx, sets `visible_online`, creates a "Standard" Rate, and
+    generates 21 days of timeslots (reusing core `generateTimeslots`) — so a fresh tenant has a
+    genuinely bookable storefront. (Wizard→storefront click-through = remaining browser pass.)
+  - **Per-tenant white-label (agent + me, D-033):** the web `getBrand()` is now async and
+    resolves from `GET /api/operator/public` (not env), with a safe fallback; the root layout
+    title became an async `generateMetadata()` off the operator brand. Live: storefront title +
+    header render "Lake Sonoma Marina", and the old env default appears nowhere.
+  - **Fresh-tenant sweep (me):** provisioned an empty operator and smoked it — **all admin routes
+    render 200 with graceful empty states** (dev-context cookie genuinely switches tenant). Test
+    operators cleaned up (cascade delete confirmed).
+  - Built by 3 lean parallel Sonnet agents + my foundation + integration. typecheck 9/9; admin
+    build green (27 routes incl. `/signup`); web build green. **Phase 2 complete.** Held locally,
+    not pushed (Vercel quota).
 - **2026-06-06** — **Phase 1 live verification + zero-broken-routes (task 1.8).** Stood the
   full stack up against Neon and verified the cockpit end-to-end — the first time the frontend
   has actually been *run*, not just compiled.

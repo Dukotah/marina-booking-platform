@@ -1,3 +1,4 @@
+import { cookies } from 'next/headers';
 import { auth } from '@clerk/nextjs/server';
 import { forOperator } from '@marina/database';
 import {
@@ -62,9 +63,44 @@ function devFallbackContext(): OperatorContext {
  * component or server action. Falls back to a dev OWNER context when Clerk is
  * not configured or no session is present — never throws in that path.
  */
+/**
+ * Cookie set by the dev self-serve signup flow (Phase 2) so a freshly-provisioned
+ * operator becomes the active context in dev — otherwise the dev fallback is pinned
+ * to the seed operator and onboarding would configure the wrong tenant. DEV ONLY:
+ * never consulted when Clerk is enforced. Value: JSON `{ operatorId, authUserId }`.
+ */
+const DEV_OPERATOR_COOKIE = 'mb_dev_operator';
+
+async function devContextFromCookie(): Promise<OperatorContext | null> {
+  try {
+    const raw = cookies().get(DEV_OPERATOR_COOKIE)?.value;
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { operatorId?: string; authUserId?: string };
+    if (!parsed.operatorId || !parsed.authUserId) return null;
+    // Validate the staff actually exists for that operator before trusting the cookie.
+    const member = await forOperator(parsed.operatorId).staffMember.findFirst({
+      where: { auth_user_id: parsed.authUserId, is_active: true },
+      select: { role: true, extra_permissions: true, locations: { select: { location_id: true } } },
+    });
+    if (!member) return null;
+    return {
+      operatorId: parsed.operatorId,
+      auth: {
+        operatorId: parsed.operatorId,
+        userId: parsed.authUserId,
+        role: member.role as BuiltinRole,
+        extraPermissions: member.extra_permissions as Permission[],
+        locationIds: member.locations.map((l) => l.location_id),
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function getOperatorContext(): Promise<OperatorContext> {
   if (!clerkConfigured()) {
-    return devFallbackContext();
+    return (await devContextFromCookie()) ?? devFallbackContext();
   }
 
   let userId: string | null = null;

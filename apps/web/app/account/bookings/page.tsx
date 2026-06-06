@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { getBrand, brandStyle } from '@/lib/brand';
+import { getBrand, brandStyle, type Brand } from '@/lib/brand';
 import { formatUSD, formatLongDate, formatTime, formatDateTime } from '@/lib/format';
 import { getOrder, isApiError, type OrderSummary, type OrderLineItem } from '@/lib/api';
 import SiteHeader from '@/components/layout/SiteHeader';
@@ -14,8 +14,7 @@ export const metadata: Metadata = {
 // Orders are never cached — always reflect the latest payment/status.
 export const dynamic = 'force-dynamic';
 
-function Shell({ children }: { children: React.ReactNode }) {
-  const brand = getBrand();
+function Shell({ brand, children }: { brand: Brand; children: React.ReactNode }) {
   return (
     <div style={brandStyle(brand)} className="flex min-h-screen flex-col">
       <SiteHeader />
@@ -67,12 +66,12 @@ export default async function BookingsPage({
 }: {
   searchParams: SearchParams;
 }) {
-  const brand = getBrand();
+  const brand = await getBrand();
   const orderNumber = searchParams.order?.trim().toUpperCase() ?? '';
   const email = searchParams.email ? normalizeEmail(searchParams.email) : '';
 
   if (!orderNumber || !email) {
-    return <NotAuthorized reason="missing" />;
+    return <NotAuthorized reason="missing" brand={brand} />;
   }
 
   let order: OrderSummary | null = null;
@@ -85,12 +84,12 @@ export default async function BookingsPage({
   }
 
   if (networkError) {
-    return <NotAuthorized reason="network" />;
+    return <NotAuthorized reason="network" brand={brand} />;
   }
 
   // Re-verify email server-side; never reveal whether the order exists otherwise.
   if (!order || normalizeEmail(order.customerEmail) !== email) {
-    return <NotAuthorized reason="mismatch" />;
+    return <NotAuthorized reason="mismatch" brand={brand} />;
   }
 
   const now = Date.now();
@@ -111,7 +110,7 @@ export default async function BookingsPage({
   const rebookActivityId = order.items[0]?.activityId ?? null;
 
   return (
-    <Shell>
+    <Shell brand={brand}>
       <div className="mx-auto flex w-full max-w-2xl flex-col px-4 py-8">
       <div className="mb-6">
         <Link href="/account" className="text-sm font-medium text-brand hover:underline">
@@ -304,13 +303,19 @@ function Row({
   );
 }
 
-function NotAuthorized({ reason }: { reason: 'missing' | 'mismatch' | 'network' }) {
+function NotAuthorized({
+  reason,
+  brand,
+}: {
+  reason: 'missing' | 'mismatch' | 'network';
+  brand: Brand;
+}) {
   const message =
     reason === 'network'
       ? 'We could not reach the booking system. Please try again in a moment.'
       : 'We could not find a booking matching that link. Please look it up again.';
   return (
-    <Shell>
+    <Shell brand={brand}>
       <div className="mx-auto flex w-full max-w-md flex-col items-center px-4 py-16 text-center">
         <h1 className="text-xl font-bold text-slate-900">Booking unavailable</h1>
         <p className="mt-2 text-sm text-slate-600">{message}</p>
