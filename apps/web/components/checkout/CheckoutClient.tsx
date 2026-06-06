@@ -16,14 +16,14 @@
  * order summary / price / payment become a sticky right rail. All money is
  * integer cents and the displayed pricing uses @marina/core.
  */
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { FormProvider, useForm } from 'react-hook-form';
 import { AlertTriangle } from 'lucide-react';
 import { calculatePricing } from '@marina/core';
 import { Button, Card, CardContent, CardHeader, CardTitle } from '@marina/ui';
 import type { StripeConfig } from '@/app/checkout/stripe-config';
-import { placeOrder } from '@/app/checkout/actions';
+import { placeOrder, confirmOrder } from '@/app/checkout/actions';
 import { OrderSummary } from './OrderSummary';
 import { CustomerFields } from './CustomerFields';
 import { ParticipantFields } from './ParticipantFields';
@@ -89,6 +89,15 @@ export function CheckoutClient({
   const [submitting, setSubmitting] = useState(false);
 
   const paymentRef = useRef<PaymentSectionHandle>(null);
+
+  // Generate a stable idempotency key for this checkout session. A new key is
+  // produced once per mount; retries within the same session reuse the same key
+  // so Stripe deduplicates any double-submits. A fresh mount (page reload, new
+  // checkout) gets a new key.
+  const idempotencyKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    idempotencyKeyRef.current = crypto.randomUUID();
+  }, []);
 
   const methods = useForm<CheckoutFormValues>({
     mode: 'onTouched',
@@ -170,8 +179,37 @@ export function CheckoutClient({
         promoCode: promo?.code,
         tipCents: tipCents > 0 ? tipCents : undefined,
         paymentSourceId: tokenResult.sourceId,
+        idempotencyKey: idempotencyKeyRef.current ?? undefined,
         isReturningGuest: false,
       });
+
+      if (result.ok === 'requires_action') {
+        // 3-D Secure challenge: let Stripe.js drive the bank modal/redirect.
+        const actionResult = await paymentRef.current?.handleNextAction(result.clientSecret);
+        if (!actionResult || !actionResult.ok) {
+          setSubmitError(
+            actionResult?.error ??
+              'Authentication was not completed. Please try again or use a different card.',
+          );
+          return;
+        }
+        // Challenge succeeded — tell the server to settle and record the charge.
+        const confirmResult = await confirmOrder(
+          result.paymentIntentId,
+          result.order.id,
+          result.order,
+        );
+        if (confirmResult.ok !== true) {
+          setSubmitError(
+            confirmResult.ok === false
+              ? confirmResult.error
+              : 'Payment confirmation failed. Please contact us.',
+          );
+          return;
+        }
+        router.push(`/confirmation/${encodeURIComponent(confirmResult.order.orderNumber)}`);
+        return;
+      }
 
       if (!result.ok) {
         setSubmitError(result.error);

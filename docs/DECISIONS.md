@@ -925,3 +925,59 @@ sync), making it single-brand per deployment — incompatible with multi-tenant 
 **Why:** white-label is the product's core promise (CONTEXT) — the storefront must render as
 the operator's brand everywhere, including metadata, resolved per request from the operator the
 host maps to, with a safe fallback so a brand-fetch failure never 500s the storefront.
+
+## D-034 — Go-live ops: structured observability, readiness, dependency-free rate limiting (2026-06-06) — Accepted
+
+Phase 3 hardened the API for production without adding heavy dependencies or owner accounts.
+
+- **Observability** (`middleware/observability.ts`): `requestLogger` emits one structured JSON
+  line per request (requestId, method, path, status, durationMs, operatorId) + an `x-request-id`
+  response header for correlation. `app.onError` now uses `errorHandler`, which maps known error
+  classes (AuthorizationError → 403; typed service errors with a numeric `.status`/`.code` →
+  that status) and returns a **safe** `500 {error, requestId}` for everything else — no stack or
+  message leak. `captureError` is a dependency-free **seam**: when `ERROR_DSN`/`SENTRY_DSN` is set
+  it emits a tagged structured error; an APM SDK call drops in there (no SDK added now to keep the
+  dep surface clean). `/ready` (DB ping) joins `/health` for deploy health gates.
+- **Rate limiting / security** (`middleware/rateLimit.ts`): an in-memory fixed-window limiter
+  (keyed by client IP + route name) on the abuse-prone public endpoints — signup 5/min,
+  slug-check 30/min, customer-OTP 5/min, booking 20/min — returning `429 + Retry-After` +
+  `X-RateLimit-*`. Plus `securityHeaders` (nosniff / frame-deny / referrer / cross-domain).
+  **Caveat (documented):** the store is per-instance; swap for Redis/Upstash when running >1
+  instance. Limiters mount *before* the tenant lookup so abuse is rejected cheaply.
+- **Wiring:** the orchestrator (not the agents) wired these into `app.ts` + `signup.ts`, keeping
+  the middleware modules standalone. Added a typed `requestId?` to the `Env` Variables.
+
+Verified live: `/ready` → `{ok,db:up}`; 401/404 return safe envelopes with `x-request-id` +
+security headers; 5×201 then `429 (Retry-After: 53)` on signup; **isolation suite still 8/8**.
+
+**Why:** you can't run a money product in production blind or unprotected. Structured logs +
+request ids make incidents debuggable, a safe error envelope stops info leaks, readiness enables
+zero-downtime deploys, and rate limits stop the public front door (signup/OTP/booking) from being
+hammered — all built dependency-free so it ships today and an APM/Redis plugs into the seams later.
+
+## D-035 — 3-D Secure / SCA done right + payment idempotency (closes D-013 gap) (2026-06-06) — Accepted
+
+D-013 deferred SCA: a PaymentIntent that came back `requires_action` was treated as a decline,
+so real 3DS cards failed. Phase 3 closes it (code-complete; live verification needs Stripe keys,
+which are owner-blocked).
+
+- **Service** (`stripe.ts`): `createPayment` now returns a discriminated union — `{status:'succeeded', …}`
+  (persist immediately) or `{status:'requires_action', clientSecret, paymentIntentId}` (don't
+  charge yet). Genuine declines still throw `402`. A new `finalizePayment(paymentIntentId)`
+  retrieves the intent and, if `succeeded`, returns the same normalized shape so the confirm path
+  persists identically (shared `persistSettledCharge` helper — byte-for-byte identical to the sync
+  success path).
+- **Route** (`payments.ts`): `POST /payments/charge` returns `200 {requiresAction, clientSecret,
+  paymentIntentId}` on SCA without recording a paid Payment; `POST /payments/confirm
+  {paymentIntentId, orderId}` finalizes after the browser completes the challenge.
+- **Web** (`PaymentSection`/`CheckoutClient`): on `requiresAction`, runs `stripe.handleNextAction`
+  then calls confirm; the no-3DS happy path is unchanged.
+- **Idempotency:** the charge route honors a client `Idempotency-Key` header → passed to Stripe,
+  so a double-submit returns the same charge instead of double-charging.
+- **Bug fixed in passing:** `apps/web/lib/api.ts` `submitPayment` pointed at a non-existent
+  `/api/orders/:id/payments`; corrected to `POST /api/payments/charge` (the real endpoint).
+
+**Why:** SCA is mandatory in many markets and a silent decline of 3DS cards is lost revenue +
+a broken checkout. Returning an actionable `client_secret` and finalizing through one shared
+persistence path makes the two flows consistent, while the idempotency key removes the
+double-charge risk that's unacceptable on a money path.

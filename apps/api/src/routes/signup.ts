@@ -24,13 +24,14 @@ import {
   checkSlugAvailability,
   ProvisioningError,
 } from '../services/provisioning.js';
+import { signupLimiter, slugCheckLimiter } from '../middleware/rateLimit.js';
 
 const CLERK_SECRET = process.env.CLERK_SECRET_KEY;
 const ENFORCE_CLERK = process.env.REQUIRE_CLERK_AUTH === 'true' && Boolean(CLERK_SECRET);
 
 export const signup = new Hono<Env>();
 
-signup.get('/slug-available', async (c) => {
+signup.get('/slug-available', slugCheckLimiter, async (c) => {
   const raw = c.req.query('slug') ?? '';
   if (!raw.trim()) return c.json({ error: 'A slug is required' }, 400);
   const result = await checkSlugAvailability(raw);
@@ -46,7 +47,7 @@ const signupSchema = z.object({
   authUserId: z.string().trim().max(200).optional(),
 });
 
-signup.post('/', async (c) => {
+signup.post('/', signupLimiter, async (c) => {
   const parsed = signupSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) {
     return c.json({ error: 'Invalid request', issues: parsed.error.flatten() }, 400);

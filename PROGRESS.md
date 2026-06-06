@@ -4,6 +4,27 @@
 > [`ROADMAP.md`](ROADMAP.md); board in [`TASKS.md`](TASKS.md); decisions in
 > [`docs/DECISIONS.md`](docs/DECISIONS.md).
 
+## 2026-06-06 — Phase 3: money robustness + go-live hardening (COMPLETE)
+
+- Made the API **production-safe**, on branch `phase-3-golive` (stacks on phase-2; staged
+  locally, not pushed). Owner-blocked bits (live Stripe, billing charging, Vercel, legal)
+  built dark-and-ready.
+- **Team of 3 Sonnet agents + my wiring/integration:** (A) observability — structured JSON
+  logs + `x-request-id`, safe error envelopes via `app.onError`, `captureError` APM seam,
+  `/ready` DB ping; (B) payments — 3DS/SCA done right (`requires_action + clientSecret` +
+  `/payments/confirm`, closing D-013) + `Idempotency-Key` passthrough (B also fixed a latent
+  bug: web `submitPayment` hit a non-existent endpoint); (C) security — in-memory rate limiter
+  (signup/slug/OTP/booking) + security headers.
+- **I wired** the middleware into app.ts/signup.ts (reserved shared files), fixed 2 type
+  errors from the agents (a context-var cast → typed `Env.requestId`; a Stripe success literal),
+  and wrote `PRODUCTION_READINESS.md` (the go-live runbook + pre-launch gate).
+- **Live-verified vs Neon:** `/ready`→`{ok,db:up}`; 401/404 safe envelopes + `x-request-id` +
+  security headers; signup `5×201 → 429 (Retry-After 53)`; **isolation 8/8**. typecheck 9/9;
+  api + web build green. Test operators cleaned up. Decisions D-034, D-035.
+- **Remaining (owner):** live Stripe 3DS/charge verify, per-tenant billing charging, Vercel
+  deploy, Neon restore drill, legal/ToS. **Next: whatever the owner prioritizes** — deepen
+  Phase 2 (Clerk-on signup/billing) or Phase 4 polish.
+
 ## 2026-06-06 — Phase 2: the self-serve front door (COMPLETE)
 
 - **A stranger can now create a tenant with zero manual DB work**, on branch

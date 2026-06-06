@@ -35,6 +35,15 @@ export interface PaymentSectionHandle {
   >;
   /** True when a live, ready-to-tokenize card field is mounted. */
   isReady: () => boolean;
+  /**
+   * Complete a 3-D Secure / SCA challenge for the given clientSecret.
+   * Delegates to stripe.handleNextAction({ clientSecret }).
+   * Returns { ok: true } when the challenge succeeded, or { ok: false, error }
+   * when it was cancelled or the card was rejected by the issuer.
+   */
+  handleNextAction: (clientSecret: string) => Promise<
+    { ok: true } | { ok: false; error: string }
+  >;
 }
 
 interface PaymentSectionProps {
@@ -86,6 +95,19 @@ const CardForm = forwardRef<PaymentSectionHandle, { testMode: boolean }>(
             };
           }
           return { ok: true, sourceId: paymentMethod.id };
+        },
+        handleNextAction: async (clientSecret: string) => {
+          if (!stripe) {
+            return { ok: false, error: 'The payment form is not ready yet. Please wait a moment.' };
+          }
+          const { error } = await stripe.handleNextAction({ clientSecret });
+          if (error) {
+            return {
+              ok: false,
+              error: error.message ?? 'Authentication was not completed. Please try again.',
+            };
+          }
+          return { ok: true };
         },
       }),
       [stripe, elements, ready],

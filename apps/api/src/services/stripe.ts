@@ -13,9 +13,11 @@
  *
  * Charge model: the browser collects a card with Stripe.js / Elements and creates
  * a PaymentMethod, whose id is sent to us as `sourceId`. We create + confirm a
- * PaymentIntent with that payment method in one synchronous call. Cards that
- * require 3-D Secure / SCA would come back `requires_action`; we treat anything
- * other than `succeeded` as a decline for now (full SCA handling is a follow-up).
+ * PaymentIntent with that payment method in one synchronous call. When a card
+ * requires 3-D Secure / SCA, Stripe returns `requires_action`; createPayment
+ * returns a `{ status: 'requires_action', clientSecret, paymentIntentId }` variant
+ * so the browser can complete the challenge, then call finalizePayment() to settle.
+ * Genuine declines (`requires_payment_method` etc.) still throw StripePaymentError.
  *
  * All amounts crossing this boundary are integer USD cents (the platform-wide
  * money convention) — which is exactly Stripe's unit, so no conversion is needed.
@@ -76,7 +78,7 @@ export function getStripeClient(): Stripe {
   return cachedClient;
 }
 
-/** Normalized payment result the routes persist. */
+/** Normalized payment result the routes persist (synchronous success OR post-3DS confirm). */
 export interface StripePaymentResult {
   paymentId: string;
   status: string;
@@ -86,6 +88,26 @@ export interface StripePaymentResult {
   cardholderName: string | null;
   receiptUrl: string | null;
 }
+
+/**
+ * Returned (not thrown) when a PaymentIntent needs a 3-D Secure / SCA challenge.
+ * The browser must call stripe.handleNextAction({ clientSecret }) to complete it,
+ * then POST to /payments/confirm so we can record the settled charge.
+ */
+export interface StripeActionRequired {
+  status: 'requires_action';
+  clientSecret: string;
+  paymentIntentId: string;
+}
+
+/**
+ * Discriminated result of createPayment:
+ *   - `succeeded`       → normal success; persist immediately.
+ *   - `requires_action` → 3DS challenge needed; don't persist yet; return to browser.
+ */
+export type CreatePaymentOutcome =
+  | ({ status: 'succeeded' } & StripePaymentResult)
+  | StripeActionRequired;
 
 /** Normalized refund result the routes persist. */
 export interface StripeRefundResult {
@@ -115,13 +137,20 @@ function toPaymentError(err: unknown): StripePaymentError {
 /**
  * Charge a card. `sourceId` is the PaymentMethod id produced client-side by
  * Stripe.js / Elements. `idempotencyKey` makes retries safe.
+ *
+ * Returns a discriminated union:
+ *   - `{ status: 'succeeded', ...StripePaymentResult }` — settled; persist now.
+ *   - `{ status: 'requires_action', clientSecret, paymentIntentId }` — 3DS
+ *     challenge needed; the browser must complete it before we persist.
+ *
+ * Genuine declines (requires_payment_method, etc.) still throw StripePaymentError.
  */
 export async function createPayment(input: {
   orderId: string;
   sourceId: string;
   amountCents: number;
   idempotencyKey: string;
-}): Promise<StripePaymentResult> {
+}): Promise<CreatePaymentOutcome> {
   if (!Number.isInteger(input.amountCents) || input.amountCents <= 0) {
     throw new StripePaymentError('Charge amount must be a positive integer (cents)', 400);
   }
@@ -143,35 +172,85 @@ export async function createPayment(input: {
       { idempotencyKey: input.idempotencyKey },
     );
 
+    // 3-D Secure / SCA: the card is valid but the bank needs the customer to
+    // complete an authentication challenge in the browser. Return the client
+    // secret so the caller can hand it to Stripe.js; do NOT record a charge yet.
+    if (intent.status === 'requires_action') {
+      if (!intent.client_secret) {
+        throw new StripePaymentError('Stripe returned requires_action without a client_secret', 502);
+      }
+      return {
+        status: 'requires_action',
+        clientSecret: intent.client_secret,
+        paymentIntentId: intent.id,
+      };
+    }
+
     if (intent.status !== 'succeeded') {
-      // requires_action (3DS), requires_payment_method (declined), etc.
+      // requires_payment_method (declined), requires_capture, processing, etc.
       throw new StripePaymentError(
-        intent.status === 'requires_action'
-          ? 'This card needs additional authentication. Please try another card.'
-          : 'The card was declined. Please try a different card.',
+        'The card was declined. Please try a different card.',
         402,
         intent.status,
       );
     }
 
-    const charge =
-      intent.latest_charge && typeof intent.latest_charge !== 'string'
-        ? intent.latest_charge
-        : null;
-    const card = charge?.payment_method_details?.card ?? null;
-
-    return {
-      paymentId: intent.id,
-      status: intent.status,
-      amountCents: typeof intent.amount_received === 'number' ? intent.amount_received : input.amountCents,
-      cardBrand: card?.brand ?? null,
-      cardLastFour: card?.last4 ?? null,
-      cardholderName: charge?.billing_details?.name ?? null,
-      receiptUrl: charge?.receipt_url ?? null,
-    };
+    return { ...normalizeSucceededIntent(intent, input.amountCents), status: 'succeeded' as const };
   } catch (err) {
     throw toPaymentError(err);
   }
+}
+
+/**
+ * Retrieve a PaymentIntent and, if it has reached `succeeded` (meaning the
+ * 3DS challenge completed successfully in the browser), return the same
+ * normalized StripePaymentResult shape the synchronous success path returns.
+ *
+ * Throws StripePaymentError if the intent is not yet succeeded (caller should
+ * refuse to persist and return an appropriate error to the client).
+ */
+export async function finalizePayment(paymentIntentId: string): Promise<StripePaymentResult> {
+  const stripe = getStripeClient();
+  try {
+    const intent = await stripe.paymentIntents.retrieve(paymentIntentId, {
+      expand: ['latest_charge'],
+    });
+
+    if (intent.status !== 'succeeded') {
+      throw new StripePaymentError(
+        `Payment has not been completed (status: ${intent.status}). Please retry or use a different card.`,
+        402,
+        intent.status,
+      );
+    }
+
+    return normalizeSucceededIntent(intent, intent.amount_received ?? intent.amount);
+  } catch (err) {
+    throw toPaymentError(err);
+  }
+}
+
+/** Extract the normalized result from a succeeded PaymentIntent (shared between sync + 3DS paths). */
+function normalizeSucceededIntent(
+  intent: Stripe.PaymentIntent,
+  fallbackAmountCents: number,
+): StripePaymentResult {
+  const latestCharge = intent.latest_charge;
+  const charge =
+    latestCharge && typeof latestCharge !== 'string'
+      ? (latestCharge as Stripe.Charge)
+      : null;
+  const card = charge?.payment_method_details?.card ?? null;
+
+  return {
+    paymentId: intent.id,
+    status: intent.status,
+    amountCents: typeof intent.amount_received === 'number' ? intent.amount_received : fallbackAmountCents,
+    cardBrand: card?.brand ?? null,
+    cardLastFour: card?.last4 ?? null,
+    cardholderName: charge?.billing_details?.name ?? null,
+    receiptUrl: charge?.receipt_url ?? null,
+  };
 }
 
 /**

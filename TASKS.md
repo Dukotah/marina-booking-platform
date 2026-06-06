@@ -1,3 +1,28 @@
+# Tasks — Phase 3: Money & Go-Live Readiness
+
+Branch: `phase-3-golive` (stacks on phase-2; staged locally, not pushed — Vercel quota).
+Owner-blocked (built dark-and-ready): live Stripe keys, Vercel deploy, legal review,
+per-tenant billing charging.
+
+| # | Task | Owner | Status |
+|---|------|-------|--------|
+| 3.0 | **Wire + go-live docs** (me): mount the agents' middleware/handlers in app.ts; write `PRODUCTION_READINESS.md` (checklist) + backups/DR + deploy runbook notes. | me | done |
+| 3.1 | **Observability & readiness** (API): structured request logging (request-id + operator + latency), error-monitoring hook behind a DSN env (no-op without it), `/ready` (DB ping) beside `/health`, hardened safe error envelope (map known errors, never leak stacks). | agent | done |
+| 3.2 | **Payment robustness** — 3DS/SCA: service returns `requires_action` + client_secret instead of declining (closes the D-013 gap); route returns an actionable response; web `PaymentSection` handles the next-action/confirm step; **idempotency keys** on booking + payment create (double-submit safety). Code-complete; live verify needs Stripe keys (owner). | agent | done |
+| 3.3 | **Security & abuse protection** (API): in-memory rate-limit middleware (token bucket keyed by IP+route) on public/abuse-prone endpoints (POST /signup, /signup/slug-available, POST /api/auth/customer/request, POST /api/bookings); 429 + Retry-After; standard security headers. | agent | done |
+| 3.4 | **Verify + stage PR** (me): boot API → /ready ok, error envelope safe, rate-limit 429; isolation 8/8; typecheck 9/9; builds green. | me | done |
+
+**Deferred (owner-blocked):** per-tenant billing *charging* (Stripe Billing/Connect), live
+Stripe 3DS verification, Vercel deploy, legal/ToS review. A dark billing-plan framework is a
+candidate follow-up once charging is unblocked.
+
+**Phase 3 (Money & Go-Live) — COMPLETE** (owner-blocked bits dark-and-ready). Live-verified:
+`/ready` DB ping, safe error envelopes + `x-request-id` + security headers, rate-limit `429`
+(5×201→429 on signup), isolation 8/8. 3DS + payment idempotency code-complete (live charge needs
+Stripe keys). `PRODUCTION_READINESS.md` runbook added. typecheck 9/9; api + web build green.
+
+---
+
 # Tasks — Phase 2: The Front Door (self-serve tenancy)
 
 Branch: `phase-2-frontdoor` (committed locally; not pushed — Vercel quota, D-027).

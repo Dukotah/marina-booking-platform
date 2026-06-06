@@ -1,9 +1,15 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { logger } from 'hono/logger';
-import { AuthorizationError } from '@marina/auth';
 import type { Env } from './context.js';
 import { tenantMiddleware } from './middleware/tenant.js';
+import { requestLogger, errorHandler, readyHandler } from './middleware/observability.js';
+import {
+  securityHeaders,
+  signupLimiter,
+  slugCheckLimiter,
+  otpRequestLimiter,
+  bookingLimiter,
+} from './middleware/rateLimit.js';
 import { activities } from './routes/activities.js';
 import { availability } from './routes/availability.js';
 import { orders } from './routes/orders.js';
@@ -24,11 +30,14 @@ import { signup } from './routes/signup.js';
 
 export const app = new Hono<Env>();
 
-app.use('*', logger());
+app.use('*', requestLogger);
+app.use('*', securityHeaders);
 app.use('*', cors());
 
 // Liveness — no tenant required.
 app.get('/health', (c) => c.json({ ok: true, service: 'marina-api' }));
+// Readiness — checks the DB is reachable (for load balancers / deploy health gates).
+app.get('/ready', readyHandler);
 
 // Webhooks resolve their own tenant from the event payload — they receive no
 // x-operator-slug header, so they live OUTSIDE the tenant middleware.
@@ -46,6 +55,10 @@ app.route('/signup', signup);
 
 // Everything under /api is tenant-scoped.
 const api = new Hono<Env>();
+// Rate-limit abuse-prone endpoints BEFORE the tenant lookup runs (registered first
+// so they match ahead of the catch-all tenant middleware). See middleware/rateLimit.
+api.use('/auth/customer/request', otpRequestLimiter);
+api.use('/bookings', bookingLimiter);
 api.use('*', tenantMiddleware);
 api.route('/auth', auth);
 api.route('/activities', activities);
@@ -71,13 +84,8 @@ api.get('/whoami', (c) => c.json({ operatorId: c.var.operatorId }));
 
 app.route('/api', api);
 
-// Central error handling: turn auth errors into clean status codes.
-app.onError((err, c) => {
-  if (err instanceof AuthorizationError) {
-    return c.json({ error: err.message, permission: err.permission }, 403);
-  }
-  console.error(err);
-  return c.json({ error: 'Internal server error' }, 500);
-});
+// Central error handling: structured logging + safe envelopes (maps known error
+// classes; never leaks stacks/messages for unknown 500s). See middleware/observability.
+app.onError(errorHandler);
 
 app.notFound((c) => c.json({ error: 'Not found' }, 404));

@@ -2,6 +2,7 @@
  * Payments API — charge a booking and refund it (Stripe, test-first).
  *
  *   POST /api/payments/charge             public — charge a card against an order
+ *   POST /api/payments/confirm            public — finalize a 3DS-challenged charge
  *   POST /api/payments/gift-card          staff  — apply a gift card as tender (order:write)
  *   POST /api/payments/customer/gift-card customer — pay your OWN order with a gift card
  *   POST /api/payments/:id/refund         staff  — full/partial refund (order:refund)
@@ -11,6 +12,19 @@
  * balance and its payment row can never drift. Stripe's network call happens
  * BEFORE the transaction (you don't want to hold a DB tx open across an external
  * HTTP call); the transaction then records the already-settled result.
+ *
+ * 3-D Secure / SCA flow:
+ *   1. POST /charge → if Stripe requires SCA, returns 200 { requiresAction:true,
+ *      clientSecret, paymentIntentId } without recording anything in the DB.
+ *   2. Browser calls stripe.handleNextAction({ clientSecret }) to complete the
+ *      challenge, then POSTs to /confirm with { paymentIntentId, orderId }.
+ *   3. POST /confirm retrieves the intent; if succeeded, runs the SAME persistence
+ *      block as the synchronous /charge success path.
+ *
+ * Idempotency-Key:
+ *   The client may supply an `Idempotency-Key` request header on /charge. If
+ *   present it is passed through to Stripe so a double-submit returns the same
+ *   charge. If absent, a fresh createId() is used (as before).
  *
  * If Stripe isn't configured, every endpoint returns a clean 501 instead of
  * crashing — payments are an opt-in integration.
@@ -26,10 +40,12 @@ import type { Env } from '../context.js';
 import { requireStaff } from '../middleware/auth.js';
 import {
   createPayment,
+  finalizePayment,
   refundPayment,
   isStripeConfigured,
   StripeNotConfiguredError,
   StripePaymentError,
+  type StripePaymentResult,
 } from '../services/stripe.js';
 import { applyGiftCardToOrder, refundGiftCardPayment, GiftCardError } from '../services/giftcards.js';
 import { isEmailConfigured, sendRefundReceipt } from '../services/notifications.js';
@@ -101,28 +117,90 @@ payments.post('/charge', async (c) => {
     );
   }
 
-  // Charge Square OUTSIDE the DB transaction (external network call).
-  let result;
+  // Prefer a client-supplied Idempotency-Key header (double-submit safety), fall back
+  // to the body field, then generate a fresh one. Hono lowercases header names, so
+  // 'Idempotency-Key' and 'idempotency-key' both match.
+  const idempotencyKey =
+    c.req.header('idempotency-key') ?? parsed.data.idempotencyKey ?? createId();
+
+  // Charge Stripe OUTSIDE the DB transaction (external network call).
+  let outcome;
   try {
-    result = await createPayment({
+    outcome = await createPayment({
       orderId: order.id,
       sourceId,
       amountCents,
-      idempotencyKey: parsed.data.idempotencyKey ?? createId(),
+      idempotencyKey,
     });
   } catch (err) {
     return stripeErrorResponse(c, err);
   }
 
-  // Record the settled charge atomically against the order.
+  // 3-D Secure / SCA: tell the browser to complete the challenge, then call /confirm.
+  // No DB writes yet — we only persist once the charge has actually settled.
+  if (outcome.status === 'requires_action') {
+    return c.json(
+      {
+        requiresAction: true,
+        clientSecret: outcome.clientSecret,
+        paymentIntentId: outcome.paymentIntentId,
+      },
+      200,
+    );
+  }
+
+  // Synchronous success — record the settled charge atomically against the order.
+  const result = outcome; // narrowed: StripePaymentResult
+  const { payment, newAmountPaid, newBalanceDue } = await persistSettledCharge({
+    operatorId: c.var.operatorId,
+    order,
+    amountCents,
+    result,
+  });
+
+  return c.json(
+    {
+      payment: {
+        id: payment.id,
+        status: payment.status,
+        amountCents: payment.amount_cents,
+        cardBrand: payment.card_brand,
+        cardLastFour: payment.card_last_four,
+        processorTransactionId: payment.processor_transaction_id,
+        receiptUrl: result.receiptUrl,
+      },
+      order: {
+        id: order.id,
+        amountPaidCents: newAmountPaid,
+        balanceDueCents: newBalanceDue,
+      },
+    },
+    201,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Shared helper — persist a settled Stripe charge (used by /charge success +
+// /confirm, so the two paths are guaranteed to write identically).
+// ---------------------------------------------------------------------------
+
+type OrderRow = { id: string; total_cents: number; amount_paid_cents: number };
+
+async function persistSettledCharge(opts: {
+  operatorId: string;
+  order: OrderRow;
+  amountCents: number;
+  result: StripePaymentResult;
+}): Promise<{ payment: { id: string; status: string; amount_cents: number; card_brand: string | null; card_last_four: string | null; processor_transaction_id: string | null }; newAmountPaid: number; newBalanceDue: number }> {
+  const { operatorId, order, amountCents, result } = opts;
   const newAmountPaid = order.amount_paid_cents + amountCents;
   const newBalanceDue = order.total_cents - newAmountPaid;
 
-  const payment = await withTenant(c.var.operatorId, async (tx) => {
+  const payment = await withTenant(operatorId, async (tx) => {
     const created = await tx.payment.create({
       data: {
         id: createId(),
-        operator_id: c.var.operatorId,
+        operator_id: operatorId,
         order_id: order.id,
         method: 'CARD',
         status: 'PAID',
@@ -146,7 +224,7 @@ payments.post('/charge', async (c) => {
     await tx.orderEvent.create({
       data: {
         id: createId(),
-        operator_id: c.var.operatorId,
+        operator_id: operatorId,
         order_id: order.id,
         type: 'PAYMENT',
         description: `Charged card ending ${result.cardLastFour ?? '????'}`,
@@ -161,6 +239,67 @@ payments.post('/charge', async (c) => {
     });
 
     return created;
+  });
+
+  return { payment, newAmountPaid, newBalanceDue };
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/payments/confirm — finalize a 3DS-challenged charge.
+//
+// Called by the browser after stripe.handleNextAction() resolves successfully.
+// Body: { paymentIntentId: string; orderId: string }
+// Retrieves the PaymentIntent from Stripe; if it is `succeeded`, runs the same
+// persistence as the synchronous /charge success path. Returns the same 201
+// payment + order shape as /charge. Refuses with 402 if not yet succeeded.
+// ---------------------------------------------------------------------------
+
+const confirmSchema = z.object({
+  paymentIntentId: z.string().min(1),
+  orderId: z.string().min(1),
+});
+
+payments.post('/confirm', async (c) => {
+  if (!isStripeConfigured()) {
+    return c.json({ error: 'payments not configured' }, 501);
+  }
+
+  const body = await c.req.json().catch(() => null);
+  const parsed = confirmSchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ error: 'Invalid request', issues: parsed.error.flatten() }, 400);
+  }
+  const { paymentIntentId, orderId } = parsed.data;
+
+  // Load the order to verify it exists, get the balance, and avoid persisting
+  // more than the outstanding amount.
+  const order = await c.var.db.order.findUnique({ where: { id: orderId } });
+  if (!order) {
+    return c.json({ error: 'Order not found' }, 404);
+  }
+
+  // Guard against duplicate confirms (e.g. double-tap): if the order is already
+  // fully paid there is nothing left to record.
+  if (order.balance_due_cents <= 0) {
+    return c.json({ error: 'This order has already been paid in full' }, 409);
+  }
+
+  // Retrieve + verify the intent is genuinely succeeded (throws 402 if not).
+  let result;
+  try {
+    result = await finalizePayment(paymentIntentId);
+  } catch (err) {
+    return stripeErrorResponse(c, err);
+  }
+
+  // Use the settled amount from Stripe; cap at balance_due to be safe.
+  const amountCents = Math.min(result.amountCents, order.balance_due_cents);
+
+  const { payment, newAmountPaid, newBalanceDue } = await persistSettledCharge({
+    operatorId: c.var.operatorId,
+    order,
+    amountCents,
+    result,
   });
 
   return c.json(
@@ -183,6 +322,8 @@ payments.post('/charge', async (c) => {
     201,
   );
 });
+
+// ---------------------------------------------------------------------------
 
 const giftCardTenderSchema = z.object({
   orderId: z.string().min(1),

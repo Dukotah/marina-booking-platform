@@ -19,12 +19,15 @@ import { bookingInputSchema, promoValidateSchema } from '@marina/core';
 import {
   createBooking,
   submitPayment,
+  confirmPayment,
   validatePromo,
   isApiError,
   type CreateBookingPayload,
   type OrderSummary,
   type PaymentResult,
   type PromoValidation,
+  type PaymentActionRequired,
+  type ChargeSettled,
 } from '@/lib/api';
 
 /**
@@ -59,6 +62,11 @@ export async function checkPromo(
 /** Discriminated result so the client can branch on success vs. a friendly error. */
 export type CheckoutActionResult =
   | { ok: true; order: OrderSummary; payment: PaymentResult }
+  /**
+   * 3-D Secure / SCA challenge needed. The client must call
+   * stripe.handleNextAction({ clientSecret }) then finalize via confirmOrder().
+   */
+  | { ok: 'requires_action'; order: OrderSummary; clientSecret: string; paymentIntentId: string }
   | { ok: false; error: string; code?: string };
 
 /** Shape the client sends to the action (mirrors the shared booking schema). */
@@ -83,6 +91,12 @@ export interface PlaceOrderInput {
   tipCents?: number;
   /** Tokenized payment source — a Stripe PaymentMethod id from Stripe Elements. */
   paymentSourceId: string;
+  /**
+   * Optional idempotency key for the charge. When supplied it is forwarded as the
+   * `Idempotency-Key` header so Stripe deduplicates double-submits. The client
+   * should generate one UUID per checkout session and reuse it on retries.
+   */
+  idempotencyKey?: string;
   heardAboutUs?: string;
   isReturningGuest?: boolean;
 }
@@ -164,9 +178,9 @@ export async function placeOrder(
     };
   }
 
-  let payment: PaymentResult;
+  let chargeOutcome;
   try {
-    payment = await submitPayment(order.id, input.paymentSourceId);
+    chargeOutcome = await submitPayment(order.id, input.paymentSourceId, input.idempotencyKey);
   } catch (err) {
     // The order exists but payment failed — surface a clear, recoverable message.
     return {
@@ -178,13 +192,47 @@ export async function placeOrder(
     };
   }
 
-  if (payment.status === 'FAILED') {
+  // 3DS / SCA: the charge is pending browser authentication. Return the secrets so
+  // CheckoutClient can call stripe.handleNextAction() then confirmOrder().
+  if ('requiresAction' in chargeOutcome) {
+    // Narrowed: chargeOutcome is PaymentActionRequired.
+    const actionRequired = chargeOutcome as PaymentActionRequired;
     return {
-      ok: false,
-      error: 'The payment was declined. Please try a different card.',
-      code: 'PAYMENT_DECLINED',
+      ok: 'requires_action',
+      order,
+      clientSecret: actionRequired.clientSecret,
+      paymentIntentId: actionRequired.paymentIntentId,
     };
   }
 
-  return { ok: true, order, payment };
+  // Narrowed: chargeOutcome is ChargeSettled.
+  const settled = chargeOutcome as ChargeSettled;
+  return { ok: true, order, payment: settled.payment };
+}
+
+/**
+ * Finalize a 3DS-challenged charge after the browser has completed the
+ * stripe.handleNextAction() flow. Called by CheckoutClient when placeOrder()
+ * returns `ok: 'requires_action'` and the browser-side challenge succeeds.
+ *
+ * On success returns the same `{ ok: true, order, payment }` shape as placeOrder,
+ * so the caller can redirect to /confirmation the same way.
+ */
+export async function confirmOrder(
+  paymentIntentId: string,
+  orderId: string,
+  order: OrderSummary,
+): Promise<CheckoutActionResult> {
+  try {
+    const result = await confirmPayment(paymentIntentId, orderId);
+    return { ok: true, order, payment: result.payment };
+  } catch (err) {
+    return {
+      ok: false,
+      error: isApiError(err)
+        ? err.message
+        : 'The payment could not be finalized. Please try again.',
+      code: isApiError(err) ? err.code : 'CONFIRM_FAILED',
+    };
+  }
 }

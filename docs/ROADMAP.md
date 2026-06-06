@@ -83,7 +83,9 @@ channel/OTA + affiliate management · accounting exports (QuickBooks/Xero).
 - [ ] Waiver capture legally reviewed + audit trail verified
 - [x] Zero broken routes (route test sweep) — admin 21/21 + web all routes render 200 live
   (2026-06-06 server-render smoke); two pre-existing 500s fixed (D-031). Re-run after new pages.
-- [ ] Backups + error monitoring configured
+- [~] Backups + error monitoring configured — error-monitoring SEAM + structured logs + `/ready`
+  shipped (D-034; set `ERROR_DSN` + an APM SDK to activate). Neon backup retention + a restore
+  drill still to verify (see PRODUCTION_READINESS.md).
 - [~] Custom domain / subdomain white-label verified for a test tenant — per-tenant brand now
   resolves from the operator (storefront name/title/header, no env leak; D-033). Custom-domain
   mapping + a live subdomain deploy still pending.
@@ -96,6 +98,27 @@ I will build against sandboxes/free tiers and flag exactly when each is needed.
 
 ## Changelog
 
+- **2026-06-06** — **Phase 3: money robustness + go-live hardening (tasks 3.0–3.4).** Made the
+  API production-safe; owner-blocked bits built dark-and-ready.
+  - **Observability (D-034):** structured JSON request logs (requestId/operator/latency) +
+    `x-request-id` header; `app.onError` → safe envelopes (known errors mapped; unknown → `500
+    {error, requestId}`, no stack leak); `captureError` APM seam behind `ERROR_DSN`; `/ready`
+    DB-ping probe beside `/health`. Dependency-free.
+  - **Security (D-034):** in-memory rate limiter (signup 5/min, slug 30/min, OTP 5/min, booking
+    20/min → `429 + Retry-After`), mounted before the tenant lookup; API security headers.
+    Per-instance store (Redis when scaled — documented).
+  - **3DS/SCA + idempotency (D-035):** closed the D-013 gap — `createPayment` returns
+    `requires_action + clientSecret` (discriminated union) instead of declining; `POST
+    /payments/confirm` finalizes via a shared persistence path; web completes the challenge then
+    confirms; charge route honors a client `Idempotency-Key` → Stripe (no double-charge). Fixed a
+    latent bug: web `submitPayment` pointed at a non-existent endpoint → `/api/payments/charge`.
+  - **Runbook:** added `PRODUCTION_READINESS.md` (env/secrets, observability, security, Neon
+    backups/DR + restore drill, deploy, and the pre-launch gate).
+  - Built by 3 lean Sonnet agents + my wiring (app.ts/signup.ts) + integration fixes (2 type
+    errors). **Live-verified:** `/ready` `{ok,db:up}`; safe 401/404 envelopes + `x-request-id` +
+    security headers; signup `5×201 → 429 (Retry-After 53)`; **isolation 8/8**. typecheck 9/9;
+    api + web build green. Owner-blocked (dark): live Stripe verify, per-tenant billing charging,
+    Vercel deploy, legal. **Phase 3 complete.** Held locally, not pushed (Vercel quota).
 - **2026-06-06** — **Phase 2: the self-serve front door — provisioning + signup + per-tenant
   white-label (tasks 2.0–2.5).** A stranger can now create a tenant with zero manual DB work.
   - **Provisioning foundation (me, D-032):** `provisionOperator` service + `POST /signup` +

@@ -10,5 +10,7 @@ export type Env = {
     db: TenantClient;
     /** Present only after requireStaff middleware runs. */
     auth: AuthContext;
+    /** Per-request correlation id, set by the requestLogger middleware (observability.ts). */
+    requestId?: string;
   };
 };

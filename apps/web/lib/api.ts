@@ -146,17 +146,32 @@ export interface OrderSummary {
   createdAt: string;
 }
 
-/** Outcome of submitting a payment for an order. */
+/** Outcome of submitting a payment for an order (synchronous success path). */
 export interface PaymentResult {
-  orderId: string;
-  orderNumber: string;
-  paymentId: string;
-  status: 'PAID' | 'PARTIAL_REFUND' | 'REFUNDED' | 'FAILED' | 'PRE_AUTHORIZED';
+  id: string;
+  status: string;
   amountCents: number;
-  balanceDueCents: number;
-  cardLastFour: string | null;
   cardBrand: string | null;
+  cardLastFour: string | null;
+  processorTransactionId: string | null;
+  receiptUrl: string | null;
 }
+
+/** Returned by POST /payments/charge when the card needs a 3DS challenge. */
+export interface PaymentActionRequired {
+  requiresAction: true;
+  clientSecret: string;
+  paymentIntentId: string;
+}
+
+/** Settled charge (synchronous success path). */
+export interface ChargeSettled {
+  payment: PaymentResult;
+  order: { id: string; amountPaidCents: number; balanceDueCents: number };
+}
+
+/** Combined result of submitPayment: either settled or needs 3DS. */
+export type ChargeOutcome = ChargeSettled | PaymentActionRequired;
 
 // ---------------------------------------------------------------------------
 // Request payloads
@@ -210,14 +225,17 @@ interface RequestOptions {
    * client-supplied email. See apps/api customer-auth (D-017).
    */
   token?: string;
+  /** Extra request headers merged on top of the standard ones. */
+  extraHeaders?: Record<string, string>;
 }
 
 async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
-  const { method = 'GET', body, cache = 'no-store', revalidate, signal, token } = opts;
+  const { method = 'GET', body, cache = 'no-store', revalidate, signal, token, extraHeaders } = opts;
 
   const headers: Record<string, string> = {
     'x-operator-slug': OPERATOR_SLUG,
     accept: 'application/json',
+    ...extraHeaders,
   };
   if (body !== undefined) headers['content-type'] = 'application/json';
   if (token) headers['authorization'] = `Bearer ${token}`;
@@ -442,16 +460,42 @@ export async function verifyCustomerLoginCode(
 }
 
 /**
- * Submit a payment for an order using a tokenized payment source.
- * @param sourceId Stripe PaymentMethod id from Stripe Elements (sent as `sourceId`).
+ * Submit a payment for an order using a tokenized payment source (POST /api/payments/charge).
+ *
+ * @param sourceId        Stripe PaymentMethod id from Stripe Elements.
+ * @param idempotencyKey  Optional client-generated key for double-submit safety. When
+ *                        supplied it is sent as the `Idempotency-Key` header so Stripe
+ *                        deduplicates any network-level retries against the same charge.
+ *
+ * Returns either a settled ChargeOutcome (payment + order fields) or a
+ * PaymentActionRequired response when the card requires a 3DS challenge.
  */
 export async function submitPayment(
   orderId: string,
   sourceId: string,
-): Promise<PaymentResult> {
-  const data = await request<{ payment: PaymentResult }>(
-    `/api/orders/${encodeURIComponent(orderId)}/payments`,
-    { method: 'POST', body: { sourceId } },
-  );
-  return data.payment;
+  idempotencyKey?: string,
+): Promise<ChargeOutcome> {
+  const extraHeaders: Record<string, string> = {};
+  if (idempotencyKey) extraHeaders['Idempotency-Key'] = idempotencyKey;
+
+  return request<ChargeOutcome>('/api/payments/charge', {
+    method: 'POST',
+    body: { orderId, sourceId },
+    extraHeaders,
+  });
+}
+
+/**
+ * Finalize a 3DS-challenged payment after stripe.handleNextAction() resolves.
+ * Calls POST /api/payments/confirm; on success returns the same settled
+ * ChargeOutcome shape as submitPayment (minus requiresAction).
+ */
+export async function confirmPayment(
+  paymentIntentId: string,
+  orderId: string,
+): Promise<{ payment: PaymentResult; order: { id: string; amountPaidCents: number; balanceDueCents: number } }> {
+  return request('/api/payments/confirm', {
+    method: 'POST',
+    body: { paymentIntentId, orderId },
+  });
 }
