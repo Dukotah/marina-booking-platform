@@ -13,10 +13,10 @@ export const metadata: Metadata = {
 /**
  * Customer account landing — booking lookup.
  *
- * No heavy auth: a customer finds their reservation with the confirmation
- * (order) number + the email used to book (a magic-link stub; see followups).
- * Fully white-label — the operator name/brand come from tenant brand data, never
- * platform or marina-specific branding.
+ * Sign-in is email OTP: the customer enters their confirmation (order) number +
+ * the email used to book, receives a one-time code, and we set a secure httpOnly
+ * session cookie (see actions.ts / apps/api auth route). Fully white-label — the
+ * operator name/brand come from tenant brand data, never platform/marina branding.
  */
 export default function AccountPage() {
   const brand = getBrand();
@@ -28,7 +28,8 @@ export default function AccountPage() {
         <header className="mb-8 text-center">
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">My Bookings</h1>
           <p className="mt-2 text-sm text-slate-600">
-            Enter your confirmation number and email to view or manage your reservation.
+            Enter your confirmation number and email and we'll send a one-time code to
+            view or manage your reservation.
           </p>
         </header>
 

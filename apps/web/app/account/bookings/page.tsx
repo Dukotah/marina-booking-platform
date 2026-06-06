@@ -1,11 +1,14 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { redirect } from 'next/navigation';
 import { getBrand, brandStyle } from '@/lib/brand';
 import { formatUSD, formatLongDate, formatTime, formatDateTime } from '@/lib/format';
 import { getOrder, isApiError, type OrderSummary, type OrderLineItem } from '@/lib/api';
 import SiteHeader from '@/components/layout/SiteHeader';
 import SiteFooter from '@/components/layout/SiteFooter';
 import { ManagePanel } from '../manage-panel';
+import { SignOutButton } from '../sign-out-button';
+import { getCustomerSession } from '../session';
 
 export const metadata: Metadata = {
   title: 'My Reservation',
@@ -31,10 +34,6 @@ function operatorContactEmail(): string | null {
   return v ? v : null;
 }
 
-function normalizeEmail(value: string): string {
-  return value.trim().toLowerCase();
-}
-
 /** Customer-facing status badge styling. */
 function statusBadge(status: OrderSummary['status']): { label: string; className: string } {
   switch (status) {
@@ -51,29 +50,21 @@ function statusBadge(status: OrderSummary['status']): { label: string; className
   }
 }
 
-interface SearchParams {
-  order?: string;
-  email?: string;
-}
-
 /**
- * Customer bookings view. Identity is carried in the query string (order number
- * + email) as the magic-link stub — re-verified server-side here before any
- * booking detail is rendered, mirroring the lookup action. White-label
- * throughout (operator brand only).
+ * Customer bookings view. Identity comes from the httpOnly session cookie (set by
+ * the OTP verify flow), not the URL. We read the order number from the session,
+ * then fetch the order — the API additionally verifies the forwarded session token
+ * before returning any data (see lib/api.ts request()). Missing cookie → redirect
+ * back to /account to sign in. White-label throughout (operator brand only).
  */
-export default async function BookingsPage({
-  searchParams,
-}: {
-  searchParams: SearchParams;
-}) {
+export default async function BookingsPage() {
   const brand = getBrand();
-  const orderNumber = searchParams.order?.trim().toUpperCase() ?? '';
-  const email = searchParams.email ? normalizeEmail(searchParams.email) : '';
 
-  if (!orderNumber || !email) {
-    return <NotAuthorized reason="missing" />;
+  const session = getCustomerSession();
+  if (!session) {
+    redirect('/account');
   }
+  const orderNumber = session.orderNumber.trim().toUpperCase();
 
   let order: OrderSummary | null = null;
   let networkError = false;
@@ -88,8 +79,7 @@ export default async function BookingsPage({
     return <NotAuthorized reason="network" />;
   }
 
-  // Re-verify email server-side; never reveal whether the order exists otherwise.
-  if (!order || normalizeEmail(order.customerEmail) !== email) {
+  if (!order) {
     return <NotAuthorized reason="mismatch" />;
   }
 
@@ -113,10 +103,11 @@ export default async function BookingsPage({
   return (
     <Shell>
       <div className="mx-auto flex w-full max-w-2xl flex-col px-4 py-8">
-      <div className="mb-6">
+      <div className="mb-6 flex items-center justify-between">
         <Link href="/account" className="text-sm font-medium text-brand hover:underline">
           ← Look up another booking
         </Link>
+        <SignOutButton />
       </div>
 
       <header className="mb-6">

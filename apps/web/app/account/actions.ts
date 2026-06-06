@@ -1,60 +1,69 @@
 'use server';
 
 /**
- * Server actions for the lightweight customer account area.
+ * Server actions for the customer account area (roadmap 0.7 — customer auth).
  *
- * There is no heavy customer auth yet. Bookings are looked up by the public
- * order number combined with the email on the order — a magic-link stub. The
- * order endpoint is public-by-number (see apps/api orders route), so we verify
- * the supplied email matches the order's customer email here before exposing any
- * booking details. This is intentionally light; a real magic-link/OTP flow is a
- * followup (see slice notes).
+ * Real email-OTP sign-in replaces the old order#+email URL stub:
+ *   1. `requestOtp` — order number + email → API `request-otp`. The API never
+ *      reveals whether the order exists (it returns an unusable decoy challenge on a
+ *      mismatch), so this action surfaces the same "we sent a code" UX either way.
+ *      In dev (no email provider) the API returns a `devCode` we pass back so the
+ *      flow is testable.
+ *   2. `verifyOtp` — challenge + code → API `verify-otp`. On success we store the
+ *      returned session token in an httpOnly, secure, sameSite=lax cookie and the
+ *      client redirects to /account/bookings.
+ *   3. `signOutCustomer` — clears the session cookie.
+ *
+ * Identity now lives in a signed httpOnly cookie, not the URL.
  */
 
-import { getOrder, isApiError, type OrderSummary } from '@/lib/api';
+import { cookies } from 'next/headers';
+import {
+  requestOtp as apiRequestOtp,
+  verifyOtp as apiVerifyOtp,
+  isApiError,
+  CUSTOMER_SESSION_COOKIE,
+} from '@/lib/api';
 
-/** Normalize an email for comparison (trim + lowercase). */
-function normalizeEmail(value: string): string {
-  return value.trim().toLowerCase();
-}
+/** Session cookie max age — mirror the API's 7-day session token lifetime. */
+const SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
 
-/** Minimal email shape check — the order endpoint is the real gate. */
+/** Minimal email shape check — the API is the real gate. */
 function looksLikeEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
-export interface LookupSuccess {
+// --- requestOtp -------------------------------------------------------------
+
+export interface RequestOtpSuccess {
   ok: true;
-  /** Order number, echoed for building the bookings link. */
+  /** Opaque challenge to submit alongside the code. */
+  challenge: string;
+  /** Order number, echoed for display + the verify step. */
   orderNumber: string;
-  /** Normalized email, echoed for building the bookings link. */
+  /** Masked-ish hint of where the code went (the email the user typed). */
   email: string;
+  /** Present only in dev (no email provider) — lets the UI prefill the code. */
+  devCode?: string;
 }
 
-export interface LookupFailure {
+export interface ActionFailure {
   ok: false;
-  /** Human-readable, customer-safe message. */
   error: string;
 }
 
-export type LookupResult = LookupSuccess | LookupFailure;
+export type RequestOtpResult = RequestOtpSuccess | ActionFailure;
 
-/**
- * Look up a booking by order number + email. Returns a redirect-friendly result
- * rather than throwing, so the form can render a friendly message inline.
- *
- * We deliberately return the SAME message for "no such order" and "email does
- * not match" so the form can't be used to probe which order numbers exist.
- */
-export async function lookupBooking(
-  _prev: LookupResult | null,
+export async function requestOtp(
+  _prev: RequestOtpResult | null,
   formData: FormData,
-): Promise<LookupResult> {
-  const orderNumberRaw = String(formData.get('orderNumber') ?? '');
-  const emailRaw = String(formData.get('email') ?? '');
-
-  const orderNumber = orderNumberRaw.trim().toUpperCase();
-  const email = normalizeEmail(emailRaw);
+): Promise<RequestOtpResult> {
+  const orderNumber = String(formData.get('orderNumber') ?? '')
+    .trim()
+    .toUpperCase();
+  const email = String(formData.get('email') ?? '')
+    .trim()
+    .toLowerCase();
 
   if (!orderNumber) {
     return { ok: false, error: 'Enter your confirmation (order) number.' };
@@ -63,29 +72,79 @@ export async function lookupBooking(
     return { ok: false, error: 'Enter the email address used for the booking.' };
   }
 
-  const notFound: LookupFailure = {
-    ok: false,
-    error:
-      'We could not find a booking matching that order number and email. Double-check both and try again.',
-  };
-
-  let order: OrderSummary;
   try {
-    order = await getOrder(orderNumber);
+    const res = await apiRequestOtp(orderNumber, email);
+    return {
+      ok: true,
+      challenge: res.challenge,
+      orderNumber,
+      email,
+      ...(res.devCode ? { devCode: res.devCode } : {}),
+    };
   } catch (err) {
-    if (isApiError(err) && err.status === 404) return notFound;
     if (isApiError(err) && err.status === 0) {
       return {
         ok: false,
         error: 'We could not reach the booking system. Please try again in a moment.',
       };
     }
-    return notFound;
+    return {
+      ok: false,
+      error: 'Something went wrong sending your code. Please try again.',
+    };
+  }
+}
+
+// --- verifyOtp --------------------------------------------------------------
+
+export interface VerifyOtpSuccess {
+  ok: true;
+}
+
+export type VerifyOtpResult = VerifyOtpSuccess | ActionFailure;
+
+export async function verifyOtp(
+  _prev: VerifyOtpResult | null,
+  formData: FormData,
+): Promise<VerifyOtpResult> {
+  const challenge = String(formData.get('challenge') ?? '');
+  const code = String(formData.get('code') ?? '').trim();
+
+  if (!challenge) {
+    return { ok: false, error: 'Your session expired. Please request a new code.' };
+  }
+  if (!/^\d{4,8}$/.test(code)) {
+    return { ok: false, error: 'Enter the 6-digit code we sent you.' };
   }
 
-  if (normalizeEmail(order.customerEmail) !== email) {
-    return notFound;
+  let sessionToken: string;
+  try {
+    const res = await apiVerifyOtp(challenge, code);
+    sessionToken = res.sessionToken;
+  } catch (err) {
+    if (isApiError(err) && err.status === 0) {
+      return {
+        ok: false,
+        error: 'We could not reach the booking system. Please try again in a moment.',
+      };
+    }
+    // 401 (bad/expired code) and anything else → generic, non-leaking message.
+    return { ok: false, error: 'That code is incorrect or has expired. Try again.' };
   }
 
-  return { ok: true, orderNumber: order.orderNumber, email };
+  cookies().set(CUSTOMER_SESSION_COOKIE, sessionToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path: '/',
+    maxAge: SESSION_MAX_AGE_SECONDS,
+  });
+
+  return { ok: true };
+}
+
+// --- signOut ----------------------------------------------------------------
+
+export async function signOutCustomer(): Promise<void> {
+  cookies().delete(CUSTOMER_SESSION_COOKIE);
 }

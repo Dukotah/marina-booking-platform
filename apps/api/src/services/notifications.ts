@@ -429,6 +429,63 @@ export async function sendReminder(input: {
 }
 
 /**
+ * Send a one-time login code (OTP) to a customer's email for the account portal
+ * sign-in flow (roadmap 0.7). White-label: branding comes from the operator row.
+ *
+ * No React Email template — a short transactional code message is rendered inline
+ * to avoid coupling the auth slice to a new email component. Goes through the same
+ * Resend `dispatch` choke point, so it no-ops (and the caller falls back to the dev
+ * code) when RESEND_API_KEY is unset. Never throws.
+ */
+export async function sendCustomerOtp(input: {
+  operatorId: string;
+  email: string;
+  code: string;
+}): Promise<NotificationResult> {
+  try {
+    const db = forOperator(input.operatorId);
+    const op = await db.operator.findUnique({
+      where: { id: input.operatorId },
+      select: { name_external: true, brand_color: true, logo_light_url: true, logo_dark_url: true },
+    });
+    const brandName = op?.name_external ?? 'Your booking';
+    const code = input.code;
+
+    const html =
+      `<div style="font-family:system-ui,Arial,sans-serif;max-width:480px;margin:0 auto;padding:24px;color:#0f172a">` +
+      `<h1 style="font-size:18px;margin:0 0 12px">${escapeHtml(brandName)} sign-in code</h1>` +
+      `<p style="margin:0 0 16px;font-size:14px;color:#475569">Use this code to access your booking. It expires in 10 minutes.</p>` +
+      `<p style="font-size:32px;font-weight:700;letter-spacing:6px;margin:0 0 16px">${code}</p>` +
+      `<p style="margin:0;font-size:12px;color:#94a3b8">If you didn't request this, you can ignore this email.</p>` +
+      `</div>`;
+    const text =
+      `${brandName} sign-in code\n\n${code}\n\n` +
+      `Use this code to access your booking. It expires in 10 minutes. ` +
+      `If you didn't request this, you can ignore this email.`;
+
+    return dispatch({
+      brandName,
+      to: input.email,
+      subject: `Your ${brandName} sign-in code: ${code}`,
+      html,
+      text,
+    });
+  } catch (err) {
+    console.error('[notifications] sendCustomerOtp failed:', err);
+    return skipped('unexpected failure');
+  }
+}
+
+/** Minimal HTML escape for interpolating untrusted text into an email body. */
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/**
  * Send a refund receipt to the customer. Call from the payments/refund slice
  * after a refund is recorded on a Payment row.
  */

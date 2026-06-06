@@ -24,6 +24,20 @@ import {
   rescheduleBooking,
   BookingError,
 } from '../services/booking.js';
+import { readSessionToken, verifySessionToken } from '../lib/customer-session.js';
+
+/**
+ * Resolve a verified customer session from the request (Bearer header or the
+ * `marina_customer_session` cookie), or null. Used to let the customer self-service
+ * routes accept a session in addition to the legacy email param (backward compat).
+ */
+function customerSessionFrom(c: { req: { header: (name: string) => string | undefined } }) {
+  const token = readSessionToken({
+    authorization: c.req.header('authorization'),
+    cookie: c.req.header('cookie'),
+  });
+  return verifySessionToken(token);
+}
 
 export const orders = new Hono<Env>();
 
@@ -250,8 +264,12 @@ orders.post('/:id/reschedule', requireStaff, async (c) => {
 // --- POST /:orderNumber/self-reschedule : customer self-service -------------
 
 const selfRescheduleSchema = z.object({
-  /** Identity check (magic-link stub): must match the order's customer email. */
-  email: z.string().trim().toLowerCase().email('A valid email is required'),
+  /**
+   * Identity check: must match the order's customer email. OPTIONAL when the
+   * request carries a valid customer session cookie/bearer for this order (the new
+   * OTP-session path); the legacy email param is kept for backward compatibility.
+   */
+  email: z.string().trim().toLowerCase().email('A valid email is required').optional(),
   timeslotId: z.string().min(1, 'timeslotId is required'),
   orderItemId: z.string().min(1).optional(),
 });
@@ -263,14 +281,23 @@ orders.post('/:orderNumber/self-reschedule', async (c) => {
     return c.json({ error: 'Invalid request', issues: parsed.error.issues }, 400);
   }
 
-  // Resolve the order by number (RLS-scoped) and verify the email matches before
-  // touching anything — the lightweight identity gate for the self-service flow.
+  // Identity is established by EITHER a valid customer session for this order OR the
+  // legacy email param matching the order's customer email.
+  const session = customerSessionFrom(c);
+  const sessionMatches =
+    session !== null && session.orderNumber.toUpperCase() === orderNumber.toUpperCase();
+
+  // Resolve the order by number (RLS-scoped) and verify identity before touching
+  // anything — the identity gate for the self-service flow.
   const found = await c.var.db.order.findFirst({
     where: { order_number: orderNumber },
     select: { id: true, customer: { select: { email: true } } },
   });
-  if (!found || found.customer.email.toLowerCase() !== parsed.data.email) {
-    // Same response whether the order is missing or the email is wrong — don't leak
+  const emailMatches = Boolean(
+    found && parsed.data.email && found.customer.email.toLowerCase() === parsed.data.email,
+  );
+  if (!found || (!sessionMatches && !emailMatches)) {
+    // Same response whether the order is missing or identity is wrong — don't leak
     // which order numbers exist.
     return c.json({ error: 'We could not find a booking matching those details' }, 404);
   }

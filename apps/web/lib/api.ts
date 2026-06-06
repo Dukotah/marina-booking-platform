@@ -15,6 +15,24 @@
 const API_URL = process.env.API_URL ?? 'http://localhost:3001';
 const OPERATOR_SLUG = process.env.OPERATOR_SLUG ?? 'lake-sonoma';
 
+/** Cookie name for the customer OTP session (mirrors apps/api customer-session). */
+export const CUSTOMER_SESSION_COOKIE = 'marina_customer_session';
+
+/**
+ * Read the customer session token from the request cookies in a Server Component /
+ * server action context. Returns undefined in any context where `next/headers` is
+ * unavailable (so non-server callers degrade gracefully). Self-contained so the rest
+ * of this shared file is untouched — `request()` forwards it as a Bearer token.
+ */
+async function customerSessionToken(): Promise<string | undefined> {
+  try {
+    const { cookies } = await import('next/headers');
+    return cookies().get(CUSTOMER_SESSION_COOKIE)?.value;
+  } catch {
+    return undefined;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Errors
 // ---------------------------------------------------------------------------
@@ -213,6 +231,10 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
     accept: 'application/json',
   };
   if (body !== undefined) headers['content-type'] = 'application/json';
+  // Forward the customer session (when present) so order-access routes can
+  // authenticate by session instead of an email param. Additive; no-op otherwise.
+  const sessionToken = await customerSessionToken();
+  if (sessionToken) headers['authorization'] = `Bearer ${sessionToken}`;
 
   const init: RequestInit & { next?: { revalidate: number } } = {
     method,
@@ -330,6 +352,39 @@ export async function getOrder(orderNumber: string): Promise<OrderSummary> {
     `/api/orders/${encodeURIComponent(orderNumber)}`,
   );
   return data.order;
+}
+
+// --- Customer auth (email OTP → session) -----------------------------------
+
+/** Response from requesting an OTP. `devCode` is only present in non-production. */
+export interface RequestOtpResponse {
+  challenge: string;
+  devCode?: string;
+}
+
+/**
+ * Request an email OTP for a booking. Always returns a challenge (the API does not
+ * leak whether the order/email matched — a mismatch yields an unusable decoy).
+ */
+export async function requestOtp(
+  orderNumber: string,
+  email: string,
+): Promise<RequestOtpResponse> {
+  return request<RequestOtpResponse>('/api/auth/request-otp', {
+    method: 'POST',
+    body: { orderNumber, email },
+  });
+}
+
+/** Verify an OTP code against a challenge; returns the signed session token. */
+export async function verifyOtp(
+  challenge: string,
+  code: string,
+): Promise<{ sessionToken: string }> {
+  return request<{ sessionToken: string }>('/api/auth/verify-otp', {
+    method: 'POST',
+    body: { challenge, code },
+  });
 }
 
 /**
