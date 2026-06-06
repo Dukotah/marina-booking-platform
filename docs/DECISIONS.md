@@ -739,3 +739,44 @@ This closes the last D-024 follow-up — the resource pillar is now complete. He
 and modeling them as shared seats silently permits double-booking the exact physical asset the feature
 exists to protect. A one-column policy keeps the common shared-seat path the zero-config default while
 making exclusive allocation a correct, explicit opt-in.
+
+## D-027 — Founder cockpit docs at root; PRs staged locally vs Vercel quota (2026-06-06) — Accepted
+
+Two operating decisions for the founder-driven build phase.
+
+1. **Root-level founder docs complement the `docs/` brain.** Added `VISION.md`,
+   `ROADMAP.md`, `TASKS.md`, `PROGRESS.md` at the repo root as the forward-looking
+   founder cockpit. The detailed `docs/` set stays the source of truth for *why*
+   (CONTEXT/ARCHITECTURE) and the append-only decision log; `docs/ROADMAP.md` stays
+   the granular backend status board + changelog. Root `ROADMAP.md` is the
+   phase-level plan, `TASKS.md` the active board, `PROGRESS.md` the running log.
+   Rationale: a single glanceable cockpit for an owner, without disturbing the
+   established deep docs.
+2. **One clean PR per phase, staged locally, not pushed until the owner clears
+   Vercel quota.** Phase work happens on a feature branch (`phase-1-cockpit`, …) so
+   it is PR-ready, but pushing *any* branch triggers a Vercel deployment (preview or
+   production) and the owner has flagged a quota crunch (memory: marina-vercel-quota).
+   So commits accumulate cleanly on the branch and the PR is opened the moment the
+   owner says push. This honors "clean PR per phase" without burning the resource the
+   owner asked to protect.
+
+**Why:** keep the owner's cockpit clean and the cost posture intact while still
+working in disciplined, reviewable phase units.
+
+## D-028 — Phase 1 = wire the cockpit (surface the backend before adding more) (2026-06-06) — Accepted
+
+The next build phase is **surfacing existing backend capability in the UI**, not
+adding new backend. The backend is production-grade and largely live-verified, but
+a large share of it is unreachable from the apps: gift cards, resources/assets (the
+moat), waiver-template management, multi-location roll-up + accounting reports, and
+the customer email-OTP login all have working backends and **no UI**. The frontend
+also builds but has never been exercised end-to-end.
+
+**Decision:** before any new backend feature or the self-serve front door (Phase 2),
+make every shipped capability reachable and usable from a working UI, and drive the
+existing frontend to confirm it works.
+
+**Why:** "built but unreachable" is not functional. The highest-leverage,
+owner-valuable, no-owner-keys-required work is connecting the Ferrari engine to a
+dashboard. It also makes the product demoable and de-risks everything downstream
+(you can't sell or onboard onto features no one can see).

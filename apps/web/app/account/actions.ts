@@ -11,6 +11,7 @@
  * followup (see slice notes).
  */
 
+import { redirect } from 'next/navigation';
 import {
   getOrder,
   getAvailability,
@@ -19,6 +20,7 @@ import {
   type AvailabilitySlot,
   type OrderSummary,
 } from '@/lib/api';
+import { getCustomerSession, clearCustomerSession } from '@/lib/session';
 
 /** Normalize an email for comparison (trim + lowercase). */
 function normalizeEmail(value: string): string {
@@ -133,8 +135,12 @@ export async function rescheduleBookingAction(
   timeslotId: string,
   orderItemId?: string,
 ): Promise<{ ok: true; order: OrderSummary } | { ok: false; error: string }> {
+  // When the customer is signed in (email-OTP), present the bearer token so the
+  // API authenticates identity from the verified token rather than trusting the
+  // email in the body (D-017). Falls back to the email-gated path when signed out.
+  const token = getCustomerSession()?.token;
   try {
-    const order = await selfReschedule(orderNumber, email, timeslotId, orderItemId);
+    const order = await selfReschedule(orderNumber, email, timeslotId, orderItemId, token);
     return { ok: true, order };
   } catch (err) {
     return {
@@ -144,4 +150,10 @@ export async function rescheduleBookingAction(
         : 'We could not reschedule your booking. Please try again.',
     };
   }
+}
+
+/** Sign the customer out: clear the session cookie and return to the lookup page. */
+export async function signOut(): Promise<void> {
+  clearCustomerSession();
+  redirect('/account');
 }

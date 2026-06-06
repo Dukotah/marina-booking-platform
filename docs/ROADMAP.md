@@ -20,7 +20,7 @@ booking vertical slice for the seed client (Lake Sonoma Marina) running on it.
 | 0.4 | Postgres RLS policies (prisma/rls.sql) + tenant-scoped Prisma client (forOperator/withTenant) | ✅ (written; applies on first DB connect) |
 | 0.5 | Neon dev database connected + first migration run | ✅ (Neon US-West; migration `init` applied; RLS applied; `app_user` non-bypass role provisioned) |
 | 0.6 | Seed script — Lake Sonoma Marina (19 activities, rates, fees, waiver, config) | ✅ (seeded live — operator `lsra`, 19 activities) |
-| 0.7 | Auth + RBAC (Clerk operators/staff, magic link customers) | 🟦 (staff/operator Clerk **wired + verified** (D-012). **Customer email-OTP auth — backend DONE + live-verified** (D-017): `CustomerOtp` model, `POST /auth/customer/request`+`/verify`, HS256 session token, wired into self-reschedule; 5/5 live. Remaining: customer **web UI** (login screen on apps/web) to flip 0.7 fully ✅) |
+| 0.7 | Auth + RBAC (Clerk operators/staff, magic link customers) | ✅ (staff/operator Clerk **wired + verified** (D-012). Customer email-OTP auth backend live-verified (D-017). **Customer web login UI now built** (Phase 1, 1.1): `/login` two-step OTP screen, httpOnly session cookie, session-aware account area + sign-out, bearer token forwarded to self-service calls. typecheck+web build green; browser E2E in the 1.8 pass.) |
 | 0.8 | Cross-tenant isolation tests (must fail to access other tenants) | ✅ (live vs Neon — now **8/8**: reads, writes, WITH CHECK, bulk ops, symmetric, **+ cross-tenant FK attach** un-skipped after 0.13) |
 | 0.9 | Auth/RBAC package (@marina/auth) — permission checks, AuthContext | ✅ |
 | 0.10 | API skeleton (Hono) — tenant-resolution middleware, RLS-scoped client per request, dev auth shim, catalog route; boots + tenant guard verified | ✅ |
@@ -93,6 +93,22 @@ I will build against sandboxes/free tiers and flag exactly when each is needed.
 
 ## Changelog
 
+- **2026-06-06** — **Customer email-OTP login UI — 0.7 fully ✅ (Phase 1 / cockpit, task 1.1).**
+  Built the last 0.7 piece: a passwordless customer login on apps/web over the
+  already-live-verified D-017 backend. New `/login` two-step screen (email → 6-digit
+  code; shows the `devCode` hint in non-prod when email isn't delivered); `verifyCode`
+  server action stores the signed JWT in an **httpOnly** cookie (`lib/session.ts`) and
+  redirects (open-redirect-guarded `next`). The account area is now session-aware —
+  "signed in as …" + sign-out, a prominent passwordless sign-in CTA, and the
+  order-number+email lookup kept as a fallback with the email prefilled when signed in.
+  The API client (`lib/api.ts`) gained `requestCustomerLoginCode`/`verifyCustomerLoginCode`
+  and optional bearer support; `rescheduleBookingAction` now forwards the session token so
+  the API authenticates identity from the verified token rather than the body email.
+  **Also fixed a broken route:** the site header linked "My Booking" → `/lookup` (a 404 —
+  no such page); now → `/account` + a "Sign in" link (zero-broken-routes). Verified:
+  @marina/web typecheck clean + production build green (9 routes, `/login` + dynamic
+  `/account`). Browser E2E batched into the Phase 1.8 verification pass. Held locally,
+  not pushed (Vercel quota).
 - **2026-06-05** — **Resource allocation mode: shared seating vs whole-unit charter (D-026).** Closed
   the last D-024 follow-up + a real correctness gap: with shared-seats-only, a 2-of-10-seat charter
   booking left 8 seats sellable to others for a concurrent activity → double-booking the chartered

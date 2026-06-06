@@ -203,16 +203,24 @@ interface RequestOptions {
   /** Optional Next.js revalidation window in seconds. */
   revalidate?: number;
   signal?: AbortSignal;
+  /**
+   * Optional customer session bearer token (the email-OTP JWT). When present it's
+   * sent as `Authorization: Bearer <token>` so token-gated self-service endpoints
+   * (self-reschedule, gift-card tender) authenticate the caller without trusting a
+   * client-supplied email. See apps/api customer-auth (D-017).
+   */
+  token?: string;
 }
 
 async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
-  const { method = 'GET', body, cache = 'no-store', revalidate, signal } = opts;
+  const { method = 'GET', body, cache = 'no-store', revalidate, signal, token } = opts;
 
   const headers: Record<string, string> = {
     'x-operator-slug': OPERATOR_SLUG,
     accept: 'application/json',
   };
   if (body !== undefined) headers['content-type'] = 'application/json';
+  if (token) headers['authorization'] = `Bearer ${token}`;
 
   const init: RequestInit & { next?: { revalidate: number } } = {
     method,
@@ -342,12 +350,61 @@ export async function selfReschedule(
   email: string,
   timeslotId: string,
   orderItemId?: string,
+  token?: string,
 ): Promise<OrderSummary> {
   const data = await request<{ order: OrderSummary }>(
     `/api/orders/${encodeURIComponent(orderNumber)}/self-reschedule`,
-    { method: 'POST', body: { email, timeslotId, ...(orderItemId ? { orderItemId } : {}) } },
+    {
+      method: 'POST',
+      body: { email, timeslotId, ...(orderItemId ? { orderItemId } : {}) },
+      ...(token ? { token } : {}),
+    },
   );
   return data.order;
+}
+
+// ---------------------------------------------------------------------------
+// Customer auth (passwordless email-OTP login — D-017)
+// ---------------------------------------------------------------------------
+
+/** Result of requesting a login code. `devCode` is only present in non-prod when email isn't delivered. */
+export interface RequestLoginCodeResult {
+  sent: boolean;
+  expiresAt: string;
+  devCode?: string;
+}
+
+/** The signed customer session token + the resolved customer (id may be null for a first-time guest). */
+export interface VerifyLoginCodeResult {
+  token: string;
+  expiresInSeconds: number;
+  customer: {
+    id: string | null;
+    email: string;
+    first_name?: string;
+    last_name?: string;
+  };
+}
+
+/** Request a 6-digit login code be emailed to the customer (step 1 of login). */
+export async function requestCustomerLoginCode(
+  email: string,
+): Promise<RequestLoginCodeResult> {
+  return request<RequestLoginCodeResult>('/api/auth/customer/request', {
+    method: 'POST',
+    body: { email },
+  });
+}
+
+/** Exchange an email + code for a session token (step 2 of login). */
+export async function verifyCustomerLoginCode(
+  email: string,
+  code: string,
+): Promise<VerifyLoginCodeResult> {
+  return request<VerifyLoginCodeResult>('/api/auth/customer/verify', {
+    method: 'POST',
+    body: { email, code },
+  });
 }
 
 /**

@@ -29,7 +29,7 @@ function SubmitButton() {
   );
 }
 
-export function LookupForm() {
+export function LookupForm({ defaultEmail }: { defaultEmail?: string }) {
   const router = useRouter();
   const [state, formAction] = useFormState<LookupResult | null, FormData>(
     lookupBooking,
@@ -82,6 +82,7 @@ export function LookupForm() {
           inputMode="email"
           autoComplete="email"
           required
+          defaultValue={defaultEmail}
           placeholder="you@example.com"
           className="w-full rounded-lg border border-slate-300 px-3 py-3 text-base focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/30"
         />
