@@ -14,6 +14,8 @@ import { fromCents } from '@marina/core';
 import { toCsv, type CsvRow } from './csv';
 import { type ReportKind, REPORT_LABEL } from './kinds';
 import type { OccupancyReport, RevenueReport, TaxesFeesReport } from './queries';
+import type { LocationReport } from './ByLocationReportView';
+import type { TransactionsReport } from './TransactionsReportView';
 
 export { REPORT_LABEL, type ReportKind };
 
@@ -103,11 +105,83 @@ function occupancyCsv(report: OccupancyReport): string {
   return toCsv(header, rows);
 }
 
-/** Bundle slice needed to serialize any of the three reports. */
+function byLocationCsv(report: LocationReport): string {
+  const header = ['Location ID', 'Location', 'Bookings', 'Participants', 'Gross (USD)'] as const;
+  const rows: CsvRow[] = report.byLocation.map((loc) => [
+    loc.locationId,
+    loc.locationName,
+    loc.bookingCount,
+    loc.totalQuantity,
+    dollars(loc.grossCents),
+  ]);
+
+  rows.push([]);
+  rows.push([
+    '',
+    'TOTAL (all locations)',
+    report.total.bookingCount,
+    report.total.totalQuantity,
+    dollars(report.total.grossCents),
+  ]);
+
+  return toCsv(header, rows);
+}
+
+function transactionsCsv(report: TransactionsReport): string {
+  // Transaction journal — one row per payment.
+  const header = [
+    'Date',
+    'Order Number',
+    'Customer',
+    'Method',
+    'Processor',
+    'Processor Txn ID',
+    'Status',
+    'Gross (USD)',
+    'Refunded (USD)',
+    'Net (USD)',
+    'Manually Keyed',
+  ] as const;
+
+  const rows: CsvRow[] = report.transactions.map((t) => [
+    t.date,
+    t.orderNumber,
+    t.customerName,
+    t.method,
+    t.processor,
+    t.processorTransactionId ?? '',
+    t.status,
+    dollars(t.grossCents),
+    dollars(t.refundedCents),
+    dollars(t.netCents),
+    t.manuallyKeyed ? 'yes' : 'no',
+  ]);
+
+  // Per-tender reconciliation breakdown.
+  rows.push([]);
+  rows.push(['Tender', 'Count', 'Gross (USD)', 'Refunded (USD)', 'Net (USD)', '', '', '', '', '', '']);
+  for (const m of report.byMethod) {
+    rows.push([m.method, m.count, dollars(m.grossCents), dollars(m.refundedCents), dollars(m.netCents)]);
+  }
+  rows.push([]);
+  rows.push([
+    'TOTAL',
+    report.count,
+    dollars(report.totalGrossCents),
+    dollars(report.totalRefundedCents),
+    dollars(report.totalNetCents),
+  ]);
+
+  return toCsv(header, rows);
+}
+
+/** Bundle slice needed to serialize any of the five reports. */
 export interface ExportableReports {
   revenue: RevenueReport;
   taxesFees: TaxesFeesReport;
   occupancy: OccupancyReport;
+  byLocation?: LocationReport;
+  transactions?: TransactionsReport;
 }
 
 /** Serialize the requested report kind to a CSV string (no BOM; add at output). */
@@ -117,6 +191,12 @@ export function buildReportCsv(kind: ReportKind, reports: ExportableReports): st
       return taxesFeesCsv(reports.taxesFees);
     case 'occupancy':
       return occupancyCsv(reports.occupancy);
+    case 'by-location':
+      if (!reports.byLocation) return toCsv(['Error'], [['No by-location data available']]);
+      return byLocationCsv(reports.byLocation);
+    case 'transactions':
+      if (!reports.transactions) return toCsv(['Error'], [['No transactions data available']]);
+      return transactionsCsv(reports.transactions);
     case 'revenue':
     default:
       return revenueCsv(reports.revenue);

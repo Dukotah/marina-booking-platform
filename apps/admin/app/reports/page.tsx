@@ -7,6 +7,7 @@ import { requirePermission } from '../../lib/session';
 import {
   getReportsBundle,
   resolveReportKind,
+  resolveRange,
   type ReportKind,
 } from '../../components/reports/queries';
 import { ReportTabs } from '../../components/reports/ReportTabs';
@@ -15,6 +16,15 @@ import { ExportButton } from '../../components/reports/ExportButton';
 import { RevenueReportView } from '../../components/reports/RevenueReportView';
 import { TaxesFeesReportView } from '../../components/reports/TaxesFeesReportView';
 import { OccupancyReportView } from '../../components/reports/OccupancyReportView';
+import {
+  ByLocationReportView,
+  type LocationReport,
+} from '../../components/reports/ByLocationReportView';
+import {
+  TransactionsReportView,
+  type TransactionsReport,
+} from '../../components/reports/TransactionsReportView';
+import { apiGet } from '../../lib/apiClient';
 
 export const metadata = {
   title: 'Reports',
@@ -33,11 +43,13 @@ function single(value: string | string[] | undefined): string | undefined {
 }
 
 /**
- * Reports page: revenue, taxes & fees, and occupancy over a selectable date
- * range, with CSV export. Every figure is tenant-scoped (RLS) and gated behind
- * `report:read`. Unlike the incumbent, this route never 404s — a missing/invalid
- * report kind falls back to revenue, an unknown range defaults to the last 30
- * days, and a permission failure renders a clear denied state in-page.
+ * Reports page: revenue, taxes & fees, occupancy, by-location, and accounting
+ * transactions over a selectable date range, with CSV export. Every figure is
+ * tenant-scoped (RLS) and gated behind `report:read`.
+ *
+ * The original three kinds read the DB directly via queries.ts. The two new
+ * kinds (by-location, transactions) fetch from the API — those aggregations live
+ * there (D-020/D-021) and must not be re-implemented here.
  */
 export default async function ReportsPage({ searchParams }: ReportsPageProps) {
   // Gate the whole page on report:read. Render a denied state rather than letting
@@ -48,7 +60,10 @@ export default async function ReportsPage({ searchParams }: ReportsPageProps) {
     if (err instanceof AuthorizationError) {
       return (
         <AdminShell>
-          <PageHeader title="Reports" description="Revenue, taxes & fees, and occupancy." />
+          <PageHeader
+            title="Reports"
+            description="Revenue, taxes & fees, occupancy, and accounting."
+          />
           <EmptyState
             icon={AlertTriangle}
             title="You don't have access to reports"
@@ -64,6 +79,60 @@ export default async function ReportsPage({ searchParams }: ReportsPageProps) {
   const from = single(searchParams?.from);
   const to = single(searchParams?.to);
 
+  // -------------------------------------------------------------------------
+  // API-sourced kinds: by-location and transactions
+  // These fetch from the Hono API (GET /api/reports/by-location|transactions)
+  // so the aggregation logic stays in one place (D-020/D-021).
+  // -------------------------------------------------------------------------
+  if (reportKind === 'by-location') {
+    const { range } = resolveRange(from, to);
+    const { report } = await apiGet<{ report: LocationReport }>('/api/reports/by-location', {
+      from: range.from,
+      to: range.to,
+    });
+
+    return (
+      <AdminShell>
+        <PageHeader
+          title="Reports"
+          description="Revenue, taxes & fees, occupancy, and accounting."
+          actions={<ExportButton reportKind={reportKind} from={range.from} to={range.to} />}
+        />
+        <div className="flex flex-col gap-6">
+          <ReportDateFilter from={range.from} to={range.to} reportKind={reportKind} />
+          <ReportTabs active={reportKind} from={range.from} to={range.to} />
+          <ByLocationReportView report={report} />
+        </div>
+      </AdminShell>
+    );
+  }
+
+  if (reportKind === 'transactions') {
+    const { range } = resolveRange(from, to);
+    const { report } = await apiGet<{ report: TransactionsReport }>('/api/reports/transactions', {
+      from: range.from,
+      to: range.to,
+    });
+
+    return (
+      <AdminShell>
+        <PageHeader
+          title="Reports"
+          description="Revenue, taxes & fees, occupancy, and accounting."
+          actions={<ExportButton reportKind={reportKind} from={range.from} to={range.to} />}
+        />
+        <div className="flex flex-col gap-6">
+          <ReportDateFilter from={range.from} to={range.to} reportKind={reportKind} />
+          <ReportTabs active={reportKind} from={range.from} to={range.to} />
+          <TransactionsReportView report={report} />
+        </div>
+      </AdminShell>
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // DB-sourced kinds: revenue, taxes-fees, occupancy (unchanged)
+  // -------------------------------------------------------------------------
   const bundle = await getReportsBundle(from, to);
   const { range, brandColor } = bundle;
 
@@ -71,7 +140,7 @@ export default async function ReportsPage({ searchParams }: ReportsPageProps) {
     <AdminShell>
       <PageHeader
         title="Reports"
-        description="Revenue, taxes & fees, and occupancy for your business."
+        description="Revenue, taxes & fees, occupancy, and accounting."
         actions={<ExportButton reportKind={reportKind} from={range.from} to={range.to} />}
       />
 

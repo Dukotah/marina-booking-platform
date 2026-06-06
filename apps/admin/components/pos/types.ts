@@ -7,7 +7,7 @@
  */
 
 /** Payment methods the register accepts. Mirrors the relevant PaymentMethod enum members. */
-export type PosPaymentMethod = 'CASH' | 'CARD';
+export type PosPaymentMethod = 'CASH' | 'CARD' | 'GIFT_CARD';
 
 /** Which entry tab a line item came from. Drives how we persist it at checkout. */
 export type CartLineKind = 'BOOKING' | 'MERCHANDISE' | 'MISC';
@@ -101,6 +101,13 @@ export interface SaleInput {
   tipCents: number;
   /** Cash tendered, in cents — used to compute change for CASH sales. */
   cashTenderedCents?: number;
+  /** Gift card code — present when paymentMethod === 'GIFT_CARD'. */
+  giftCardCode?: string;
+  /**
+   * Amount to draw from the gift card, integer cents. Omit to draw the full
+   * order balance (capped by the card's stored value).
+   */
+  giftCardAmountCents?: number;
   /** Optional customer details captured at the register; falls back to walk-up. */
   customer?: {
     firstName: string;
@@ -108,6 +115,33 @@ export interface SaleInput {
     email?: string;
     phone?: string;
   };
+}
+
+/** Input for a standalone gift-card tender against an already-created order. */
+export interface GiftCardTenderInput {
+  orderId: string;
+  code: string;
+  /** Amount to draw, integer cents. Omit to cover the full remaining balance. */
+  amountCents?: number;
+}
+
+/** Result from the gift-card balance-check affordance. */
+export interface GiftCardBalanceResult {
+  ok: boolean;
+  balanceCents?: number;
+  isActive?: boolean;
+  expired?: boolean;
+  error?: string;
+}
+
+/** Result from applying a gift-card tender. */
+export interface GiftCardTenderResult {
+  ok: boolean;
+  /** Amount actually applied, integer cents. */
+  appliedCents?: number;
+  /** Remaining order balance after the draw, integer cents. */
+  newBalanceDueCents?: number;
+  error?: string;
 }
 
 /** Result returned to the terminal after a checkout attempt. */

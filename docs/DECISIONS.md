@@ -780,3 +780,37 @@ existing frontend to confirm it works.
 owner-valuable, no-owner-keys-required work is connecting the Ferrari engine to a
 dashboard. It also makes the product demoable and de-risks everything downstream
 (you can't sell or onboard onto features no one can see).
+
+## D-029 — Admin management UIs call the live-tested API, not a duplicated/extracted service (2026-06-06) — Accepted
+
+The cockpit pages for **gift cards** and **resources/assets** need their backend.
+That logic lives in `apps/api` (services/routes), is live-verified, and is the
+single source of truth for the **gift-card money ledger** (D-014/15/16/18) and
+**shared-asset capacity** (D-024/26). Three options were weighed:
+
+1. **Re-implement in the admin via `withTenant`** (the usual admin direct-DB path,
+   D-007) — rejected: duplicating the signed-ledger + overspend-safe decrement (or
+   the resource-pool overlap math) is exactly the drift D-014's design forbids;
+   two implementations of a money invariant is a liability.
+2. **Extract the services into `@marina/core`** so both API + admin call one copy —
+   rejected for now: `@marina/core` is deliberately *pure* (money/pricing/
+   availability math + zod, deps = types/cuid2/zod). These services use `withTenant`
+   / Prisma, so extracting them would add `@marina/database` as a core dependency
+   and change core's nature, plus risk regressing the 167 live API tests for no
+   user-visible gain.
+3. **Admin Server Actions call the Hono API over HTTP** — chosen. Reuses the
+   proven, live-tested endpoints as the one source of truth, matching the existing
+   `orders/actions.ts → dispatchConfirmationEmail` precedent.
+
+Implemented as `apps/admin/lib/apiClient.ts` (apiGet/apiPost/apiPatch/apiDelete +
+`AdminApiError`). Auth is server-to-server: `x-operator-id` (trusted tenant resolve)
++ the `x-dev-staff-id` shim carrying the current staff's `auth_user_id` so the API's
+`requireStaff` applies the right RBAC. **Prod follow-up:** when `REQUIRE_CLERK_AUTH`
+is on, the API requires a verified Clerk bearer and ignores the shim — forwarding the
+admin's Clerk token to the API is the remaining piece (tracked ROADMAP Phase 3). All
+Clerk enforcement is owner-gated/off today, so the shim path is correct now.
+
+**Why:** one implementation of every money/capacity invariant, reusing what's
+already hardened and tested, with the least new surface and zero risk to the proven
+backend — at the cost of one deferred prod-auth wiring step that's already on the
+go-live list anyway.

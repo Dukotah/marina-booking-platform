@@ -1,16 +1,18 @@
 'use client';
 
-import { useState } from 'react';
-import { Banknote, CreditCard, Loader2, CheckCircle2, User } from 'lucide-react';
+import { useState, useTransition } from 'react';
+import { Banknote, CreditCard, Gift, Loader2, CheckCircle2, User } from 'lucide-react';
 import { formatUSD, toCents } from '@marina/core';
 import { cn } from '../../lib/cn';
-import type { PosPaymentMethod, SaleResult } from './types';
+import { checkGiftCardBalance } from '../../app/pos/actions';
+import type { GiftCardBalanceResult, PosPaymentMethod, SaleResult } from './types';
 
 /**
- * Payment + checkout panel. Choose cash or card, add an optional tip, optionally
- * attach a named customer (defaults to a walk-up guest), and complete the sale. For
- * cash, the operator enters the amount tendered and we show change due. The success
- * state acts as a lightweight receipt with the order number.
+ * Payment + checkout panel. Choose cash, card, or gift card; add an optional tip;
+ * optionally attach a named customer (defaults to a walk-up guest); and complete the
+ * sale. For cash the operator enters the amount tendered and we show change due. For
+ * gift card the operator enters the card code and can optionally check the balance
+ * before charging. The success state acts as a lightweight receipt.
  */
 export interface PaymentPanelProps {
   totalCents: number;
@@ -21,6 +23,15 @@ export interface PaymentPanelProps {
   onTipChange: (cents: number) => void;
   cashTenderedCents: number;
   onCashTenderedChange: (cents: number) => void;
+  /** Gift card code entered by staff. */
+  giftCardCode: string;
+  onGiftCardCodeChange: (code: string) => void;
+  /**
+   * Optional partial amount to draw from the gift card, integer cents.
+   * Leave 0 / undefined to draw the full order balance.
+   */
+  giftCardAmountCents: number;
+  onGiftCardAmountChange: (cents: number) => void;
   customer: { firstName: string; lastName: string; email: string; phone: string };
   onCustomerChange: (
     customer: { firstName: string; lastName: string; email: string; phone: string },
@@ -42,6 +53,10 @@ export function PaymentPanel({
   onTipChange,
   cashTenderedCents,
   onCashTenderedChange,
+  giftCardCode,
+  onGiftCardCodeChange,
+  giftCardAmountCents,
+  onGiftCardAmountChange,
   customer,
   onCustomerChange,
   submitting,
@@ -50,6 +65,8 @@ export function PaymentPanel({
   onNewSale,
 }: PaymentPanelProps) {
   const [showCustomer, setShowCustomer] = useState(false);
+  const [balanceResult, setBalanceResult] = useState<GiftCardBalanceResult | null>(null);
+  const [checkingBalance, startCheckBalance] = useTransition();
 
   // Success / receipt state.
   if (result?.ok) {
@@ -95,18 +112,24 @@ export function PaymentPanel({
         <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
           Payment method
         </div>
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-3 gap-2">
           <MethodButton
             active={method === 'CASH'}
-            onClick={() => onMethodChange('CASH')}
+            onClick={() => { onMethodChange('CASH'); setBalanceResult(null); }}
             icon={<Banknote className="h-4 w-4" aria-hidden />}
             label="Cash"
           />
           <MethodButton
             active={method === 'CARD'}
-            onClick={() => onMethodChange('CARD')}
+            onClick={() => { onMethodChange('CARD'); setBalanceResult(null); }}
             icon={<CreditCard className="h-4 w-4" aria-hidden />}
             label="Card"
+          />
+          <MethodButton
+            active={method === 'GIFT_CARD'}
+            onClick={() => { onMethodChange('GIFT_CARD'); setBalanceResult(null); }}
+            icon={<Gift className="h-4 w-4" aria-hidden />}
+            label="Gift card"
           />
         </div>
       </div>
@@ -198,6 +221,109 @@ export function PaymentPanel({
         </div>
       ) : null}
 
+      {/* Gift card entry */}
+      {method === 'GIFT_CARD' ? (
+        <div className="space-y-3">
+          <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+            Gift card
+          </div>
+
+          {/* Code input + balance check */}
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={giftCardCode}
+              onChange={(e) => {
+                onGiftCardCodeChange(e.target.value);
+                setBalanceResult(null);
+              }}
+              placeholder="Gift card code"
+              aria-label="Gift card code"
+              autoComplete="off"
+              spellCheck={false}
+              className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-mono text-slate-800 placeholder:font-sans placeholder:text-slate-400 focus:border-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            />
+            <button
+              type="button"
+              disabled={!giftCardCode.trim() || checkingBalance}
+              onClick={() => {
+                setBalanceResult(null);
+                startCheckBalance(async () => {
+                  const res = await checkGiftCardBalance(giftCardCode);
+                  setBalanceResult(res);
+                });
+              }}
+              className="shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {checkingBalance ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+              ) : (
+                'Check balance'
+              )}
+            </button>
+          </div>
+
+          {/* Balance feedback */}
+          {balanceResult ? (
+            balanceResult.ok ? (
+              <div
+                className={cn(
+                  'rounded-lg border px-3 py-2 text-sm',
+                  !balanceResult.isActive || balanceResult.expired
+                    ? 'border-amber-200 bg-amber-50 text-amber-800'
+                    : 'border-emerald-200 bg-emerald-50 text-emerald-800',
+                )}
+              >
+                {!balanceResult.isActive ? (
+                  'Card is inactive.'
+                ) : balanceResult.expired ? (
+                  'Card has expired.'
+                ) : (
+                  <>
+                    Balance: <span className="font-semibold">{formatUSD(balanceResult.balanceCents ?? 0)}</span>
+                    {(balanceResult.balanceCents ?? 0) < totalCents ? (
+                      <span className="ml-1 text-amber-700">
+                        — insufficient for {formatUSD(totalCents)}
+                      </span>
+                    ) : null}
+                  </>
+                )}
+              </div>
+            ) : (
+              <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                {balanceResult.error}
+              </p>
+            )
+          ) : null}
+
+          {/* Optional partial draw amount */}
+          <div>
+            <div className="mb-1 text-xs text-slate-500">
+              Amount to apply (leave blank to cover full balance)
+            </div>
+            <div className="relative">
+              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">
+                $
+              </span>
+              <input
+                type="number"
+                inputMode="decimal"
+                min="0.01"
+                step="0.01"
+                value={giftCardAmountCents ? (giftCardAmountCents / 100).toString() : ''}
+                onChange={(e) => {
+                  const v = Number.parseFloat(e.target.value);
+                  onGiftCardAmountChange(Number.isFinite(v) && v > 0 ? toCents(v) : 0);
+                }}
+                placeholder={(totalCents / 100).toFixed(2)}
+                aria-label="Gift card amount to apply"
+                className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-7 pr-3 text-sm text-slate-800 placeholder:text-slate-400 focus:border-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              />
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {/* Optional customer */}
       <div>
         <button
@@ -259,13 +385,14 @@ export function PaymentPanel({
           submitting ||
           itemCount === 0 ||
           totalCents <= 0 ||
-          (method === 'CASH' && cashTenderedCents < totalCents)
+          (method === 'CASH' && cashTenderedCents < totalCents) ||
+          (method === 'GIFT_CARD' && !giftCardCode.trim())
         }
         onClick={onCheckout}
         className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-5 text-base font-bold text-white transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
       >
         {submitting ? <Loader2 className="h-5 w-5 animate-spin" aria-hidden /> : null}
-        Charge {formatUSD(totalCents)}
+        {method === 'GIFT_CARD' ? 'Apply gift card' : `Charge ${formatUSD(totalCents)}`}
       </button>
     </div>
   );

@@ -93,6 +93,30 @@ I will build against sandboxes/free tiers and flag exactly when each is needed.
 
 ## Changelog
 
+- **2026-06-06** — **Cockpit sweep: 5 backend pillars surfaced in the admin UI (Phase 1, tasks 1.2–1.7).**
+  Built the admin UI for every shipped-but-unreachable backend capability, via a new shared
+  server-to-server API client (`apps/admin/lib/apiClient.ts`, D-029) so the money/capacity
+  invariants stay single-sourced in the live-tested API rather than duplicated in the admin.
+  - **Gift Cards** (`/giftcards` + nav): KPI tiles + table; issue, redeem, adjust (signed
+    delta + reason), void/reactivate, balance/ledger lookup — over `/api/giftcards`.
+  - **Resources/Assets** (`/resources` + nav): the moat, made visible — CRUD with
+    seat_capacity/quantity/out_of_service, allocation mode (SHARED_SEATS vs WHOLE_UNIT charter),
+    activity assignment, derived availableQty; writes via `/api/resources`, select options via
+    the existing direct-DB loaders.
+  - **Waiver Templates** (Settings → Waivers): version history + signature counts, publish a
+    new (immutable) version, activate — `operator:manage`-gated, read-only for others.
+  - **Reports**: two new tabs — **By Location** (item-level gross roll-up + chain total) and
+    **Accounting** (payment journal keyed by cash date + per-tender reconciliation), both
+    fetched from `/api/reports/*` and CSV-exportable through the existing export path.
+  - **POS gift-card tender**: a "Gift card" tender that applies stored value to the order's
+    balance via `/api/payments/gift-card` (order created then tendered; COMPLETED status, no
+    invalid PENDING).
+  Integration fixes I made: invalid `'PENDING'` OrderStatus → `'COMPLETED'` (schema has no
+  PENDING); a client component (`ResourcesClient`) importing the shell barrel (pulls Clerk
+  server-only) → import the `DataTable` leaf instead (the known client/server-boundary gotcha).
+  Verified: **typecheck 9/9 green**, **admin production build green (26 routes)**, web build
+  green. Built by 5 lean parallel Sonnet agents + a central integration pass. Live API-seam
+  verification is task 1.8. Held locally, not pushed (Vercel quota).
 - **2026-06-06** — **Customer email-OTP login UI — 0.7 fully ✅ (Phase 1 / cockpit, task 1.1).**
   Built the last 0.7 piece: a passwordless customer login on apps/web over the
   already-live-verified D-017 backend. New `/login` two-step screen (email → 6-digit

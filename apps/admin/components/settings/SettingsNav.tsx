@@ -9,6 +9,7 @@ import {
   MapPin,
   Plug,
   UserCog,
+  FileSignature,
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from '../../lib/cn';
@@ -31,6 +32,7 @@ export const SETTINGS_TABS: SettingsTab[] = [
   { label: 'Fees & Taxes', href: '/settings/fees', icon: Receipt, description: 'Taxes, processing, custom fees' },
   { label: 'Locations', href: '/settings/locations', icon: MapPin, description: 'Sites & addresses' },
   { label: 'Integrations', href: '/settings/integrations', icon: Plug, description: 'Payments, accounting, marketing' },
+  { label: 'Waivers', href: '/settings/waivers', icon: FileSignature, description: 'Versioned liability waiver templates' },
   { label: 'Staff', href: '/staff', icon: UserCog, description: 'Team members & roles' },
 ];
 

@@ -11,7 +11,15 @@ import {
 } from '@marina/core';
 import { withTenant } from '@marina/database';
 import { getOperatorContext, getTenantDb, requirePermission } from '../../lib/session';
-import type { CodeLookupResult, SaleInput, SaleResult } from '../../components/pos/types';
+import { apiGet, apiPost, isAdminApiError } from '../../lib/apiClient';
+import type {
+  CodeLookupResult,
+  GiftCardBalanceResult,
+  GiftCardTenderInput,
+  GiftCardTenderResult,
+  SaleInput,
+  SaleResult,
+} from '../../components/pos/types';
 
 /**
  * Server actions backing the integrated POS terminal.
@@ -42,9 +50,11 @@ const cartLineSchema = z.object({
 
 const saleSchema = z.object({
   lines: z.array(cartLineSchema).min(1, 'Add at least one item to the cart.'),
-  paymentMethod: z.enum(['CASH', 'CARD']),
+  paymentMethod: z.enum(['CASH', 'CARD', 'GIFT_CARD']),
   tipCents: z.number().int().nonnegative().default(0),
   cashTenderedCents: z.number().int().nonnegative().optional(),
+  giftCardCode: z.string().trim().min(1).optional(),
+  giftCardAmountCents: z.number().int().positive().optional(),
   customer: z
     .object({
       firstName: z.string().trim().min(1).max(80),
@@ -53,6 +63,14 @@ const saleSchema = z.object({
       phone: z.string().trim().max(32).optional(),
     })
     .optional(),
+}).superRefine((data, ctx) => {
+  if (data.paymentMethod === 'GIFT_CARD' && !data.giftCardCode) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['giftCardCode'],
+      message: 'A gift card code is required.',
+    });
+  }
 });
 
 // --- Code / QR lookup -----------------------------------------------------
@@ -229,6 +247,11 @@ export async function submitSale(input: SaleInput): Promise<SaleResult> {
         changeDueCents = tendered - pricing.totalCents;
       }
 
+      // Gift-card: we need the code — already validated by superRefine above.
+      if (sale.paymentMethod === 'GIFT_CARD' && !sale.giftCardCode) {
+        throw new SaleError('A gift card code is required.');
+      }
+
       // 5. Resolve / create the customer for the order.
       const customerId = await resolveCustomer(tx, operatorId, sale.customer);
 
@@ -248,14 +271,21 @@ export async function submitSale(input: SaleInput): Promise<SaleResult> {
 
       const orderId = createId();
 
-      // 7. Create the order. POS sales are paid in full at the register, so the
-      //    order is COMPLETED with the full amount paid and a zero balance.
+      // 7. Create the order. Cash/card POS sales are paid in full at the register.
+      //    Gift-card sales are created with the full balance outstanding so the
+      //    API's gift-card tender endpoint (applyGiftCardToOrder) can atomically
+      //    draw stored value and record the GIFT_CARD Payment in one operation.
+      const isGiftCard = sale.paymentMethod === 'GIFT_CARD';
       await tx.order.create({
         data: {
           id: orderId,
           operator_id: operatorId,
           order_number: orderNumber,
           customer_id: customerId,
+          // POS sales are completed at the register. A gift-card tender order is
+          // also COMPLETED; its unsettled state is carried by amount_paid /
+          // balance_due below until the gift-card API draws it down. There is no
+          // PENDING order status (see schema OrderStatus).
           status: 'COMPLETED',
           created_by: 'STAFF',
           subtotal_cents: pricing.subtotalCents,
@@ -264,8 +294,8 @@ export async function submitSale(input: SaleInput): Promise<SaleResult> {
           tip_cents: pricing.tipCents,
           discount_cents: pricing.discountCents,
           total_cents: pricing.totalCents,
-          amount_paid_cents: pricing.totalCents,
-          balance_due_cents: 0,
+          amount_paid_cents: isGiftCard ? 0 : pricing.totalCents,
+          balance_due_cents: isGiftCard ? pricing.totalCents : 0,
         },
       });
 
@@ -330,18 +360,23 @@ export async function submitSale(input: SaleInput): Promise<SaleResult> {
         });
       }
 
-      // 10. Payment.
-      await tx.payment.create({
-        data: {
-          id: createId(),
-          operator_id: operatorId,
-          order_id: orderId,
-          method: sale.paymentMethod,
-          status: 'PAID',
-          amount_cents: pricing.totalCents,
-          is_manually_keyed: sale.paymentMethod === 'CARD',
-        },
-      });
+      // 10. Payment. Gift-card tender is skipped here — the API's
+      //    POST /api/payments/gift-card records the GIFT_CARD Payment row
+      //    atomically together with the ledger draw (see applyGiftCardTender
+      //    server action called immediately after the transaction below).
+      if (!isGiftCard) {
+        await tx.payment.create({
+          data: {
+            id: createId(),
+            operator_id: operatorId,
+            order_id: orderId,
+            method: sale.paymentMethod,
+            status: 'PAID',
+            amount_cents: pricing.totalCents,
+            is_manually_keyed: sale.paymentMethod === 'CARD',
+          },
+        });
+      }
 
       // 11. Audit event for the sale itself.
       await tx.orderEvent.create({
@@ -369,8 +404,38 @@ export async function submitSale(input: SaleInput): Promise<SaleResult> {
         orderNumber,
         totalCents: pricing.totalCents,
         changeDueCents,
+        isGiftCard,
+        giftCardCode: sale.giftCardCode,
+        giftCardAmountCents: sale.giftCardAmountCents,
       };
     });
+
+    // For gift-card sales, apply the tender via the API now that the order exists.
+    // The API atomically draws stored value, records the GIFT_CARD Payment, and
+    // updates the order's amount_paid / balance_due. If this call fails we return
+    // an error that preserves the order number so staff can retry or void manually.
+    if (result.isGiftCard && result.giftCardCode) {
+      type GiftCardApiResult = {
+        payment: { id: string; amountCents: number };
+        order: { balanceDueCents: number };
+      };
+      try {
+        await apiPost<GiftCardApiResult>('/api/payments/gift-card', {
+          orderId: result.orderId,
+          code: result.giftCardCode,
+          ...(result.giftCardAmountCents !== undefined
+            ? { amountCents: result.giftCardAmountCents }
+            : {}),
+        });
+      } catch (err) {
+        // The order was created but the gift-card draw failed. Return a clear
+        // message so staff knows the order exists and the card was not charged.
+        const message = isAdminApiError(err)
+          ? mapGiftCardError(err.message, err.code)
+          : 'Gift card could not be applied. The order was created but no payment was taken.';
+        return { ok: false, error: message, orderId: result.orderId, orderNumber: result.orderNumber };
+      }
+    }
 
     revalidatePath('/orders');
     revalidatePath('/manifest');
@@ -454,4 +519,110 @@ async function resolveCustomer(
     },
   });
   return id;
+}
+
+/**
+ * Map a GiftCardError code/message from the API into a friendly display string
+ * for the register operator.
+ */
+function mapGiftCardError(message: string, code?: string): string {
+  switch (code) {
+    case 'GIFT_CARD_NOT_FOUND':
+      return 'Gift card not found. Check the code and try again.';
+    case 'GIFT_CARD_INACTIVE':
+      return 'That gift card is inactive and cannot be used.';
+    case 'GIFT_CARD_EXPIRED':
+      return 'That gift card has expired.';
+    case 'GIFT_CARD_INSUFFICIENT_BALANCE':
+      return 'Insufficient gift card balance. Ask the customer to pay the difference with another method.';
+    case 'GIFT_CARD_ZERO_BALANCE':
+      return 'That gift card has no remaining balance.';
+    case 'ORDER_NOT_FOUND':
+      return 'Order not found while applying the gift card. Please try again.';
+    case 'ORDER_ALREADY_PAID':
+      return 'The order has no outstanding balance.';
+    default:
+      return message || 'Gift card could not be applied.';
+  }
+}
+
+// --- Gift-card balance check ----------------------------------------------
+
+/**
+ * Look up a gift card's current balance. Public endpoint — no order required.
+ * Used by the POS "check balance" affordance before completing a sale.
+ */
+export async function checkGiftCardBalance(code: string): Promise<GiftCardBalanceResult> {
+  await requirePermission('pos:operate');
+
+  const trimmed = code.trim();
+  if (!trimmed) return { ok: false, error: 'Enter a gift card code.' };
+
+  type BalanceApiResponse = {
+    code: string;
+    balanceCents: number;
+    isActive: boolean;
+    expired: boolean;
+    expiresAt: string | null;
+  };
+
+  try {
+    const data = await apiGet<BalanceApiResponse>(`/api/giftcards/${encodeURIComponent(trimmed)}/balance`);
+    return {
+      ok: true,
+      balanceCents: data.balanceCents,
+      isActive: data.isActive,
+      expired: data.expired,
+    };
+  } catch (err) {
+    if (isAdminApiError(err)) {
+      if (err.status === 404) return { ok: false, error: 'Gift card not found.' };
+      return { ok: false, error: err.message };
+    }
+    throw err;
+  }
+}
+
+// --- Apply gift-card tender to an existing order --------------------------
+
+/**
+ * Apply a gift-card tender to an already-created order. Used when the POS
+ * needs to settle an order's balance (e.g., retry after a failed first attempt,
+ * or multi-tender split in a future iteration). Requires `order:write`.
+ */
+export async function applyGiftCardTender(
+  input: GiftCardTenderInput,
+): Promise<GiftCardTenderResult> {
+  await requirePermission('pos:operate');
+
+  if (!input.orderId || !input.code.trim()) {
+    return { ok: false, error: 'Order ID and gift card code are required.' };
+  }
+
+  type GiftCardApiResult = {
+    payment: { id: string; amountCents: number };
+    order: { id: string; amountPaidCents: number; balanceDueCents: number };
+  };
+
+  try {
+    const result = await apiPost<GiftCardApiResult>('/api/payments/gift-card', {
+      orderId: input.orderId,
+      code: input.code.trim(),
+      ...(input.amountCents !== undefined ? { amountCents: input.amountCents } : {}),
+    });
+
+    revalidatePath('/orders');
+    revalidatePath('/pos');
+
+    return {
+      ok: true,
+      appliedCents: result.payment.amountCents,
+      newBalanceDueCents: result.order.balanceDueCents,
+    };
+  } catch (err) {
+    if (isAdminApiError(err)) {
+      return { ok: false, error: mapGiftCardError(err.message, err.code) };
+    }
+    throw err;
+  }
 }

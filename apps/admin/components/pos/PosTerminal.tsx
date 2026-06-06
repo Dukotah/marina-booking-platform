@@ -50,6 +50,8 @@ export function PosTerminal({ activities, merchandise, config }: PosTerminalProp
   const [method, setMethod] = useState<PosPaymentMethod>('CARD');
   const [tipCents, setTipCents] = useState(0);
   const [cashTenderedCents, setCashTenderedCents] = useState(0);
+  const [giftCardCode, setGiftCardCode] = useState('');
+  const [giftCardAmountCents, setGiftCardAmountCents] = useState(0);
   const [customer, setCustomer] = useState(emptyCustomer);
   const [result, setResult] = useState<SaleResult | null>(null);
   const [submitting, startSubmit] = useTransition();
@@ -116,6 +118,8 @@ export function PosTerminal({ activities, merchandise, config }: PosTerminalProp
     setLines([]);
     setTipCents(0);
     setCashTenderedCents(0);
+    setGiftCardCode('');
+    setGiftCardAmountCents(0);
     setCustomer(emptyCustomer);
     setResult(null);
     setTab('BOOKINGS');
@@ -140,6 +144,9 @@ export function PosTerminal({ activities, merchandise, config }: PosTerminalProp
         paymentMethod: method,
         tipCents,
         cashTenderedCents: method === 'CASH' ? cashTenderedCents : undefined,
+        giftCardCode: method === 'GIFT_CARD' ? giftCardCode.trim() : undefined,
+        giftCardAmountCents:
+          method === 'GIFT_CARD' && giftCardAmountCents > 0 ? giftCardAmountCents : undefined,
         customer: hasCustomer
           ? {
               firstName: customer.firstName.trim(),
@@ -219,6 +226,10 @@ export function PosTerminal({ activities, merchandise, config }: PosTerminalProp
             onTipChange={setTipCents}
             cashTenderedCents={cashTenderedCents}
             onCashTenderedChange={setCashTenderedCents}
+            giftCardCode={giftCardCode}
+            onGiftCardCodeChange={setGiftCardCode}
+            giftCardAmountCents={giftCardAmountCents}
+            onGiftCardAmountChange={setGiftCardAmountCents}
             customer={customer}
             onCustomerChange={setCustomer}
             submitting={submitting}

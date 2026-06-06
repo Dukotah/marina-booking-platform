@@ -33,4 +33,15 @@
   route) → repointed to `/account` + added "Sign in". Verified: web typecheck clean +
   production build green (9 routes). **0.7 is now fully ✅.** Browser E2E deferred to
   the 1.8 verification pass (stand the stack up once, smoke everything together).
-- **Next:** Task 1.2 — Admin Gift Cards page.
+- **✅ Tasks 1.2–1.7 — Cockpit sweep (shipped).** Surfaced 5 backend pillars in the
+  admin UI: **Gift Cards**, **Resources/Assets** (the moat), **Waiver Templates**
+  (Settings), **Reports** By-Location + Accounting tabs, and **POS gift-card tender**.
+  Built a shared admin→API client (`apiClient.ts`) + logged **D-029** (admin management
+  calls the live-tested API so money/capacity invariants aren't duplicated). Used 5 lean
+  parallel Sonnet agents, then did the integration pass myself: fixed an invalid
+  `'PENDING'` order status and a client/server-boundary import (shell barrel → leaf).
+  Verified: **typecheck 9/9, admin build green (26 routes), web build green.**
+- **Now:** Task 1.8 — live verification. Standing up the API against Neon to smoke the
+  new admin→API seam + run the touched live suites. Full browser click-through is the
+  RAM-aware part (this machine is memory-tight) — doing server-side contract verification
+  first, then a UI smoke.
