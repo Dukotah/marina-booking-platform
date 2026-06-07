@@ -13,6 +13,7 @@ import {
   BarChart3,
   UserCog,
   Settings,
+  Tag,
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from '../../lib/cn';
@@ -36,6 +37,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Orders', href: '/orders', icon: Receipt },
   { label: 'Activities', href: '/activities', icon: Sailboat },
   { label: 'Customers', href: '/customers', icon: Users },
+  { label: 'Promos', href: '/promos', icon: Tag },
   { label: 'POS', href: '/pos', icon: ScanLine },
   { label: 'Reports', href: '/reports', icon: BarChart3 },
   { label: 'Staff', href: '/staff', icon: UserCog },
