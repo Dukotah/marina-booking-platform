@@ -6,6 +6,7 @@ import { getOrder, isApiError, type OrderSummary, type OrderLineItem } from '@/l
 import SiteHeader from '@/components/layout/SiteHeader';
 import SiteFooter from '@/components/layout/SiteFooter';
 import { ManagePanel } from '../manage-panel';
+import type { RescheduleItem } from '../RescheduleDialog';
 
 export const metadata: Metadata = {
   title: 'My Reservation',
@@ -108,7 +109,12 @@ export default async function BookingsPage({
 
   const badge = statusBadge(order.status);
   const changeable = order.status === 'UPCOMING' && upcoming.length > 0;
-  const rebookActivityId = order.items[0]?.activityId ?? null;
+  const rescheduleItems = upcoming.map((item) => ({
+    orderItemId: item.id,
+    activityId: item.activityId,
+    activityName: item.activityName,
+    datetime: item.datetime,
+  }));
 
   return (
     <Shell>
@@ -139,7 +145,9 @@ export default async function BookingsPage({
         orderNumber={order.orderNumber}
         operatorName={brand.name}
         changeable={changeable}
-        rebookActivityId={rebookActivityId}
+        email={email}
+        rescheduleItems={rescheduleItems}
+        accentColor={brand.color}
       />
 
       {upcoming.length > 0 && (
@@ -199,7 +207,9 @@ function ManagePanelSection(props: {
   orderNumber: string;
   operatorName: string;
   changeable: boolean;
-  rebookActivityId: string | null;
+  email: string;
+  rescheduleItems: RescheduleItem[];
+  accentColor: string;
 }) {
   return (
     <section className="mb-8">
@@ -208,7 +218,9 @@ function ManagePanelSection(props: {
         operatorName={props.operatorName}
         contactEmail={operatorContactEmail()}
         changeable={props.changeable}
-        rebookActivityId={props.rebookActivityId}
+        email={props.email}
+        rescheduleItems={props.rescheduleItems}
+        accentColor={props.accentColor}
       />
     </section>
   );

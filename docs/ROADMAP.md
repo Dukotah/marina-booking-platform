@@ -57,7 +57,7 @@ customer self-service reschedule.
 
 | # | Item | Status |
 |---|---|---|
-| 2.1 | **Customer self-service reschedule** — `rescheduleBooking` service (capacity move + `self_reschedule_hours` window) + staff `POST /orders/:id/reschedule` + customer `POST /orders/:orderNumber/self-reschedule` (email-gated) | ✅ backend (live-verified 5/5); web account slot-picker UI still TODO |
+| 2.1 | **Customer self-service reschedule** — `rescheduleBooking` service (capacity move + `self_reschedule_hours` window) + staff `POST /orders/:id/reschedule` + customer `POST /orders/:orderNumber/self-reschedule` (email-gated) | ✅ backend (live-verified 5/5) **+ web slot-picker UI** (RescheduleDialog on the account page; reuses the checkout calendar/time picker; typecheck + build green) |
 
 ## Phase 3 — Power features (the moat for complex customers)
 
@@ -82,6 +82,21 @@ I will build against sandboxes/free tiers and flag exactly when each is needed.
 
 ## Changelog
 
+- **2026-06-30** — **Customer self-service reschedule — web slot-picker UI (2.1 complete).**
+  Wired the customer-facing reschedule front-end onto the account page, closing the
+  one remaining TODO on 2.1. New `app/account/RescheduleDialog.tsx` (client) composes
+  the existing `AvailabilityCalendar` + `TimeSlotPicker` inside the shared `@marina/ui`
+  `Dialog`: the customer picks which upcoming booking to move (auto-selected when the
+  order has one item), chooses a new date + slot of the same activity, and confirms.
+  The move runs through a new `rescheduleBookingAction` server action →
+  `POST /api/orders/:orderNumber/self-reschedule` (email-gated, window-enforced by the
+  backend); BookingError codes (`RESCHEDULE_WINDOW_CLOSED`, `INSUFFICIENT_CAPACITY`,
+  `SAME_TIMESLOT`, …) are mapped to customer-safe copy, and success calls
+  `router.refresh()` so the new time shows immediately. Added `rescheduleBooking` to
+  `apps/web/lib/api.ts`; replaced the old "rebook a different slot" link in
+  `manage-panel.tsx` with the in-page dialog (disabled when nothing is changeable).
+  No DB or service-key changes — purely front-end over the live-verified backend.
+  Verified: `@marina/web` typecheck clean + production build green (8 routes).
 - **2026-06-04** — **Customer self-service reschedule (2.1) — backend + live-verified.**
   New `rescheduleBooking` service moves a booking's item to another slot of the same
   activity: releases the old slot's capacity, takes the new one (recomputing status),

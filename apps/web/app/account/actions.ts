@@ -11,7 +11,12 @@
  * followup (see slice notes).
  */
 
-import { getOrder, isApiError, type OrderSummary } from '@/lib/api';
+import {
+  getOrder,
+  rescheduleBooking,
+  isApiError,
+  type OrderSummary,
+} from '@/lib/api';
 
 /** Normalize an email for comparison (trim + lowercase). */
 function normalizeEmail(value: string): string {
@@ -88,4 +93,97 @@ export async function lookupBooking(
   }
 
   return { ok: true, orderNumber: order.orderNumber, email };
+}
+
+// ---------------------------------------------------------------------------
+// Self-service reschedule
+// ---------------------------------------------------------------------------
+
+export interface RescheduleSuccess {
+  ok: true;
+  /** The order after the move, with the item repointed to the new slot. */
+  order: OrderSummary;
+}
+
+export interface RescheduleFailure {
+  ok: false;
+  /** Human-readable, customer-safe message. */
+  error: string;
+}
+
+export type RescheduleResult = RescheduleSuccess | RescheduleFailure;
+
+export interface RescheduleInput {
+  orderNumber: string;
+  email: string;
+  timeslotId: string;
+  /** Required when the order has more than one active item. */
+  orderItemId?: string;
+}
+
+/** Map a server-side BookingError code to a customer-safe message. */
+function rescheduleErrorMessage(code: string | undefined): string {
+  switch (code) {
+    case 'RESCHEDULE_WINDOW_CLOSED':
+      return 'It is too close to your reservation to change it online. Please contact us for help.';
+    case 'INSUFFICIENT_CAPACITY':
+    case 'TIMESLOT_CANCELLED':
+    case 'TIMESLOT_NOT_FOUND':
+      return 'That time is no longer available. Please choose another.';
+    case 'SAME_TIMESLOT':
+      return 'That is the same time as your current booking. Pick a different slot.';
+    case 'ORDER_CANCELLED':
+      return 'This booking has been cancelled and can no longer be changed.';
+    default:
+      return 'We could not reschedule that booking. Please try again or contact us.';
+  }
+}
+
+/**
+ * Move an upcoming booking item to a new slot. Mirrors the lookup action's shape:
+ * returns a result object (never throws) so the dialog can render inline messages.
+ * The API re-verifies the email against the order and enforces the activity's
+ * self-reschedule window; we translate its error codes to friendly copy.
+ */
+export async function rescheduleBookingAction(
+  input: RescheduleInput,
+): Promise<RescheduleResult> {
+  const orderNumber = input.orderNumber.trim().toUpperCase();
+  const email = normalizeEmail(input.email);
+  const timeslotId = input.timeslotId.trim();
+  const orderItemId = input.orderItemId?.trim() || undefined;
+
+  if (!orderNumber || !looksLikeEmail(email) || !timeslotId) {
+    return {
+      ok: false,
+      error: 'Missing booking details for the reschedule. Please try again.',
+    };
+  }
+
+  try {
+    const order = await rescheduleBooking(orderNumber, {
+      email,
+      timeslotId,
+      orderItemId,
+    });
+    return { ok: true, order };
+  } catch (err) {
+    if (isApiError(err)) {
+      if (err.status === 404) {
+        return {
+          ok: false,
+          error: 'We could not find a booking matching those details.',
+        };
+      }
+      if (err.status === 0) {
+        return {
+          ok: false,
+          error:
+            'We could not reach the booking system. Please try again in a moment.',
+        };
+      }
+      return { ok: false, error: rescheduleErrorMessage(err.code) };
+    }
+    return { ok: false, error: 'Something went wrong. Please try again.' };
+  }
 }

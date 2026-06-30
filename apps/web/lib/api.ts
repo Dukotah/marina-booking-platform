@@ -333,6 +333,31 @@ export async function getOrder(orderNumber: string): Promise<OrderSummary> {
 }
 
 /**
+ * Customer self-service reschedule: move a booking item to a different time slot
+ * of the same activity. Identity is gated server-side by the email on the order
+ * (the magic-link stub), and the move must fall inside the activity's
+ * self-reschedule window. `orderItemId` is required when the order has more than
+ * one active item. Returns the updated order summary.
+ */
+export async function rescheduleBooking(
+  orderNumber: string,
+  payload: { email: string; timeslotId: string; orderItemId?: string },
+): Promise<OrderSummary> {
+  const data = await request<{ order: OrderSummary | null }>(
+    `/api/orders/${encodeURIComponent(orderNumber)}/self-reschedule`,
+    { method: 'POST', body: payload },
+  );
+  if (!data.order) {
+    throw new ApiError(
+      'The reschedule did not return an updated order.',
+      502,
+      'NO_ORDER',
+    );
+  }
+  return data.order;
+}
+
+/**
  * Submit a payment for an order using a tokenized payment source.
  * @param sourceId Stripe PaymentMethod id from Stripe Elements (sent as `sourceId`).
  */

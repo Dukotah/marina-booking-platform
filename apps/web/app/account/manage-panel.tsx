@@ -10,15 +10,17 @@
  * customer-cancel endpoint (gated by the magic-link session) lands, swap the
  * mailto for a server action calling it. See slice followups.
  *
- * Reschedule links the customer to the activity's booking page (rebook a new
- * slot), since drag-to-reschedule is an operator/manifest capability.
+ * Reschedule opens an in-page dialog (RescheduleDialog) that moves an upcoming
+ * booking to another slot of the same activity via the self-reschedule endpoint —
+ * no rebooking or re-payment. It is enabled only when there are changeable items;
+ * the activity's self-reschedule window is enforced server-side.
  *
  * White-label: all copy uses the tenant's operator name (brand). No platform or
  * marina-specific branding.
  */
 
 import { useState } from 'react';
-import Link from 'next/link';
+import { RescheduleDialog, type RescheduleItem } from './RescheduleDialog';
 
 interface ManagePanelProps {
   orderNumber: string;
@@ -27,8 +29,12 @@ interface ManagePanelProps {
   contactEmail: string | null;
   /** True when the booking is still upcoming and therefore changeable. */
   changeable: boolean;
-  /** First activity id, used as a convenient "rebook" target when present. */
-  rebookActivityId: string | null;
+  /** Verified order email — the identity gate for self-service changes. */
+  email: string;
+  /** Upcoming, still-changeable items the customer may move. */
+  rescheduleItems: RescheduleItem[];
+  /** Tenant brand color for dialog accents. */
+  accentColor: string;
 }
 
 export function ManagePanel({
@@ -36,9 +42,13 @@ export function ManagePanel({
   operatorName,
   contactEmail,
   changeable,
-  rebookActivityId,
+  email,
+  rescheduleItems,
+  accentColor,
 }: ManagePanelProps) {
   const [confirmingCancel, setConfirmingCancel] = useState(false);
+  const [showReschedule, setShowReschedule] = useState(false);
+  const canReschedule = changeable && rescheduleItems.length > 0;
 
   if (!changeable) {
     return (
@@ -77,19 +87,17 @@ export function ManagePanel({
       </h2>
 
       <div className="grid gap-3 sm:grid-cols-2">
-        <Link
-          href={
-            rebookActivityId
-              ? `/activities/${encodeURIComponent(rebookActivityId)}`
-              : '/'
-          }
-          className="flex flex-col rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-brand hover:shadow-md"
+        <button
+          type="button"
+          onClick={() => setShowReschedule(true)}
+          disabled={!canReschedule}
+          className="flex flex-col rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-brand hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-slate-200 disabled:hover:shadow-sm"
         >
           <span className="text-base font-semibold text-slate-900">Reschedule</span>
           <span className="mt-1 text-sm text-slate-600">
-            Pick a new date or time by booking a different slot.
+            Move this booking to a new date or time.
           </span>
-        </Link>
+        </button>
 
         <button
           type="button"
@@ -131,6 +139,18 @@ export function ManagePanel({
             </button>
           </div>
         </div>
+      )}
+
+      {canReschedule && (
+        <RescheduleDialog
+          open={showReschedule}
+          onClose={() => setShowReschedule(false)}
+          orderNumber={orderNumber}
+          email={email}
+          items={rescheduleItems}
+          operatorName={operatorName}
+          accentColor={accentColor}
+        />
       )}
     </div>
   );
