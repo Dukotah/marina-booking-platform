@@ -31,6 +31,12 @@ pnpm --filter @marina/database migrate:deploy
 echo "▸ Applying RLS policies…"
 pnpm db:rls
 
+echo "▸ Provisioning non-bypass app role (real tenant isolation)…"
+: "${APP_DB_PASSWORD:=appuserpass123}"
+export APP_DB_PASSWORD
+pnpm db:approle
+sudo -u postgres psql -d marina -c "GRANT CONNECT ON DATABASE marina TO app_user;" >/dev/null 2>&1 || true
+
 echo "▸ Seeding Lake Sonoma Marina (19 activities + 30 days of timeslots)…"
 pnpm db:seed
 
