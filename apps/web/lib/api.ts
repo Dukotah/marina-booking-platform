@@ -12,7 +12,14 @@
  * All money fields are integer cents (see @marina/types money helpers).
  */
 
-const API_URL = process.env.API_URL ?? 'http://localhost:3001';
+// Server-side: call the API directly. Browser-side: use this app's own origin
+// (empty base → relative `/api/...`) and let the Next rewrite proxy it to the API,
+// so client calls don't depend on the API being reachable at localhost from the
+// browser (matters on WSL/remote where localhost isn't forwarded).
+const API_URL =
+  typeof window === 'undefined'
+    ? (process.env.API_URL ?? 'http://localhost:3001')
+    : '';
 const OPERATOR_SLUG = process.env.OPERATOR_SLUG ?? 'lake-sonoma';
 
 // ---------------------------------------------------------------------------
