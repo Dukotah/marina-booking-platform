@@ -7,6 +7,7 @@ import {
   ROLE_PERMISSIONS,
   assertPermission,
 } from '@marina/auth';
+import { isPlatformAdmin, getActiveOperatorOverride } from './platform';
 
 /**
  * Admin app session + tenant resolution (decision D-007: the admin app talks to
@@ -63,6 +64,33 @@ function devFallbackContext(): OperatorContext {
  * not configured or no session is present — never throws in that path.
  */
 export async function getOperatorContext(): Promise<OperatorContext> {
+  const base = await resolveBaseContext();
+  return applyPlatformOverride(base);
+}
+
+/**
+ * If the signed-in identity is a platform admin and has "opened" a client (the
+ * active-operator cookie), return a context scoped to THAT client with full OWNER
+ * access — this is how the super-admin drops into any tenant's dashboard. For a
+ * normal operator staff member it's a no-op.
+ */
+function applyPlatformOverride(base: OperatorContext): OperatorContext {
+  if (!isPlatformAdmin(base.auth.userId)) return base;
+  const override = getActiveOperatorOverride();
+  if (!override || override === base.operatorId) return base;
+  return {
+    operatorId: override,
+    auth: {
+      ...base.auth,
+      operatorId: override,
+      role: 'OWNER',
+      extraPermissions: [],
+      locationIds: [],
+    },
+  };
+}
+
+async function resolveBaseContext(): Promise<OperatorContext> {
   if (!clerkConfigured()) {
     return devFallbackContext();
   }

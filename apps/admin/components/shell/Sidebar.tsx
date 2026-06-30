@@ -13,6 +13,7 @@ import {
   BarChart3,
   UserCog,
   Settings,
+  ShieldCheck,
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from '../../lib/cn';
@@ -52,9 +53,11 @@ export interface SidebarProps {
   brandName: string;
   /** Optional operator logo (light variant, shown on the dark rail). */
   logoUrl?: string | null;
+  /** Show the platform (super-admin) entry point. */
+  showPlatformLink?: boolean;
 }
 
-export function Sidebar({ brandName, logoUrl }: SidebarProps) {
+export function Sidebar({ brandName, logoUrl, showPlatformLink = false }: SidebarProps) {
   const pathname = usePathname();
 
   return (
@@ -90,6 +93,18 @@ export function Sidebar({ brandName, logoUrl }: SidebarProps) {
           );
         })}
       </nav>
+
+      {showPlatformLink && (
+        <div className="border-t border-slate-800 p-3">
+          <Link
+            href="/platform"
+            className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-emerald-300 transition-colors hover:bg-emerald-500/10"
+          >
+            <ShieldCheck className="h-5 w-5 shrink-0" aria-hidden />
+            <span>Platform</span>
+          </Link>
+        </div>
+      )}
 
       <div className="border-t border-slate-800 p-4 text-xs text-slate-500">
         Powered by your team

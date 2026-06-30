@@ -1,7 +1,9 @@
 import type { ReactNode } from 'react';
 import { getOperatorContext, getTenantDb } from '../../lib/session';
+import { isPlatformAdmin, getActiveOperatorOverride } from '../../lib/platform';
 import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
+import { ExitImpersonationBanner } from './ExitImpersonationBanner';
 
 /** Title-case a builtin role for display ("OWNER" -> "Owner"). */
 function roleLabel(role: string): string {
@@ -35,10 +37,14 @@ export async function AdminShell({ children }: { children: ReactNode }) {
 
   const userName = auth.userId === 'dev-owner' ? 'Dev Owner' : auth.userId;
 
+  const platformAdmin = isPlatformAdmin(auth.userId);
+  const impersonating = platformAdmin && Boolean(getActiveOperatorOverride());
+
   return (
     <div className="flex h-screen overflow-hidden bg-slate-100">
-      <Sidebar brandName={brandName} logoUrl={logoUrl} />
+      <Sidebar brandName={brandName} logoUrl={logoUrl} showPlatformLink={platformAdmin} />
       <div className="flex min-w-0 flex-1 flex-col">
+        {impersonating && <ExitImpersonationBanner clientName={brandName} />}
         <Topbar brandName={brandName} userName={userName} roleLabel={roleLabel(auth.role)} />
         <main className="flex-1 overflow-y-auto">
           <div className="mx-auto w-full max-w-7xl p-4 md:p-6 lg:p-8">{children}</div>
