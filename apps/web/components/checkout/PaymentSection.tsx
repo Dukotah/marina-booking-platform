@@ -14,6 +14,7 @@
  * called in that state. No secrets touch the browser: only the publishable key.
  */
 import { forwardRef, useImperativeHandle, useMemo, useState } from 'react';
+import { FlaskConical } from 'lucide-react';
 import { loadStripe, type Stripe } from '@stripe/stripe-js';
 import {
   CardElement,
@@ -128,6 +129,38 @@ const CardForm = forwardRef<PaymentSectionHandle, { testMode: boolean }>(
   },
 );
 
+/**
+ * Dev fake-payments panel — no real card field. Exposes the same imperative
+ * handle as the live form, returning a placeholder source the API's fake-payments
+ * mode accepts. Only rendered when stripe.fakeMode is on (local dev).
+ */
+const FakePaymentForm = forwardRef<PaymentSectionHandle>(
+  function FakePaymentForm(_props, ref) {
+    useImperativeHandle(
+      ref,
+      () => ({
+        isReady: () => true,
+        tokenize: async () => ({ ok: true as const, sourceId: 'dev_pm_fake' }),
+      }),
+      [],
+    );
+    return (
+      <div className="rounded-lg border border-violet-300 bg-violet-50 p-4">
+        <div className="flex items-start gap-3">
+          <FlaskConical className="mt-0.5 h-5 w-5 shrink-0 text-violet-600" aria-hidden />
+          <div className="space-y-1 text-sm">
+            <p className="font-semibold text-violet-900">Dev mode — payment simulated</p>
+            <p className="text-violet-800">
+              No Stripe key is configured, so this booking will be completed with a
+              simulated charge. No real card is processed.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  },
+);
+
 export const PaymentSection = forwardRef<PaymentSectionHandle, PaymentSectionProps>(
   function PaymentSection({ stripe }, ref) {
     // Hooks must run unconditionally — build the Stripe instance (null if unconfigured).
@@ -135,6 +168,11 @@ export const PaymentSection = forwardRef<PaymentSectionHandle, PaymentSectionPro
       () => (stripe.configured && stripe.publishableKey ? loadStripe(stripe.publishableKey) : null),
       [stripe.configured, stripe.publishableKey],
     );
+
+    // --- Dev fake-payments: simulate without Stripe (local dogfooding). ----------
+    if (!stripePromise && stripe.fakeMode) {
+      return <FakePaymentForm ref={ref} />;
+    }
 
     // --- Not configured: clear notice (no card field). The parent guards submit on
     // stripe.configured, so the imperative ref is never used in this state. --------

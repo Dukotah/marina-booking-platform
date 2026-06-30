@@ -134,7 +134,7 @@ export function CheckoutClient({
   const onSubmit = async (values: CheckoutFormValues) => {
     setSubmitError(null);
 
-    if (!stripe.configured) {
+    if (!stripe.configured && !stripe.fakeMode) {
       setSubmitError(
         'Online payments are not configured for this site yet, so this booking cannot be completed online. Please contact us to finish your reservation.',
       );
@@ -178,7 +178,7 @@ export function CheckoutClient({
         return;
       }
 
-      router.push(`/confirmation/${encodeURIComponent(result.order.orderNumber)}`);
+      router.push(`/confirmation?order=${encodeURIComponent(result.order.orderNumber)}`);
     } catch {
       setSubmitError('Something went wrong completing your booking. Please try again.');
     } finally {
@@ -281,7 +281,7 @@ export function CheckoutClient({
                 size="lg"
                 className="w-full"
                 loading={submitting}
-                disabled={!stripe.configured}
+                disabled={!stripe.configured && !stripe.fakeMode}
               >
                 {submitting ? 'Processing…' : 'Complete booking'}
               </Button>

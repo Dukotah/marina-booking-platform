@@ -80,7 +80,12 @@ async function main() {
       // Scope this transaction to the tenant so RLS allows the writes.
       await tx.$executeRawUnsafe(`SET LOCAL app.current_operator_id = '${OP_ID}'`);
 
-      // Idempotent reset (cascades to all children).
+      // Idempotent reset. `OrderItem -> Activity/Rate/Timeslot` are RESTRICT FKs
+      // (D-011), so deleting the operator can't cascade through activities while
+      // orders exist. Clear the order graph first (Order cascades to its items,
+      // payments, notes, events); then the operator delete cascades everything
+      // else. This keeps the seed re-runnable after dogfooding bookings exist.
+      await tx.order.deleteMany({ where: { operator_id: OP_ID } });
       await tx.operator.deleteMany({ where: { id: OP_ID } });
 
       const operator = await tx.operator.create({
@@ -188,10 +193,39 @@ async function main() {
         await tx.rate.createMany({
           data: ratesFor(s).map((r) => ({ ...r, operator_id: operator.id, activity_id: activity.id })),
         });
+
+        // Bookable timeslots for the next 30 days so the booking flow works out of
+        // the box (dev/dogfooding). Hours are stored in UTC matching ~8am–4pm PT;
+        // not DST-exact (dev data). Capacity = the activity's max party size.
+        const SLOT_HOURS = [8, 10, 12, 14, 16];
+        const PT_UTC_OFFSET = 7; // PDT; good enough for local dev.
+        const day0 = new Date();
+        day0.setUTCHours(0, 0, 0, 0);
+        const slots: {
+          operator_id: string;
+          activity_id: string;
+          datetime: Date;
+          capacity_total: number;
+        }[] = [];
+        for (let d = 1; d <= 30; d++) {
+          for (const h of SLOT_HOURS) {
+            const dt = new Date(day0);
+            dt.setUTCDate(day0.getUTCDate() + d);
+            dt.setUTCHours(h + PT_UTC_OFFSET, 0, 0, 0);
+            slots.push({
+              operator_id: operator.id,
+              activity_id: activity.id,
+              datetime: dt,
+              capacity_total: s.maxCap,
+            });
+          }
+        }
+        await tx.timeslot.createMany({ data: slots });
       }
 
       console.log(`  operator ${operator.name_external}`);
       console.log(`  ${ACTIVITIES.length} activities seeded`);
+      console.log(`  timeslots seeded (30 days × 5/day per activity)`);
     },
     { maxWait: 15000, timeout: 120000 },
   );

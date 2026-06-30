@@ -146,16 +146,83 @@ export interface OrderSummary {
   createdAt: string;
 }
 
-/** Outcome of submitting a payment for an order. */
+/** Outcome of submitting a payment for an order (maps the API charge response). */
 export interface PaymentResult {
-  orderId: string;
-  orderNumber: string;
   paymentId: string;
   status: 'PAID' | 'PARTIAL_REFUND' | 'REFUNDED' | 'FAILED' | 'PRE_AUTHORIZED';
   amountCents: number;
+  /** Order balance remaining after the charge. */
   balanceDueCents: number;
   cardLastFour: string | null;
   cardBrand: string | null;
+  receiptUrl: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// API order shape (server contract) + mapper to the flat OrderSummary above
+// ---------------------------------------------------------------------------
+
+/**
+ * The order JSON the API actually returns (`serializeOrder`): customer + line
+ * items are nested. We map it to the flat `OrderSummary` the pages consume so the
+ * contract lives in exactly one place.
+ */
+interface ApiOrder {
+  id: string;
+  orderNumber: string;
+  status: OrderSummary['status'];
+  subtotalCents: number;
+  discountCents: number;
+  taxCents: number;
+  processingFeeCents: number;
+  tipCents: number;
+  totalCents: number;
+  amountPaidCents: number;
+  balanceDueCents: number;
+  createdAt: string;
+  customer: {
+    id: string;
+    firstName: string;
+    lastName: string;
+    email: string;
+    phone: string | null;
+  };
+  items: Array<{
+    id: string;
+    quantity: number;
+    unitPriceCents: number;
+    activity: { id: string; name: string };
+    rate: { id: string; name: string; durationMinutes: number };
+    timeslot: { id: string; datetime: string };
+  }>;
+}
+
+function mapApiOrder(o: ApiOrder): OrderSummary {
+  return {
+    id: o.id,
+    orderNumber: o.orderNumber,
+    status: o.status,
+    customerName: `${o.customer.firstName} ${o.customer.lastName}`.trim(),
+    customerEmail: o.customer.email,
+    subtotalCents: o.subtotalCents,
+    discountCents: o.discountCents,
+    taxCents: o.taxCents,
+    processingFeeCents: o.processingFeeCents,
+    tipCents: o.tipCents,
+    totalCents: o.totalCents,
+    amountPaidCents: o.amountPaidCents,
+    balanceDueCents: o.balanceDueCents,
+    createdAt: o.createdAt,
+    items: o.items.map((it) => ({
+      id: it.id,
+      activityId: it.activity.id,
+      activityName: it.activity.name,
+      rateName: it.rate.name,
+      datetime: it.timeslot.datetime,
+      quantity: it.quantity,
+      unitPriceCents: it.unitPriceCents,
+    })),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -163,32 +230,33 @@ export interface PaymentResult {
 // ---------------------------------------------------------------------------
 
 export interface BookingParticipant {
-  fullName: string;
-  email?: string;
-  phone?: string;
-  dateOfBirth?: string;
+  driver_name: string;
+  license?: string;
+  /** ISO date YYYY-MM-DD. */
+  dob?: string;
+  experience?: 'NONE' | 'BEGINNER' | 'INTERMEDIATE' | 'EXPERIENCED';
 }
 
-export interface BookingLineInput {
+/**
+ * Create-booking payload — the flat, single-item shape the API validates with
+ * `@marina/core` `bookingInputSchema` (snake_case customer + participants). The
+ * checkout action validates with that same schema, so it can pass its parsed data
+ * straight through.
+ */
+export interface CreateBookingPayload {
   activityId: string;
   rateId: string;
   timeslotId: string;
   quantity: number;
-  participants?: BookingParticipant[];
-}
-
-export interface CreateBookingPayload {
   customer: {
-    firstName: string;
-    lastName: string;
+    first_name: string;
+    last_name: string;
     email: string;
     phone?: string;
   };
-  items: BookingLineInput[];
-  promoCode?: string | null;
+  participants?: BookingParticipant[];
+  promoCode?: string;
   tipCents?: number;
-  heardAboutUs?: string;
-  isReturningGuest?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -317,19 +385,19 @@ export async function validatePromo(
 export async function createBooking(
   payload: CreateBookingPayload,
 ): Promise<OrderSummary> {
-  const data = await request<{ order: OrderSummary }>('/api/bookings', {
+  const data = await request<{ order: ApiOrder }>('/api/bookings', {
     method: 'POST',
     body: payload,
   });
-  return data.order;
+  return mapApiOrder(data.order);
 }
 
 /** Fetch an order by its public order number (used on the confirmation page). */
 export async function getOrder(orderNumber: string): Promise<OrderSummary> {
-  const data = await request<{ order: OrderSummary }>(
+  const data = await request<{ order: ApiOrder }>(
     `/api/orders/${encodeURIComponent(orderNumber)}`,
   );
-  return data.order;
+  return mapApiOrder(data.order);
 }
 
 /**
@@ -343,7 +411,7 @@ export async function rescheduleBooking(
   orderNumber: string,
   payload: { email: string; timeslotId: string; orderItemId?: string },
 ): Promise<OrderSummary> {
-  const data = await request<{ order: OrderSummary | null }>(
+  const data = await request<{ order: ApiOrder | null }>(
     `/api/orders/${encodeURIComponent(orderNumber)}/self-reschedule`,
     { method: 'POST', body: payload },
   );
@@ -354,20 +422,40 @@ export async function rescheduleBooking(
       'NO_ORDER',
     );
   }
-  return data.order;
+  return mapApiOrder(data.order);
 }
 
 /**
  * Submit a payment for an order using a tokenized payment source.
  * @param sourceId Stripe PaymentMethod id from Stripe Elements (sent as `sourceId`).
+ *                 In dev-fake-payments mode a placeholder id is accepted.
  */
 export async function submitPayment(
   orderId: string,
   sourceId: string,
 ): Promise<PaymentResult> {
-  const data = await request<{ payment: PaymentResult }>(
-    `/api/orders/${encodeURIComponent(orderId)}/payments`,
-    { method: 'POST', body: { sourceId } },
-  );
-  return data.payment;
+  const data = await request<{
+    payment: {
+      id: string;
+      status: PaymentResult['status'];
+      amountCents: number;
+      cardBrand: string | null;
+      cardLastFour: string | null;
+      processorTransactionId: string | null;
+      receiptUrl: string | null;
+    };
+    order: { id: string; amountPaidCents: number; balanceDueCents: number };
+  }>('/api/payments/charge', {
+    method: 'POST',
+    body: { orderId, sourceId },
+  });
+  return {
+    paymentId: data.payment.id,
+    status: data.payment.status,
+    amountCents: data.payment.amountCents,
+    balanceDueCents: data.order.balanceDueCents,
+    cardLastFour: data.payment.cardLastFour,
+    cardBrand: data.payment.cardBrand,
+    receiptUrl: data.payment.receiptUrl,
+  };
 }

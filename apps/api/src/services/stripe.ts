@@ -59,6 +59,25 @@ export function isStripeConfigured(): boolean {
   return Boolean(process.env.STRIPE_SECRET_KEY);
 }
 
+/**
+ * Dev-only "fake payments" mode: when no Stripe key is configured but
+ * DEV_FAKE_PAYMENTS=true (and we are NOT in production), charges/refunds are
+ * simulated so the full booking flow can be dogfooded locally with no Stripe
+ * account. This NEVER activates in production, even if the flag is set.
+ */
+export function isFakePaymentsEnabled(): boolean {
+  return (
+    process.env.DEV_FAKE_PAYMENTS === 'true' &&
+    process.env.NODE_ENV !== 'production' &&
+    !isStripeConfigured()
+  );
+}
+
+/** True when payments can be taken — real Stripe OR the dev simulator. */
+export function arePaymentsEnabled(): boolean {
+  return isStripeConfigured() || isFakePaymentsEnabled();
+}
+
 let cachedClient: Stripe | null = null;
 let cachedKey: string | null = null;
 
@@ -126,6 +145,19 @@ export async function createPayment(input: {
     throw new StripePaymentError('Charge amount must be a positive integer (cents)', 400);
   }
 
+  // Dev simulator: succeed without touching Stripe.
+  if (isFakePaymentsEnabled()) {
+    return {
+      paymentId: `dev_pi_${input.idempotencyKey}`,
+      status: 'succeeded',
+      amountCents: input.amountCents,
+      cardBrand: 'Visa',
+      cardLastFour: '4242',
+      cardholderName: 'Dev Tester',
+      receiptUrl: null,
+    };
+  }
+
   const stripe = getStripeClient();
   try {
     const intent = await stripe.paymentIntents.create(
@@ -185,6 +217,15 @@ export async function refundPayment(input: {
 }): Promise<StripeRefundResult> {
   if (!Number.isInteger(input.amountCents) || input.amountCents <= 0) {
     throw new StripePaymentError('Refund amount must be a positive integer (cents)', 400);
+  }
+
+  // Dev simulator: refund without touching Stripe.
+  if (isFakePaymentsEnabled()) {
+    return {
+      refundId: `dev_re_${input.paymentId}_${input.amountCents}`,
+      status: 'succeeded',
+      amountCents: input.amountCents,
+    };
   }
 
   const stripe = getStripeClient();

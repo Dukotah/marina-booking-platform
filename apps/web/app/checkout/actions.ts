@@ -126,29 +126,17 @@ export async function placeOrder(
 
   const data = parsed.data;
 
+  // `parsed.data` already matches the API's flat bookingInputSchema contract
+  // (snake_case customer + participants), so it passes straight through.
   const payload: CreateBookingPayload = {
-    customer: {
-      firstName: data.customer.first_name,
-      lastName: data.customer.last_name,
-      email: data.customer.email,
-      phone: data.customer.phone,
-    },
-    items: [
-      {
-        activityId: data.activityId,
-        rateId: data.rateId,
-        timeslotId: data.timeslotId,
-        quantity: data.quantity,
-        participants: data.participants.map((p) => ({
-          fullName: p.driver_name,
-          dateOfBirth: p.dob,
-        })),
-      },
-    ],
-    promoCode: data.promoCode ?? null,
+    activityId: data.activityId,
+    rateId: data.rateId,
+    timeslotId: data.timeslotId,
+    quantity: data.quantity,
+    customer: data.customer,
+    participants: data.participants,
+    promoCode: data.promoCode,
     tipCents: data.tipCents,
-    heardAboutUs: input.heardAboutUs,
-    isReturningGuest: input.isReturningGuest,
   };
 
   let order: OrderSummary;

@@ -18,6 +18,12 @@ export interface StripeConfig {
   publishableKey: string | null;
   /** Test mode when the key is a pk_test_ key — drives the "Test" badge. */
   testMode: boolean;
+  /**
+   * Dev-only: no Stripe key but NEXT_PUBLIC_DEV_FAKE_PAYMENTS=true → simulate the
+   * payment (the API runs its matching fake-payments mode). Lets checkout complete
+   * end-to-end locally with no Stripe account.
+   */
+  fakeMode: boolean;
 }
 
 function clean(value: string | undefined): string | null {
@@ -30,9 +36,13 @@ export function getStripeConfig(): StripeConfig {
     clean(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY) ??
     clean(process.env.STRIPE_PUBLISHABLE_KEY);
 
+  const fakeMode =
+    !publishableKey && process.env.NEXT_PUBLIC_DEV_FAKE_PAYMENTS === 'true';
+
   return {
     configured: Boolean(publishableKey),
     publishableKey,
     testMode: publishableKey ? publishableKey.startsWith('pk_test_') : true,
+    fakeMode,
   };
 }

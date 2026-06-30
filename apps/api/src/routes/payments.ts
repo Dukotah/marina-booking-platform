@@ -25,7 +25,7 @@ import { requireStaff } from '../middleware/auth.js';
 import {
   createPayment,
   refundPayment,
-  isStripeConfigured,
+  arePaymentsEnabled,
   StripeNotConfiguredError,
   StripePaymentError,
 } from '../services/stripe.js';
@@ -68,7 +68,7 @@ function stripeErrorResponse(c: Context<Env>, err: unknown) {
  * OrderEvent. Public because customers pay during checkout (no staff session).
  */
 payments.post('/charge', async (c) => {
-  if (!isStripeConfigured()) {
+  if (!arePaymentsEnabled()) {
     return c.json({ error: 'payments not configured' }, 501);
   }
 
@@ -187,7 +187,7 @@ payments.post('/charge', async (c) => {
 payments.post('/:id/refund', requireStaff, async (c) => {
   assertPermission(c.var.auth, 'order:refund');
 
-  if (!isStripeConfigured()) {
+  if (!arePaymentsEnabled()) {
     return c.json({ error: 'payments not configured' }, 501);
   }
 
