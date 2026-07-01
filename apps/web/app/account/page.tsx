@@ -10,6 +10,10 @@ export const metadata: Metadata = {
   description: 'Look up, manage, and review your reservations.',
 };
 
+// The lookup form is interactive (useFormState); render on demand rather than
+// statically prerender it (avoids the Next static-export client-hook edge case).
+export const dynamic = 'force-dynamic';
+
 /**
  * Customer account landing — booking lookup.
  *

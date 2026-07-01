@@ -20,7 +20,20 @@ const API_URL =
   typeof window === 'undefined'
     ? (process.env.API_URL ?? 'http://localhost:3001')
     : '';
+// Per-request tenant override: an `operator_slug` cookie (set from `?operator=`)
+// lets a single local deployment preview any client; otherwise the env default.
+// Read from document.cookie in the browser; on the server, per-tenant preview is
+// a follow-up (would thread the slug from a server-only resolver to avoid pulling
+// next/headers into this client-imported module). SSR data uses the env default.
 const OPERATOR_SLUG = process.env.OPERATOR_SLUG ?? 'lake-sonoma';
+
+function resolveOperatorSlug(): string {
+  if (typeof document !== 'undefined') {
+    const m = document.cookie.match(/(?:^|;\s*)operator_slug=([^;]+)/);
+    if (m) return decodeURIComponent(m[1]!);
+  }
+  return OPERATOR_SLUG;
+}
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -284,7 +297,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   const { method = 'GET', body, cache = 'no-store', revalidate, signal } = opts;
 
   const headers: Record<string, string> = {
-    'x-operator-slug': OPERATOR_SLUG,
+    'x-operator-slug': resolveOperatorSlug(),
     accept: 'application/json',
   };
   if (body !== undefined) headers['content-type'] = 'application/json';
