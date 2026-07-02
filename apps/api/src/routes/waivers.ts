@@ -5,6 +5,7 @@ import { createId } from '@marina/core';
 import { assertPermission } from '@marina/auth';
 import type { Env } from '../context.js';
 import { requireStaff } from '../middleware/auth.js';
+import { rateLimit } from '../middleware/rate-limit.js';
 
 /**
  * Waivers API. All access is automatically tenant-scoped by RLS via `c.var.db`;
@@ -17,6 +18,10 @@ import { requireStaff } from '../middleware/auth.js';
  *   GET  /        — staff (order:read): all signatures captured for an order.
  */
 export const waivers = new Hono<Env>();
+
+// Throttle the public waiver-signing endpoint per IP + tenant (public write). The
+// staff GET / route below runs behind requireStaff and is not throttled.
+const publicRateLimit = rateLimit();
 
 /** Body for POST /sign — a customer (or guardian) signing a waiver for an item. */
 const signWaiverSchema = z.object({
@@ -78,7 +83,7 @@ waivers.get('/active', async (c) => {
  * customer as having a waiver on file. Performed in a single transaction so the
  * signature and the derived flags never drift.
  */
-waivers.post('/sign', async (c) => {
+waivers.post('/sign', publicRateLimit, async (c) => {
   const parsed = signWaiverSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) {
     return c.json({ error: 'Invalid request', issues: parsed.error.issues }, 400);

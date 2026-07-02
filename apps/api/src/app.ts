@@ -18,8 +18,58 @@ import { webhooks } from './routes/webhooks.js';
 
 export const app = new Hono<Env>();
 
+/**
+ * Allowed browser origins for CORS.
+ *
+ * Source of truth is the `ALLOWED_ORIGINS` env var (comma-separated). If unset we
+ * fall back to the known web (3000) + admin (3002) origins derived from
+ * `APP_BASE_DOMAIN`. In non-production we always additionally allow any
+ * localhost / 127.0.0.1 origin so local dev keeps working across ports.
+ */
+const isProd = process.env.NODE_ENV === 'production';
+
+function fallbackOrigins(): string[] {
+  const base = (process.env.APP_BASE_DOMAIN ?? 'localhost:3000').trim();
+  const scheme = isProd ? 'https' : 'http';
+  // Derive web + admin. In dev the base host is localhost:3000; admin runs on :3002.
+  if (base.startsWith('localhost') || base.startsWith('127.0.0.1')) {
+    return ['http://localhost:3000', 'http://localhost:3002'];
+  }
+  return [`${scheme}://${base}`, `${scheme}://admin.${base}`];
+}
+
+const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? '')
+  .split(',')
+  .map((o) => o.trim().replace(/\/+$/, ''))
+  .filter(Boolean);
+const originAllowList = new Set(
+  (allowedOrigins.length ? allowedOrigins : fallbackOrigins()).map((o) =>
+    o.replace(/\/+$/, ''),
+  ),
+);
+
+function isLocalhostOrigin(origin: string): boolean {
+  return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+}
+
 app.use('*', logger());
-app.use('*', cors());
+app.use(
+  '*',
+  cors({
+    // Reflect the request origin only if it's allow-listed (or any localhost in dev).
+    origin: (origin) => {
+      if (!origin) return undefined; // non-browser / same-origin requests
+      const normalized = origin.replace(/\/+$/, '');
+      if (originAllowList.has(normalized)) return origin;
+      if (!isProd && isLocalhostOrigin(normalized)) return origin;
+      return null; // not allowed — omit the header, browser blocks it
+    },
+    credentials: true,
+    allowMethods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowHeaders: ['Content-Type', 'Authorization', 'x-operator-slug', 'x-dev-staff-id'],
+    exposeHeaders: ['Retry-After'],
+  }),
+);
 
 // Liveness — no tenant required.
 app.get('/health', (c) => c.json({ ok: true, service: 'marina-api' }));

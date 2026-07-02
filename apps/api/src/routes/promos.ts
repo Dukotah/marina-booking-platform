@@ -4,8 +4,13 @@ import { promoValidateSchema, DISCOUNT_TYPES } from '@marina/core';
 import { assertPermission } from '@marina/auth';
 import type { Env } from '../context.js';
 import { requireStaff } from '../middleware/auth.js';
+import { rateLimit } from '../middleware/rate-limit.js';
 
 export const promos = new Hono<Env>();
+
+// Throttle the public promo-code validation endpoint per IP + tenant so codes
+// can't be brute-force enumerated. Staff CRUD routes below stay unthrottled.
+const publicRateLimit = rateLimit();
 
 /** Create/update payload for a promo code. Mirrors the Prisma `PromoCode` model. */
 const promoInputSchema = z.object({
@@ -34,7 +39,7 @@ const promoPatchSchema = promoInputSchema
  * shape on success, or `{ valid: false, reason }` on failure. Scoped to the
  * resolved tenant by RLS via c.var.db; codes are unique per operator.
  */
-promos.post('/validate', async (c) => {
+promos.post('/validate', publicRateLimit, async (c) => {
   const body = await c.req.json().catch(() => null);
   const parsed = promoValidateSchema.safeParse(body);
   if (!parsed.success) {

@@ -18,6 +18,7 @@ import { bookingInputSchema } from '@marina/core';
 import type { Prisma } from '@marina/database';
 import type { Env } from '../context.js';
 import { requireStaff } from '../middleware/auth.js';
+import { rateLimit } from '../middleware/rate-limit.js';
 import {
   createBooking,
   cancelBooking,
@@ -26,6 +27,11 @@ import {
 } from '../services/booking.js';
 
 export const orders = new Hono<Env>();
+
+// Throttle the PUBLIC/unauthenticated order endpoints (create, lookup-by-number,
+// self-reschedule) per client IP + tenant to blunt brute-force / enumeration / DoS.
+// Staff routes below run behind requireStaff and are intentionally not throttled.
+const publicRateLimit = rateLimit();
 
 // --- Serialization --------------------------------------------------------
 
@@ -82,7 +88,7 @@ function serializeOrder(order: OrderWithRelations) {
 
 // --- POST / : create a booking (public) -----------------------------------
 
-orders.post('/', async (c) => {
+orders.post('/', publicRateLimit, async (c) => {
   const body = await c.req.json().catch(() => null);
   const parsed = bookingInputSchema.safeParse(body);
   if (!parsed.success) {
@@ -172,7 +178,7 @@ orders.get('/', requireStaff, async (c) => {
 
 // --- GET /:orderNumber : fetch one (public-by-number OR staff) -------------
 
-orders.get('/:orderNumber', async (c) => {
+orders.get('/:orderNumber', publicRateLimit, async (c) => {
   const orderNumber = c.req.param('orderNumber');
 
   const order = await c.var.db.order.findFirst({
@@ -256,7 +262,7 @@ const selfRescheduleSchema = z.object({
   orderItemId: z.string().min(1).optional(),
 });
 
-orders.post('/:orderNumber/self-reschedule', async (c) => {
+orders.post('/:orderNumber/self-reschedule', publicRateLimit, async (c) => {
   const orderNumber = c.req.param('orderNumber');
   const parsed = selfRescheduleSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) {
