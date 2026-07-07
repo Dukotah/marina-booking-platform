@@ -242,3 +242,75 @@ build 3/3, all 90 tests green (no test charges a card — live charge still need
 
 **Why:** owner's processor of choice; Stripe's PaymentIntents + Elements are a clean fit
 and the schema already anticipated it, so the switch is low-risk and self-contained.
+
+## D-014 — Shared-resource capacity engine (2026-07-06) — Accepted
+
+The operational moat over Singenuity/FareHarbor: a physical **Resource** (a pool of
+interchangeable units — jet skis, pontoons, kayaks, guides) can back **multiple**
+activities, and its capacity is enforced ACROSS them. Booking any activity that draws
+from a resource reserves seats on it for the booking's time window, so the same boat
+can't be sold twice through two different activities at the same time.
+
+- **Model:** `Resource` (already existed: `quantity`, `seat_capacity`,
+  `out_of_service_qty`, M2M `ActivityResources`). New **`ResourceBooking`** table
+  records `(resource, order_item, seats, starts_at, ends_at)`. Pool seats =
+  `(quantity - out_of_service_qty) * seat_capacity`. A booking of N participants
+  consumes N seats (participant-seat model). Migration
+  `20260706151029_resource_bookings`; both `Resource` and `OrderItem` gained
+  `@@unique([operator_id, id])` so `ResourceBooking` uses tenant-composite FKs (D-011);
+  added to `rls.sql`.
+- **Availability = overlap query:** for a window [start, end) (start = timeslot
+  datetime, end = start + rate.duration_minutes), a pool's used seats = sum of
+  `ResourceBooking.seats` where `starts_at < end AND ends_at > start`. This layers ON
+  TOP of the existing per-timeslot capacity; activities with no linked resources behave
+  exactly as before (fully backward compatible).
+- **Wiring:** `apps/api/src/services/resources.ts` holds the pure helpers (return
+  conflicts, no throw → no import cycle). `booking.ts` checks + reserves on create,
+  releases on cancel, and re-windows (re-checking, excluding its own hold) on
+  reschedule.
+- **Bug found + fixed alongside:** order-number sequence counted orders by `created_at`
+  within the *slot's* calendar day, so two bookings for the same FUTURE day both got
+  seq 1 → duplicate order_number. Now counts by the `<CODE><YYMMDD>` order-number
+  prefix. Verified: API typecheck clean, **26/26 API tests green** incl. a new
+  `resource-capacity.integration.test.ts` proving cross-activity blocking (book A →
+  overlapping B refused → non-overlapping B allowed → cancel A frees B).
+
+**Why:** FareHarbor's real edge is operational density; shared-resource auto-blocking is
+the single highest-value piece. Modelling it as time-windowed reservations (not a
+per-slot counter) is what makes cross-activity and cross-time overlap correct.
+
+**Follow-ups (not yet built):** (1) reflect resource limits in the customer-facing
+availability calendar (enforcement already prevents overselling; the calendar can still
+show an over-optimistic slot that fails at checkout); (2) admin UI to manage resource
+pools + link them to activities (today only settable via DB/seed); (3) seed a shared
+pool so the local dogfood shows it live.
+
+## D-015 — Automated pre-arrival reminders via an event-tracked sweep (2026-07-07) — Accepted
+
+No-shows are a top operator pain; FareHarbor's automated reminders are part of its
+edge. We add the automation the codebase was missing (confirmation + reminder emails
+already existed; nothing triggered reminders on a schedule).
+
+- **Engine** (`apps/api/src/services/notifications.ts`): `selectDueReminderOrderIds`
+  (UPCOMING orders with a non-cancelled item whose timeslot starts in the window and
+  no prior REMINDER_SENT event) → `runDueReminders(operatorId, {withinHours})` sends
+  each via the existing `sendReminder` and stamps a **`REMINDER_SENT` OrderEvent** →
+  `runAllDueReminders` sweeps every active operator.
+- **Dedup without a migration:** idempotency is tracked with an OrderEvent (type
+  `REMINDER_SENT`, metadata `{delivered, providerId, reason}`), not a new column — so
+  it's migration-free and shows in the order's audit history. An order is reminded at
+  most once; without `RESEND_API_KEY` the send no-ops but the order is still stamped
+  (delivered:false), keeping the sweep idempotent in dev.
+- **Trigger** (`apps/api/src/routes/internal.ts`): `POST /internal/reminders/run`
+  (`?withinHours=`, default 24, clamped 1–168), mounted OUTSIDE the tenant middleware
+  (no tenant context; sweeps all operators). Secret-gated by `CRON_SECRET`
+  (`Authorization: Bearer` or `x-cron-secret`); open when unset, matching the Stripe
+  webhook posture. A cron (Vercel Cron / GH Action) hits it on a schedule at deploy.
+- Verified: API typecheck clean, **29/29 API tests** incl. new
+  `reminders.integration.test.ts` (selection window, idempotent dedup, cancelled
+  excluded) — all pass with NO email provider configured.
+
+**Why:** the selection + dedup + audit is the hard, correctness-critical part and it's
+fully testable offline; the actual email delivery is a config flip (Resend key) on the
+existing no-op path. **Follow-up:** add an SMS channel (Twilio) to the same sweep, and
+a cron schedule config at deploy.

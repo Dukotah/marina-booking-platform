@@ -62,7 +62,8 @@ export async function loadManifest(isoDate: string): Promise<ManifestData> {
                 select: {
                   id: true,
                   order_number: true,
-                  customer: { select: { first_name: true, last_name: true } },
+                  balance_due_cents: true,
+                  customer: { select: { first_name: true, last_name: true, phone: true } },
                 },
               },
             },
@@ -104,6 +105,8 @@ export async function loadManifest(isoDate: string): Promise<ManifestData> {
           endMin,
           startISO: slot.datetime.toISOString(),
           waiverSigned: item.waiver_signed,
+          balanceDueCents: item.order.balance_due_cents,
+          customerPhone: item.order.customer.phone ?? null,
         });
 
         totalBookings += 1;

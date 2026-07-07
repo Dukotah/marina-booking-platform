@@ -23,9 +23,9 @@ DECLARE
   t text;
   tenant_tables text[] := ARRAY[
     'Location', 'StaffMember', 'Activity', 'Rate', 'Timeslot', 'Resource',
-    'Customer', 'Order', 'OrderItem', 'Payment', 'Note', 'OrderEvent',
-    'Fee', 'MerchandiseItem', 'PromoCode', 'Waiver', 'WaiverSignature',
-    'Integration'
+    'ResourceBooking', 'Customer', 'Order', 'OrderItem', 'Payment', 'Note',
+    'OrderEvent', 'Fee', 'MerchandiseItem', 'PromoCode', 'Waiver',
+    'WaiverSignature', 'Integration'
   ];
 BEGIN
   FOREACH t IN ARRAY tenant_tables LOOP

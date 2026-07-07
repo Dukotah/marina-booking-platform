@@ -313,8 +313,38 @@ model Resource {
   enable_timer        Boolean    @default(false)
   is_active           Boolean    @default(true)
   activities          Activity[] @relation("ActivityResources")
+  bookings            ResourceBooking[]
+
+  // Target of tenant-composite FKs (D-011): ResourceBooking references
+  // [operator_id, id] so the DB refuses a booking that points at another tenant's
+  // resource.
+  @@unique([operator_id, id])
+  @@index([operator_id])
+}
+
+// A reservation of `seats` on a shared Resource for a specific time window,
+// created when an OrderItem books an activity backed by that resource. Overlap
+// across ALL activities sharing the resource is what enforces "one boat can't be
+// double-booked": availability subtracts the seats of every ResourceBooking whose
+// [starts_at, ends_at) window overlaps the requested window. Rows are removed on
+// cancel and re-windowed on reschedule.
+model ResourceBooking {
+  id            String    @id @default(cuid())
+  operator_id   String
+  resource_id   String
+  // Tenant-composite FKs (D-011): share operator_id with each parent.
+  resource      Resource  @relation(fields: [operator_id, resource_id], references: [operator_id, id], onDelete: Cascade)
+  order_item_id String
+  order_item    OrderItem @relation(fields: [operator_id, order_item_id], references: [operator_id, id], onDelete: Cascade)
+  seats         Int
+  starts_at     DateTime
+  ends_at       DateTime
+  created_at    DateTime  @default(now())
 
   @@index([operator_id])
+  // Drives the overlap query: same resource, window intersection.
+  @@index([resource_id, starts_at, ends_at])
+  @@index([order_item_id])
 }
 
 // ===========================================================================
@@ -418,7 +448,10 @@ model OrderItem {
   has_driven_boat  Boolean?
   created_at       DateTime        @default(now())
   waiver_signatures WaiverSignature[]
+  resource_bookings ResourceBooking[]
 
+  // Target of tenant-composite FKs (D-011) from ResourceBooking.
+  @@unique([operator_id, id])
   @@index([operator_id])
   @@index([order_id])
   @@index([timeslot_id])

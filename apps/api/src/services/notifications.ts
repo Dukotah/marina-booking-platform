@@ -19,7 +19,7 @@
  */
 
 import { Resend } from 'resend';
-import { forOperator, type TenantClient } from '@marina/database';
+import { adminPrisma, forOperator, Prisma, type TenantClient } from '@marina/database';
 import { formatUSD } from '@marina/core';
 import {
   renderEmail,
@@ -495,4 +495,129 @@ export async function sendRefundReceipt(input: {
     console.error('[notifications] sendRefundReceipt failed:', err);
     return skipped('unexpected failure');
   }
+}
+
+// ===========================================================================
+// Automated pre-arrival reminders (the scheduler-facing engine)
+// ===========================================================================
+
+/**
+ * OrderEvent type stamped once a reminder has been processed for an order, so
+ * re-running the sweep never double-reminds. Using an OrderEvent (rather than a
+ * new column) keeps this migration-free and gives a visible audit trail.
+ */
+export const REMINDER_EVENT_TYPE = 'REMINDER_SENT';
+
+export interface ReminderRunResult {
+  operatorId: string;
+  /** Orders whose trip falls in the window and hadn't been reminded. */
+  due: number;
+  /** Of those, how many actually dispatched (a real email went out). */
+  delivered: number;
+  /** Processed but not delivered (e.g. no Resend key, or no email on file). */
+  noop: number;
+}
+
+/**
+ * Order ids that should receive a pre-arrival reminder now: status UPCOMING, with a
+ * non-cancelled item whose timeslot starts in [now, until), and no prior
+ * REMINDER_SENT event. Exported so the selection logic is unit-testable without any
+ * email provider configured.
+ */
+export async function selectDueReminderOrderIds(
+  db: TenantClient,
+  now: Date,
+  until: Date,
+): Promise<string[]> {
+  const orders = await db.order.findMany({
+    where: {
+      status: 'UPCOMING',
+      items: {
+        some: { status: { not: 'CANCELLED' }, timeslot: { datetime: { gte: now, lt: until } } },
+      },
+      history: { none: { type: REMINDER_EVENT_TYPE } },
+    },
+    select: { id: true },
+  });
+  return orders.map((o) => o.id);
+}
+
+/**
+ * Send pre-arrival reminders for one operator's bookings starting within
+ * `withinHours`. Idempotent: each order gets a REMINDER_SENT audit event once
+ * processed, so subsequent runs skip it. Without a Resend key the send is a no-op
+ * but the order is still marked processed (metadata records `delivered:false`), so
+ * the sweep stays idempotent in dev; wire the key before relying on delivery.
+ */
+export async function runDueReminders(
+  operatorId: string,
+  opts: { withinHours: number; now?: Date; actor?: string },
+): Promise<ReminderRunResult> {
+  const now = opts.now ?? new Date();
+  const until = new Date(now.getTime() + Math.max(0, opts.withinHours) * 3_600_000);
+  const db = forOperator(operatorId);
+
+  const dueIds = await selectDueReminderOrderIds(db, now, until);
+
+  let delivered = 0;
+  let noop = 0;
+  for (const orderId of dueIds) {
+    let result: NotificationResult;
+    try {
+      result = await sendReminder({ operatorId, orderId });
+    } catch (err) {
+      console.error('[notifications] runDueReminders send failed:', err);
+      result = skipped('unexpected failure');
+    }
+    if (result.sent) delivered += 1;
+    else noop += 1;
+
+    // Stamp the audit event so this order isn't reconsidered next run.
+    await db.orderEvent.create({
+      data: {
+        operator_id: operatorId,
+        order_id: orderId,
+        type: REMINDER_EVENT_TYPE,
+        description: result.sent
+          ? 'Pre-arrival reminder sent'
+          : `Pre-arrival reminder processed (not delivered: ${result.skippedReason ?? 'no provider'})`,
+        actor: opts.actor ?? 'system',
+        metadata: {
+          delivered: result.sent,
+          providerId: result.id ?? null,
+          reason: result.skippedReason ?? null,
+        } as Prisma.InputJsonValue,
+      },
+    });
+  }
+
+  return { operatorId, due: dueIds.length, delivered, noop };
+}
+
+/**
+ * Run the reminder sweep across every active operator — the entry point a cron/
+ * scheduled task calls (via the internal HTTP endpoint). Iterates operators with the
+ * admin client, then does each operator's work through its RLS-scoped tenant client.
+ */
+export async function runAllDueReminders(opts: {
+  withinHours: number;
+  now?: Date;
+}): Promise<{ operators: number; due: number; delivered: number; noop: number; perOperator: ReminderRunResult[] }> {
+  const operators = await adminPrisma.operator.findMany({
+    where: { is_active: true },
+    select: { id: true },
+  });
+
+  const perOperator: ReminderRunResult[] = [];
+  for (const op of operators) {
+    perOperator.push(await runDueReminders(op.id, opts));
+  }
+
+  return {
+    operators: operators.length,
+    due: perOperator.reduce((n, r) => n + r.due, 0),
+    delivered: perOperator.reduce((n, r) => n + r.delivered, 0),
+    noop: perOperator.reduce((n, r) => n + r.noop, 0),
+    perOperator,
+  };
 }

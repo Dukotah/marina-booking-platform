@@ -16,7 +16,7 @@ import { getOperatorContext, getTenantDb } from '../../lib/session';
  */
 export interface CheckInResult {
   ok: boolean;
-  status?: 'CHECKED_IN' | 'UPCOMING';
+  status?: 'CHECKED_IN' | 'UPCOMING' | 'NO_SHOW';
   error?: string;
 }
 
@@ -102,6 +102,72 @@ export async function undoCheckInOrderItem(orderItemId: string): Promise<CheckIn
       order_id: item.order_id,
       type: 'CHECK_IN_UNDO',
       description: 'Check-in reverted from the day manifest',
+      actor: auth.userId,
+    },
+  });
+
+  revalidatePath('/manifest');
+  return { ok: true, status: 'UPCOMING' };
+}
+
+/**
+ * Mark a booking as a no-show (guest never arrived). Frees nothing (the slot is
+ * past), but records it for reporting and lets staff clear the manifest. Idempotent.
+ */
+export async function markNoShowOrderItem(orderItemId: string): Promise<CheckInResult> {
+  if (!orderItemId) return { ok: false, error: 'Missing booking id' };
+
+  const { auth } = await getOperatorContext();
+  if (!effectiveCanWrite(auth.role, auth.extraPermissions)) {
+    return { ok: false, error: 'You do not have permission to modify the manifest.' };
+  }
+
+  const db = await getTenantDb();
+  const item = await db.orderItem.findUnique({
+    where: { id: orderItemId },
+    select: { id: true, status: true, order_id: true },
+  });
+  if (!item) return { ok: false, error: 'Booking not found' };
+  if (item.status === 'NO_SHOW') return { ok: true, status: 'NO_SHOW' };
+
+  await db.orderItem.update({ where: { id: item.id }, data: { status: 'NO_SHOW' } });
+  await db.orderEvent.create({
+    data: {
+      operator_id: auth.operatorId,
+      order_id: item.order_id,
+      type: 'NO_SHOW',
+      description: 'Marked no-show from the day manifest',
+      actor: auth.userId,
+    },
+  });
+
+  revalidatePath('/manifest');
+  return { ok: true, status: 'NO_SHOW' };
+}
+
+/** Revert a no-show back to UPCOMING (mis-tap recovery). */
+export async function undoNoShowOrderItem(orderItemId: string): Promise<CheckInResult> {
+  if (!orderItemId) return { ok: false, error: 'Missing booking id' };
+
+  const { auth } = await getOperatorContext();
+  if (!effectiveCanWrite(auth.role, auth.extraPermissions)) {
+    return { ok: false, error: 'You do not have permission to modify the manifest.' };
+  }
+
+  const db = await getTenantDb();
+  const item = await db.orderItem.findUnique({
+    where: { id: orderItemId },
+    select: { id: true, status: true, order_id: true },
+  });
+  if (!item) return { ok: false, error: 'Booking not found' };
+
+  await db.orderItem.update({ where: { id: item.id }, data: { status: 'UPCOMING' } });
+  await db.orderEvent.create({
+    data: {
+      operator_id: auth.operatorId,
+      order_id: item.order_id,
+      type: 'NO_SHOW_UNDO',
+      description: 'No-show reverted from the day manifest',
       actor: auth.userId,
     },
   });

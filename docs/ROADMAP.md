@@ -82,6 +82,38 @@ I will build against sandboxes/free tiers and flag exactly when each is needed.
 
 ## Changelog
 
+- **2026-07-07** — **Phase 3: automated pre-arrival reminders (parity moat #3 start, D-015).**
+  Built the reminder automation the app was missing: `selectDueReminderOrderIds` /
+  `runDueReminders` / `runAllDueReminders` in the notifications service select UPCOMING
+  bookings starting within N hours, dedup via a `REMINDER_SENT` OrderEvent (no
+  migration), and send through the existing (Resend-gated) `sendReminder`. Cron entry:
+  `POST /internal/reminders/run` (secret-gated by `CRON_SECRET`, outside tenant mw).
+  29/29 API tests incl. new `reminders.integration.test.ts` (window, idempotency,
+  cancelled-excluded) — pass with no email key. Follow-up: Twilio SMS channel + deploy
+  cron schedule.
+- **2026-07-07** — **Phase 3: resource UI + dense manifest/check-in (parity moats #1–#2).**
+  Resource engine now operator-configurable: `/settings/resources` CRUD (pool size,
+  seats/unit, out-of-service, link activities) + `createResource/updateResource/
+  deleteResource` actions; customer availability calendar now subtracts overlapping
+  resource reservations (`getDayAvailability`); seeded a shared "Pontoon Fleet" pool
+  (main seed + `scripts/demo-resource.ts`). **Dense manifest**: new List view (default)
+  alongside the Gantt — every booking for the day in time order with waiver + balance
+  due + one-tap check-in / **no-show** / undo (`ManifestList`, `ManifestViews`,
+  `markNoShowOrderItem`/`undoNoShowOrderItem`). Admin typecheck clean; `next build`
+  compiles + generates all 23 pages (pre-existing Next 14.2 /404,/500 synthetic-export
+  quirk unresolved — pre-deploy only; added `not-found.tsx` + `global-error.tsx`).
+- **2026-07-06** — **Phase 3: shared-resource capacity engine — backend done (D-014).**
+  The FareHarbor-parity moat: a `Resource` pool (jet skis, boats, guides) backs multiple
+  activities and is enforced ACROSS them via time-windowed `ResourceBooking` overlap, so
+  the same boat can't be double-booked through two activities. Migration
+  `resource_bookings` + RLS applied live; `booking.ts` checks/reserves on create,
+  releases on cancel, re-windows on reschedule. Fixed a latent order-number collision
+  (two bookings for the same future day both got seq 1). **26/26 API tests green** incl.
+  new `resource-capacity.integration.test.ts`. Follow-ups: customer availability display,
+  admin resource-management UI, seed a demo pool. — Also this session: **full local
+  browser QA + 3 RSC/env bugs fixed** (turbo strict-env stripped `DATABASE_URL`;
+  `DataTable` `'use client'` broke server list pages; `SETTINGS_TABS` exported from a
+  client module). All admin pages now render clean.
 - **2026-06-30** — **Customer self-service reschedule — web slot-picker UI (2.1 complete).**
   Wired the customer-facing reschedule front-end onto the account page, closing the
   one remaining TODO on 2.1. New `app/account/RescheduleDialog.tsx` (client) composes

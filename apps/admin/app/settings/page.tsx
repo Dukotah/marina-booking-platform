@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { ChevronRight, Sparkles } from 'lucide-react';
 import { PageHeader } from '../../components/shell';
 import { getTenantDb, requirePermission } from '../../lib/session';
-import { SETTINGS_TABS } from '../../components/settings/SettingsNav';
+import { SETTINGS_TABS } from '../../components/settings/tabs';
 
 export const dynamic = 'force-dynamic';
 

@@ -11,7 +11,8 @@
  * (AVAILABLE / FILLING_UP / FULL) stays identical everywhere it is shown.
  */
 import { computeSlotStatus, generateTimeslots, type SlotStatus } from '@marina/core';
-import type { TenantClient } from '@marina/database';
+import type { Prisma, TenantClient } from '@marina/database';
+import { activityResourcePools, poolSeats, reservedSeats } from './resources.js';
 
 /** Customer-facing view of a single bookable timeslot. */
 export interface TimeslotView {
@@ -207,12 +208,80 @@ export async function getDayAvailability(
     },
   });
 
+  const timeslots = await applyResourceLimits(db, params.activityId, slots);
+
   return {
     activityId: params.activityId,
     date: params.date,
     timezone: timeZone,
-    timeslots: slots.map(toView),
+    timeslots,
   };
+}
+
+/**
+ * When an activity draws from shared resources, a slot's real availability is the
+ * MIN of its own remaining capacity and what the shared pools have left for that
+ * slot's window — so the calendar doesn't offer a slot the shared boat can't honour.
+ * No-op (returns the plain views) for activities with no linked resources.
+ *
+ * The window uses the activity's LONGEST rate duration: the conservative choice, so
+ * the display never over-promises a slot that a long booking would then be refused.
+ * Booking-time enforcement in the booking service remains authoritative.
+ */
+async function applyResourceLimits(
+  db: TenantClient,
+  activityId: string,
+  slots: Array<{
+    id: string;
+    datetime: Date;
+    capacity_total: number;
+    capacity_booked: number;
+    is_overnight: boolean;
+  }>,
+): Promise<TimeslotView[]> {
+  // The resource helpers accept a transaction client; the extended tenant client has
+  // the same delegates at runtime but a different (dynamic-extension) static type, so
+  // bridge it here once. Reads only — no writes happen on this path.
+  const rdb = db as unknown as Prisma.TransactionClient;
+
+  const pools = await activityResourcePools(rdb, activityId);
+  if (pools.length === 0) return slots.map(toView);
+
+  const longestRate = await db.rate.findFirst({
+    where: { activity_id: activityId, is_active: true },
+    orderBy: { duration_minutes: 'desc' },
+    select: { duration_minutes: true },
+  });
+  const durationMs = (longestRate?.duration_minutes ?? 0) * 60_000;
+
+  const views: TimeslotView[] = [];
+  for (const slot of slots) {
+    const startsAt = slot.datetime;
+    const endsAt = new Date(startsAt.getTime() + durationMs);
+
+    // Seats the shared pools have free for this window (min across pools).
+    let resourceRemaining = Number.POSITIVE_INFINITY;
+    for (const pool of pools) {
+      const used = await reservedSeats(rdb, { resourceId: pool.id, startsAt, endsAt });
+      resourceRemaining = Math.min(resourceRemaining, poolSeats(pool) - used);
+    }
+
+    const slotRemaining = slot.capacity_total - slot.capacity_booked;
+    const effectiveRemaining = Math.max(0, Math.min(slotRemaining, resourceRemaining));
+    // Re-express the resource limit as a booked count against the same total so the
+    // status rule (AVAILABLE/FILLING_UP/FULL) and the remaining number stay consistent.
+    const effectiveBooked = slot.capacity_total - effectiveRemaining;
+    views.push({
+      id: slot.id,
+      datetime: slot.datetime.toISOString(),
+      capacityTotal: slot.capacity_total,
+      capacityBooked: effectiveBooked,
+      capacityRemaining: effectiveRemaining,
+      status: computeSlotStatus(slot.capacity_total, effectiveBooked),
+      isOvernight: slot.is_overnight,
+    });
+  }
+  return views;
 }
 
 /** Inclusive-of-both-ends span between two YYYY-MM-DD dates, capped for safety. */

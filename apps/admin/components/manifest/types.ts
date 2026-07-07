@@ -23,6 +23,17 @@ export interface ManifestBooking {
   /** ISO start time for tooltips/labels (operator-local wall clock as rendered). */
   startISO: string;
   waiverSigned: boolean;
+  /** Outstanding balance on the parent order, in integer cents (collect at check-in). */
+  balanceDueCents: number;
+  /** Customer phone for quick contact from the dock, if on file. */
+  customerPhone: string | null;
+}
+
+/** One booking flattened with its activity context, for the dense list view. */
+export interface ManifestListItem extends ManifestBooking {
+  activityId: string;
+  activityName: string;
+  color: string;
 }
 
 /** A manifest row: one activity and all of its bookings for the day. */

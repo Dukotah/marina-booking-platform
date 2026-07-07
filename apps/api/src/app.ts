@@ -15,6 +15,7 @@ import { merchandise } from './routes/merchandise.js';
 import { pos } from './routes/pos.js';
 import { operator } from './routes/operator.js';
 import { webhooks } from './routes/webhooks.js';
+import { internal } from './routes/internal.js';
 
 export const app = new Hono<Env>();
 
@@ -77,6 +78,9 @@ app.get('/health', (c) => c.json({ ok: true, service: 'marina-api' }));
 // Webhooks resolve their own tenant from the event payload — they receive no
 // x-operator-slug header, so they live OUTSIDE the tenant middleware.
 app.route('/webhooks', webhooks);
+
+// Scheduled-job endpoints (reminder sweep) — no tenant context; secret-gated.
+app.route('/internal', internal);
 
 // Everything under /api is tenant-scoped.
 const api = new Hono<Env>();

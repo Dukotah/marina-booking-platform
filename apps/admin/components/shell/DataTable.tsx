@@ -1,5 +1,9 @@
-'use client';
-
+// No 'use client': this is a shared, render-only table. Server list pages
+// (orders, activities) render it directly and pass `cell` render functions —
+// which is only legal when the component is a Server Component. The two client
+// callers (CustomerTable, BookingHistory) import it into their client bundle,
+// where `onRowClick` still works. Adding 'use client' here breaks the server
+// pages with "Functions cannot be passed directly to Client Components".
 import type { ReactNode } from 'react';
 import { cn } from '../../lib/cn';
 

@@ -1,5 +1,5 @@
 import { AdminShell, PageHeader } from '../../components/shell';
-import { GanttManifest } from '../../components/manifest/GanttManifest';
+import { ManifestViews } from '../../components/manifest/ManifestViews';
 import { DateNav } from '../../components/manifest/DateNav';
 import { loadManifest } from './data';
 import { getOperatorContext, getTenantDb } from '../../lib/session';
@@ -50,7 +50,7 @@ export default async function ManifestPage({ searchParams }: ManifestPageProps) 
         />
       </div>
 
-      <GanttManifest rows={rows} />
+      <ManifestViews rows={rows} />
 
       <Legend />
     </AdminShell>

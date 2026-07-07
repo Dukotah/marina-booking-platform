@@ -2,37 +2,8 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import {
-  Palette,
-  ShieldCheck,
-  Receipt,
-  MapPin,
-  Plug,
-  UserCog,
-  type LucideIcon,
-} from 'lucide-react';
 import { cn } from '../../lib/cn';
-
-interface SettingsTab {
-  label: string;
-  href: string;
-  icon: LucideIcon;
-  description: string;
-}
-
-/**
- * Grouped settings navigation — the deliberate contrast to Singenuity's 18+
- * unsearchable settings pages. A small, sensible set of groups instead of a
- * sprawling list. "Staff" links into the dedicated staff slice.
- */
-export const SETTINGS_TABS: SettingsTab[] = [
-  { label: 'Branding', href: '/settings/branding', icon: Palette, description: 'Name, logo, brand color' },
-  { label: 'Policies', href: '/settings/policies', icon: ShieldCheck, description: 'Adult age, cancellation, check-in' },
-  { label: 'Fees & Taxes', href: '/settings/fees', icon: Receipt, description: 'Taxes, processing, custom fees' },
-  { label: 'Locations', href: '/settings/locations', icon: MapPin, description: 'Sites & addresses' },
-  { label: 'Integrations', href: '/settings/integrations', icon: Plug, description: 'Payments, accounting, marketing' },
-  { label: 'Staff', href: '/staff', icon: UserCog, description: 'Team members & roles' },
-];
+import { SETTINGS_TABS } from './tabs';
 
 function isActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(`${href}/`);

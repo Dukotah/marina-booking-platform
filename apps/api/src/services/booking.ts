@@ -21,6 +21,13 @@ import {
   type PricingPromo,
 } from '@marina/core';
 import { withTenant } from '@marina/database';
+import {
+  activityResourcePools,
+  bookingWindow,
+  findResourceConflict,
+  releaseResourceBookings,
+  writeResourceBookings,
+} from './resources.js';
 
 /** How an order entered the system (mirrors Prisma `OrderChannel`). */
 export type BookingChannel = 'CUSTOMER' | 'STAFF' | 'KIOSK';
@@ -98,7 +105,13 @@ export async function createBooking(
     // --- Load the rate; it must belong to this activity and be sellable. ---
     const rate = await tx.rate.findFirst({
       where: { id: input.rateId, activity_id: activity.id },
-      select: { id: true, price_cents: true, is_active: true, internal_only: true },
+      select: {
+        id: true,
+        price_cents: true,
+        duration_minutes: true,
+        is_active: true,
+        internal_only: true,
+      },
     });
     if (!rate) {
       throw new BookingError('RATE_NOT_FOUND', 'Rate not found for this activity', 404);
@@ -137,6 +150,28 @@ export async function createBooking(
           : `Only ${remaining} spot(s) remain for this timeslot`,
         409,
       );
+    }
+
+    // --- Shared-resource capacity: the same boat/guide can't be double-booked
+    //     across activities that share it. No-op for activities with no resources. ---
+    const pools = await activityResourcePools(tx, activity.id);
+    const { startsAt, endsAt } = bookingWindow(timeslot.datetime, rate.duration_minutes);
+    if (pools.length > 0) {
+      const conflict = await findResourceConflict(tx, {
+        pools,
+        startsAt,
+        endsAt,
+        seats: input.quantity,
+      });
+      if (conflict) {
+        throw new BookingError(
+          'INSUFFICIENT_RESOURCE',
+          conflict.remaining <= 0
+            ? `${conflict.name} is fully booked for this time`
+            : `Only ${conflict.remaining} left of ${conflict.name} for this time`,
+          409,
+        );
+      }
     }
 
     // --- Recompute pricing server-side from DB fees (NEVER trust the client). ---
@@ -231,13 +266,15 @@ export async function createBooking(
     // A customer whose record predates this transaction is a returning guest.
     const isReturningGuest = customer.created_at.getTime() < Date.now() - 1000;
 
-    // --- Generate a per-location, per-day sequential order number. ---
+    // --- Generate a per-location, per-day sequential order number. The sequence
+    //     counts orders already numbered for THIS slot-day prefix (not orders
+    //     created today): future-dated slots share a day, so counting by
+    //     created_at collided every order for that day on seq 1. ---
     const slotDate = timeslot.datetime;
-    const dayStart = new Date(slotDate.getFullYear(), slotDate.getMonth(), slotDate.getDate(), 0, 0, 0, 0);
-    const dayEnd = new Date(slotDate.getFullYear(), slotDate.getMonth(), slotDate.getDate() + 1, 0, 0, 0, 0);
+    const numberPrefix = generateOrderNumber(operator.location_code, slotDate, 0).slice(0, -3);
     const seq =
       (await tx.order.count({
-        where: { created_at: { gte: dayStart, lt: dayEnd } },
+        where: { order_number: { startsWith: numberPrefix } },
       })) + 1;
     const orderNumber = generateOrderNumber(operator.location_code, slotDate, seq);
 
@@ -295,6 +332,18 @@ export async function createBooking(
         status: computeSlotStatus(timeslot.capacity_total, newBooked),
       },
     });
+
+    // --- Reserve the shared resources this booking consumes for its window. ---
+    if (pools.length > 0) {
+      await writeResourceBookings(tx, {
+        operatorId,
+        orderItemId: order.items[0]!.id,
+        pools,
+        seats: input.quantity,
+        startsAt,
+        endsAt,
+      });
+    }
 
     // --- Bump promo redemption count when one was applied. ---
     if (promoCodeId) {
@@ -375,6 +424,12 @@ export async function cancelBooking(
         },
       });
     }
+
+    // Free every resource reservation the (soon-to-be) cancelled items held.
+    await releaseResourceBookings(
+      tx,
+      order.items.filter((i) => i.status !== 'CANCELLED').map((i) => i.id),
+    );
 
     await tx.orderItem.updateMany({
       where: { order_id: order.id, status: { not: 'CANCELLED' } },
@@ -481,7 +536,7 @@ export async function rescheduleBooking(
     // New slot: must belong to the same activity, be bookable, and have room.
     const newSlot = await tx.timeslot.findFirst({
       where: { id: newTimeslotId, activity_id: item.activity_id },
-      select: { id: true, capacity_total: true, capacity_booked: true, status: true },
+      select: { id: true, datetime: true, capacity_total: true, capacity_booked: true, status: true },
     });
     if (!newSlot) {
       throw new BookingError('TIMESLOT_NOT_FOUND', 'That timeslot is not available for this activity', 404);
@@ -522,6 +577,42 @@ export async function rescheduleBooking(
       data: { capacity_booked: newBooked, status: computeSlotStatus(newSlot.capacity_total, newBooked) },
     });
     await tx.orderItem.update({ where: { id: item.id }, data: { timeslot_id: newTimeslotId } });
+
+    // --- Move any shared-resource reservations to the new window (re-checking that
+    //     the resource is free then, excluding this item's own current hold). ---
+    const pools = await activityResourcePools(tx, item.activity_id);
+    if (pools.length > 0 && newSlot.datetime) {
+      const rateRow = await tx.rate.findFirst({
+        where: { id: item.rate_id },
+        select: { duration_minutes: true },
+      });
+      const { startsAt, endsAt } = bookingWindow(newSlot.datetime, rateRow?.duration_minutes ?? 0);
+      const conflict = await findResourceConflict(tx, {
+        pools,
+        startsAt,
+        endsAt,
+        seats: item.quantity,
+        excludeOrderItemId: item.id,
+      });
+      if (conflict) {
+        throw new BookingError(
+          'INSUFFICIENT_RESOURCE',
+          conflict.remaining <= 0
+            ? `${conflict.name} is fully booked for that time`
+            : `Only ${conflict.remaining} left of ${conflict.name} for that time`,
+          409,
+        );
+      }
+      await releaseResourceBookings(tx, [item.id]);
+      await writeResourceBookings(tx, {
+        operatorId,
+        orderItemId: item.id,
+        pools,
+        seats: item.quantity,
+        startsAt,
+        endsAt,
+      });
+    }
 
     await tx.orderEvent.create({
       data: {

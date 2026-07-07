@@ -175,6 +175,7 @@ async function main() {
 
       // Activities + rates
       let sort = 0;
+      const pontoonActivityIds: string[] = [];
       for (const s of ACTIVITIES) {
         const activity = await tx.activity.create({
           data: {
@@ -221,11 +222,31 @@ async function main() {
           }
         }
         await tx.timeslot.createMany({ data: slots });
+
+        if (s.name.includes('Pontoon')) pontoonActivityIds.push(activity.id);
+      }
+
+      // Shared-resource demo (D-014): a single "Pontoon Fleet" of 12 guest-seats that
+      // every pontoon activity draws from, so booking one pontoon reduces availability
+      // for the others — the cross-activity blocking that beats Singenuity/FareHarbor.
+      if (pontoonActivityIds.length > 0) {
+        await tx.resource.create({
+          data: {
+            operator_id: operator.id,
+            name: 'Pontoon Fleet',
+            seat_capacity: 12,
+            quantity: 1,
+            out_of_service_qty: 0,
+            is_active: true,
+            activities: { connect: pontoonActivityIds.map((id) => ({ id })) },
+          },
+        });
       }
 
       console.log(`  operator ${operator.name_external}`);
       console.log(`  ${ACTIVITIES.length} activities seeded`);
       console.log(`  timeslots seeded (30 days × 5/day per activity)`);
+      console.log(`  Pontoon Fleet shared resource → ${pontoonActivityIds.length} activities`);
     },
     { maxWait: 15000, timeout: 120000 },
   );

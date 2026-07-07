@@ -1,6 +1,24 @@
 {
   "$schema": "https://turbo.build/schema.json",
   "globalDependencies": [".env"],
+  "globalPassThroughEnv": [
+    "DATABASE_URL",
+    "DIRECT_URL",
+    "APP_DATABASE_URL",
+    "APP_DB_PASSWORD",
+    "REQUIRE_CLERK_AUTH",
+    "DEV_FAKE_PAYMENTS",
+    "API_URL",
+    "OPERATOR_SLUG",
+    "APP_BASE_DOMAIN",
+    "NODE_ENV",
+    "PORT",
+    "NEXT_PUBLIC_*",
+    "CLERK_*",
+    "STRIPE_*",
+    "RESEND_*",
+    "TWILIO_*"
+  ],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
