@@ -1,4 +1,6 @@
 /** @type {import('next').NextConfig} */
+// Review/demo deployment (no live DB): the customer portal degrades gracefully to a
+// "not connected" state so the UI/structure can be evaluated before infra is stood up.
 const nextConfig = {
   reactStrictMode: true,
   transpilePackages: ['@marina/types', '@marina/ui', '@marina/core'],

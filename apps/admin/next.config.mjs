@@ -1,4 +1,6 @@
 /** @type {import('next').NextConfig} */
+// Review/demo deployment (no live DB): the admin app degrades to an empty dashboard
+// with a "Live data unavailable" notice so the UI/structure can be evaluated first.
 const nextConfig = {
   reactStrictMode: true,
   // All @marina/* workspace packages ship TypeScript source — webpack must
