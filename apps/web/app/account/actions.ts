@@ -11,12 +11,8 @@
  * followup (see slice notes).
  */
 
-import {
-  getOrder,
-  rescheduleBooking,
-  isApiError,
-  type OrderSummary,
-} from '@/lib/api';
+import { getOrder, rescheduleBooking } from '@/lib/orders';
+import { isApiError, type OrderSummary } from '@/lib/api';
 
 /** Normalize an email for comparison (trim + lowercase). */
 function normalizeEmail(value: string): string {

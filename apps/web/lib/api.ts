@@ -12,6 +12,14 @@
  * All money fields are integer cents (see @marina/types money helpers).
  */
 
+import { DEMO_MODE } from './demo/config';
+import {
+  getDemoCatalog,
+  getDemoActivity,
+  getDemoAvailability,
+  getDemoPromo,
+} from './demo/fixtures';
+
 // Server-side: call the API directly. Browser-side: use this app's own origin
 // (empty base → relative `/api/...`) and let the Next rewrite proxy it to the API,
 // so client calls don't depend on the API being reachable at localhost from the
@@ -187,7 +195,7 @@ export interface PaymentResult {
  * items are nested. We map it to the flat `OrderSummary` the pages consume so the
  * contract lives in exactly one place.
  */
-interface ApiOrder {
+export interface ApiOrder {
   id: string;
   orderNumber: string;
   status: OrderSummary['status'];
@@ -217,7 +225,7 @@ interface ApiOrder {
   }>;
 }
 
-function mapApiOrder(o: ApiOrder): OrderSummary {
+export function mapApiOrder(o: ApiOrder): OrderSummary {
   return {
     id: o.id,
     orderNumber: o.orderNumber,
@@ -293,7 +301,7 @@ interface RequestOptions {
   signal?: AbortSignal;
 }
 
-async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
+export async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   const { method = 'GET', body, cache = 'no-store', revalidate, signal } = opts;
 
   const headers: Record<string, string> = {
@@ -364,12 +372,18 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 
 /** The full bookable catalog (active, online-visible activities) for the tenant. */
 export async function getCatalog(): Promise<CatalogActivity[]> {
+  if (DEMO_MODE) return getDemoCatalog();
   const data = await request<{ activities: CatalogActivity[] }>('/api/activities');
   return data.activities;
 }
 
 /** Detail for a single activity's booking page. */
 export async function getActivity(id: string): Promise<ActivityDetail> {
+  if (DEMO_MODE) {
+    const activity = getDemoActivity(id);
+    if (!activity) throw new ApiError('Activity not found', 404, 'NOT_FOUND');
+    return activity;
+  }
   const data = await request<{ activity: ActivityDetail }>(
     `/api/activities/${encodeURIComponent(id)}`,
   );
@@ -384,6 +398,7 @@ export async function getAvailability(
   activityId: string,
   isoDate: string,
 ): Promise<AvailabilityDay> {
+  if (DEMO_MODE) return getDemoAvailability(activityId, isoDate);
   const qs = new URLSearchParams({ date: isoDate });
   return request<AvailabilityDay>(
     `/api/activities/${encodeURIComponent(activityId)}/availability?${qs.toString()}`,
@@ -395,87 +410,15 @@ export async function validatePromo(
   code: string,
   activityId: string,
 ): Promise<PromoValidation> {
+  if (DEMO_MODE) return getDemoPromo(code, activityId);
   return request<PromoValidation>('/api/promos/validate', {
     method: 'POST',
     body: { code, activityId },
   });
 }
 
-/** Create a booking (order). Returns the order summary with computed totals. */
-export async function createBooking(
-  payload: CreateBookingPayload,
-): Promise<OrderSummary> {
-  const data = await request<{ order: ApiOrder }>('/api/bookings', {
-    method: 'POST',
-    body: payload,
-  });
-  return mapApiOrder(data.order);
-}
-
-/** Fetch an order by its public order number (used on the confirmation page). */
-export async function getOrder(orderNumber: string): Promise<OrderSummary> {
-  const data = await request<{ order: ApiOrder }>(
-    `/api/orders/${encodeURIComponent(orderNumber)}`,
-  );
-  return mapApiOrder(data.order);
-}
-
-/**
- * Customer self-service reschedule: move a booking item to a different time slot
- * of the same activity. Identity is gated server-side by the email on the order
- * (the magic-link stub), and the move must fall inside the activity's
- * self-reschedule window. `orderItemId` is required when the order has more than
- * one active item. Returns the updated order summary.
- */
-export async function rescheduleBooking(
-  orderNumber: string,
-  payload: { email: string; timeslotId: string; orderItemId?: string },
-): Promise<OrderSummary> {
-  const data = await request<{ order: ApiOrder | null }>(
-    `/api/orders/${encodeURIComponent(orderNumber)}/self-reschedule`,
-    { method: 'POST', body: payload },
-  );
-  if (!data.order) {
-    throw new ApiError(
-      'The reschedule did not return an updated order.',
-      502,
-      'NO_ORDER',
-    );
-  }
-  return mapApiOrder(data.order);
-}
-
-/**
- * Submit a payment for an order using a tokenized payment source.
- * @param sourceId Stripe PaymentMethod id from Stripe Elements (sent as `sourceId`).
- *                 In dev-fake-payments mode a placeholder id is accepted.
- */
-export async function submitPayment(
-  orderId: string,
-  sourceId: string,
-): Promise<PaymentResult> {
-  const data = await request<{
-    payment: {
-      id: string;
-      status: PaymentResult['status'];
-      amountCents: number;
-      cardBrand: string | null;
-      cardLastFour: string | null;
-      processorTransactionId: string | null;
-      receiptUrl: string | null;
-    };
-    order: { id: string; amountPaidCents: number; balanceDueCents: number };
-  }>('/api/payments/charge', {
-    method: 'POST',
-    body: { orderId, sourceId },
-  });
-  return {
-    paymentId: data.payment.id,
-    status: data.payment.status,
-    amountCents: data.payment.amountCents,
-    balanceDueCents: data.order.balanceDueCents,
-    cardLastFour: data.payment.cardLastFour,
-    cardBrand: data.payment.cardBrand,
-    receiptUrl: data.payment.receiptUrl,
-  };
-}
+// Order-mutating operations (create/pay/get/reschedule) live in `./orders` — a
+// server-only module — because in DEMO_MODE they reach a cookie-backed store that
+// imports `next/headers`, which must never be pulled into the client bundle. This
+// module (client-reachable via the availability/catalog components) stays free of
+// that dependency. See ./orders.

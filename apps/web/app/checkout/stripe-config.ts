@@ -26,6 +26,8 @@ export interface StripeConfig {
   fakeMode: boolean;
 }
 
+import { DEMO_MODE } from '@/lib/demo/config';
+
 function clean(value: string | undefined): string | null {
   const v = value?.trim();
   return v ? v : null;
@@ -36,8 +38,11 @@ export function getStripeConfig(): StripeConfig {
     clean(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY) ??
     clean(process.env.STRIPE_PUBLISHABLE_KEY);
 
+  // DEMO_MODE always simulates the card step (no Stripe key, no Stripe.js), so the
+  // whole booking funnel completes with zero external accounts.
   const fakeMode =
-    !publishableKey && process.env.NEXT_PUBLIC_DEV_FAKE_PAYMENTS === 'true';
+    !publishableKey &&
+    (DEMO_MODE || process.env.NEXT_PUBLIC_DEV_FAKE_PAYMENTS === 'true');
 
   return {
     configured: Boolean(publishableKey),
