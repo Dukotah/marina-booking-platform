@@ -13,6 +13,7 @@ import Link from 'next/link';
 import { getActivity, getAvailability, isApiError } from '@/lib/api';
 import { getBrand } from '@/lib/brand';
 import { getStripeConfig } from './stripe-config';
+import { getWalletConfig } from './wallet-config';
 import { CheckoutClient } from '@/components/checkout/CheckoutClient';
 import type { CheckoutSelection } from '@/components/checkout/types';
 
@@ -144,6 +145,7 @@ export default async function CheckoutPage({ searchParams }: CheckoutPageProps) 
   };
 
   const stripe = getStripeConfig();
+  const wallet = getWalletConfig();
   const brand = getBrand();
 
   return (
@@ -166,6 +168,7 @@ export default async function CheckoutPage({ searchParams }: CheckoutPageProps) 
       <CheckoutClient
         selection={selection}
         stripe={stripe}
+        wallet={wallet}
         operatorName={brand.name}
       />
     </main>

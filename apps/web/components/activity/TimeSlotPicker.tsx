@@ -39,7 +39,7 @@ function chipClasses(
   full: boolean,
 ): string {
   const base =
-    'flex flex-col items-center gap-0.5 rounded-xl border-2 px-3 py-2.5 text-center transition focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1';
+    'flex min-h-[52px] flex-col items-center justify-center gap-0.5 rounded-xl border-2 px-3 py-2.5 text-center transition focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1';
   if (full) {
     return `${base} cursor-not-allowed border-rose-100 bg-rose-50 text-rose-400`;
   }

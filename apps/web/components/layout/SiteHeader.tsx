@@ -11,6 +11,18 @@
  */
 import Link from 'next/link';
 import { getBrand, brandStyle, type Brand } from '@/lib/brand';
+import { DEMO_MODE } from '@/lib/demo/config';
+
+/** Slim notice shown only in DEMO_MODE so viewers know payments are simulated. */
+function DemoBanner() {
+  if (!DEMO_MODE) return null;
+  return (
+    <div className="w-full bg-slate-900 px-4 py-1.5 text-center text-xs font-medium text-slate-100">
+      Interactive demo — bookings are simulated, no real payments are taken. Try
+      promo code <span className="font-semibold text-white">SONOMA10</span> at checkout.
+    </div>
+  );
+}
 
 interface NavItem {
   label: string;
@@ -54,10 +66,12 @@ export function SiteHeader() {
   const brand = getBrand();
 
   return (
-    <header
-      style={brandStyle(brand)}
-      className="sticky top-0 z-40 w-full border-b border-slate-200 bg-white/90 backdrop-blur supports-[backdrop-filter]:bg-white/75"
-    >
+    <>
+      <DemoBanner />
+      <header
+        style={brandStyle(brand)}
+        className="sticky top-0 z-40 w-full border-b border-slate-200 bg-white/90 backdrop-blur supports-[backdrop-filter]:bg-white/75"
+      >
       <div className="mx-auto flex h-16 max-w-6xl items-center justify-between gap-4 px-4">
         <Link href="/" aria-label={`${brand.name} home`} className="shrink-0">
           <BrandMark brand={brand} />
@@ -129,7 +143,8 @@ export function SiteHeader() {
           </nav>
         </details>
       </div>
-    </header>
+      </header>
+    </>
   );
 }
 

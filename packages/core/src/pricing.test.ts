@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  applyMemberPrice,
   calculatePricing,
+  computeDepositCents,
+  resolveDepositPercent,
+  resolveEffectivePrice,
   type PricingFee,
   type PricingItem,
 } from './pricing.js';
@@ -353,5 +357,183 @@ describe('calculatePricing — rounding edge cases', () => {
     expect(result.totalCents).toBe(
       taxable + result.taxCents + result.processingFeeCents + result.tipCents,
     );
+  });
+});
+
+describe('resolveDepositPercent', () => {
+  it('prefers the activity percent when set', () => {
+    expect(resolveDepositPercent(30, 50)).toBe(30);
+  });
+
+  it('falls back to the operator default when the activity is null/0', () => {
+    expect(resolveDepositPercent(null, 25)).toBe(25);
+    expect(resolveDepositPercent(0, 25)).toBe(25);
+    expect(resolveDepositPercent(undefined, 25)).toBe(25);
+  });
+
+  it('returns 0 (pay in full) when neither is set', () => {
+    expect(resolveDepositPercent(null, null)).toBe(0);
+    expect(resolveDepositPercent(0, 0)).toBe(0);
+    expect(resolveDepositPercent(undefined, undefined)).toBe(0);
+  });
+
+  it('clamps to 1..99 and truncates fractions', () => {
+    expect(resolveDepositPercent(150, null)).toBe(99);
+    expect(resolveDepositPercent(33.9, null)).toBe(33);
+  });
+});
+
+describe('computeDepositCents', () => {
+  it('returns the given percentage of the total (rounded)', () => {
+    expect(computeDepositCents(10000, 30)).toBe(3000);
+    expect(computeDepositCents(9999, 50)).toBe(5000); // 4999.5 -> 5000 (half-up)
+  });
+
+  it('returns the full total when no deposit applies (percent 0 or >=100)', () => {
+    expect(computeDepositCents(10000, 0)).toBe(10000);
+    expect(computeDepositCents(10000, 100)).toBe(10000);
+  });
+
+  it('never exceeds the total and is at least 1c for a positive total+percent', () => {
+    expect(computeDepositCents(50, 1)).toBe(1); // 0.5 -> 1 (rounded), floored at 1
+    expect(computeDepositCents(10, 99)).toBe(10); // 9.9 -> 10, capped at total
+  });
+
+  it('is 0 for a zero total', () => {
+    expect(computeDepositCents(0, 30)).toBe(0);
+  });
+
+  it('splits total into deposit + balance that always sums back to total', () => {
+    const total = 12345;
+    const deposit = computeDepositCents(total, 40);
+    expect(deposit).toBe(4938); // 4938 (round of 4938)
+    expect(total - deposit).toBe(7407);
+    expect(deposit + (total - deposit)).toBe(total);
+  });
+});
+
+// ===========================================================================
+// Member pricing (Upmarket §1 #6-A)
+// ===========================================================================
+
+describe('applyMemberPrice', () => {
+  it('applies a percent-off member discount, rounded to cents', () => {
+    // 10000c base, 15% off => 8500c
+    expect(applyMemberPrice(10000, { discountType: 'PERCENT', discountValue: 15 })).toBe(8500);
+  });
+
+  it('applies a flat cents-off member discount', () => {
+    expect(applyMemberPrice(10000, { discountType: 'FLAT', discountValue: 500 })).toBe(9500);
+  });
+
+  it('is a no-op for a null / zero-value membership', () => {
+    expect(applyMemberPrice(10000, null)).toBe(10000);
+    expect(applyMemberPrice(10000, { discountType: 'PERCENT', discountValue: 0 })).toBe(10000);
+  });
+
+  it('never produces a negative price when a flat discount exceeds the base', () => {
+    expect(applyMemberPrice(300, { discountType: 'FLAT', discountValue: 500 })).toBe(0);
+  });
+
+  it('clamps a >100% percent discount to a zero floor', () => {
+    expect(applyMemberPrice(5000, { discountType: 'PERCENT', discountValue: 150 })).toBe(0);
+  });
+});
+
+// ===========================================================================
+// Dynamic pricing rules (Upmarket §1 #6-C)
+// ===========================================================================
+
+describe('resolveEffectivePrice', () => {
+  const SAT = new Date(2026, 6, 11); // 2026-07-11 is a Saturday
+  const WED = new Date(2026, 6, 8); // 2026-07-08 is a Wednesday
+
+  it('passes the base price through unchanged when no rules apply', () => {
+    const r = resolveEffectivePrice(10000, [], { date: WED });
+    expect(r.priceCents).toBe(10000);
+    expect(r.applied).toHaveLength(0);
+  });
+
+  it('applies a weekend percent markup on Saturday but not Wednesday', () => {
+    const rule = {
+      kind: 'WEEKEND' as const,
+      adjustmentType: 'PERCENT' as const,
+      adjustmentValue: 20,
+    };
+    expect(resolveEffectivePrice(10000, [rule], { date: SAT }).priceCents).toBe(12000);
+    expect(resolveEffectivePrice(10000, [rule], { date: WED }).priceCents).toBe(10000);
+  });
+
+  it('honors a seasonal window (inclusive) by calendar date', () => {
+    const rule = {
+      kind: 'SEASONAL' as const,
+      adjustmentType: 'FLAT' as const,
+      adjustmentValue: 1000,
+      startsOn: new Date(2026, 6, 1),
+      endsOn: new Date(2026, 6, 31),
+    };
+    expect(resolveEffectivePrice(10000, [rule], { date: WED }).priceCents).toBe(11000);
+    // Outside the window: no change.
+    expect(
+      resolveEffectivePrice(10000, [rule], { date: new Date(2026, 7, 5) }).priceCents,
+    ).toBe(10000);
+  });
+
+  it('fires a demand rule only when booked ratio crosses the threshold', () => {
+    const rule = {
+      kind: 'DEMAND' as const,
+      adjustmentType: 'PERCENT' as const,
+      adjustmentValue: 10,
+      demandThreshold: 0.8,
+    };
+    expect(resolveEffectivePrice(10000, [rule], { date: WED, bookedRatio: 0.9 }).priceCents).toBe(11000);
+    expect(resolveEffectivePrice(10000, [rule], { date: WED, bookedRatio: 0.5 }).priceCents).toBe(10000);
+    // No demand signal => never fires.
+    expect(resolveEffectivePrice(10000, [rule], { date: WED }).priceCents).toBe(10000);
+  });
+
+  it('composes multiple rules in priority order over the running price', () => {
+    // priority 0: +20% weekend (10000 -> 12000); priority 1: +$5 guide markup (12000 -> 12500).
+    const rules = [
+      {
+        kind: 'GUIDE_MARKUP' as const,
+        adjustmentType: 'FLAT' as const,
+        adjustmentValue: 500,
+        priority: 1,
+      },
+      {
+        kind: 'WEEKEND' as const,
+        adjustmentType: 'PERCENT' as const,
+        adjustmentValue: 20,
+        priority: 0,
+      },
+    ];
+    const r = resolveEffectivePrice(10000, rules, { date: SAT });
+    expect(r.priceCents).toBe(12500);
+    expect(r.applied.map((a) => a.kind)).toEqual(['WEEKEND', 'GUIDE_MARKUP']);
+  });
+
+  it('skips inactive rules', () => {
+    const rule = {
+      kind: 'WEEKEND' as const,
+      adjustmentType: 'PERCENT' as const,
+      adjustmentValue: 50,
+      isActive: false,
+    };
+    expect(resolveEffectivePrice(10000, [rule], { date: SAT }).priceCents).toBe(10000);
+  });
+
+  it('layers member pricing on top of dynamic pricing (weekend then member 15% off)', () => {
+    const weekend = resolveEffectivePrice(
+      10000,
+      [{ kind: 'WEEKEND' as const, adjustmentType: 'PERCENT' as const, adjustmentValue: 20 }],
+      { date: SAT },
+    );
+    expect(weekend.priceCents).toBe(12000);
+    const member = applyMemberPrice(weekend.priceCents, {
+      discountType: 'PERCENT',
+      discountValue: 15,
+    });
+    expect(member).toBe(10200); // 12000 - 15%
   });
 });

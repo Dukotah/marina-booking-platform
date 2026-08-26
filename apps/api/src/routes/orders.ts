@@ -23,10 +23,12 @@ import {
   createBooking,
   cancelBooking,
   rescheduleBooking,
+  collectBalance,
   BookingError,
 } from '../services/booking.js';
 import { sendBookingConfirmation, sendStaffNewBooking } from '../services/notifications.js';
 import { sendBookingConfirmationSms } from '../services/sms.js';
+import { evaluateApproval, loadApprovalPolicy } from '../services/approvals.js';
 
 export const orders = new Hono<Env>();
 
@@ -228,6 +230,63 @@ orders.post('/:id/cancel', requireStaff, async (c) => {
       reason: reason || undefined,
     });
     return c.json({ order: serializeOrder(order) });
+  } catch (err) {
+    if (err instanceof BookingError) {
+      return c.json({ error: err.message, code: err.code }, err.status as 400);
+    }
+    throw err;
+  }
+});
+
+// --- POST /:id/collect-balance : charge the remaining balance (staff) --------
+
+const collectBalanceSchema = z.object({
+  /** How to settle the remainder. Defaults to a (simulated) card charge. */
+  method: z.enum(['CARD', 'CASH']).default('CARD'),
+});
+
+orders.post('/:id/collect-balance', requireStaff, async (c) => {
+  assertPermission(c.var.auth, 'order:write');
+
+  const id = c.req.param('id');
+  const parsed = collectBalanceSchema.safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success) {
+    return c.json({ error: 'Invalid request', issues: parsed.error.issues }, 400);
+  }
+
+  // Manager-approval gate for staff-initiated charges above the operator threshold
+  // (Singenuity §2). Evaluate against the order's outstanding balance (what will be
+  // charged) before touching the processor. Self-approved by managers (order:approve).
+  const orderForApproval = await c.var.db.order.findUnique({
+    where: { id },
+    select: { balance_due_cents: true },
+  });
+  if (orderForApproval && orderForApproval.balance_due_cents > 0) {
+    const policy = await loadApprovalPolicy(c.var.db, c.var.operatorId);
+    const approval = evaluateApproval({
+      action: 'payment',
+      amountCents: orderForApproval.balance_due_cents,
+      policy,
+      auth: c.var.auth,
+    });
+    if (approval.blocked) {
+      return c.json(
+        {
+          error: approval.reason ?? 'This charge requires manager approval',
+          code: 'APPROVAL_REQUIRED',
+          requiresPermission: 'order:approve',
+        },
+        403,
+      );
+    }
+  }
+
+  try {
+    const result = await collectBalance(c.var.operatorId, id, {
+      actor: c.var.auth.userId,
+      method: parsed.data.method,
+    });
+    return c.json({ result });
   } catch (err) {
     if (err instanceof BookingError) {
       return c.json({ error: err.message, code: err.code }, err.status as 400);

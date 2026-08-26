@@ -11,10 +11,13 @@ import {
 } from '../../components/reports/queries';
 import { ReportTabs } from '../../components/reports/ReportTabs';
 import { ReportDateFilter } from '../../components/reports/ReportDateFilter';
+import { SalesControls } from '../../components/reports/SalesControls';
 import { ExportButton } from '../../components/reports/ExportButton';
 import { RevenueReportView } from '../../components/reports/RevenueReportView';
+import { SalesReportView } from '../../components/reports/SalesReportView';
 import { TaxesFeesReportView } from '../../components/reports/TaxesFeesReportView';
 import { OccupancyReportView } from '../../components/reports/OccupancyReportView';
+import { GiftCardReportView } from '../../components/reports/GiftCardReportView';
 
 export const metadata = {
   title: 'Reports',
@@ -63,22 +66,38 @@ export default async function ReportsPage({ searchParams }: ReportsPageProps) {
   const reportKind: ReportKind = resolveReportKind(single(searchParams?.report));
   const from = single(searchParams?.from);
   const to = single(searchParams?.to);
+  const basis = single(searchParams?.basis);
+  const compare = single(searchParams?.compare);
 
-  const bundle = await getReportsBundle(from, to);
+  const bundle = await getReportsBundle(from, to, basis, compare);
   const { range, brandColor } = bundle;
 
   return (
     <AdminShell>
       <PageHeader
         title="Reports"
-        description="Revenue, taxes & fees, and occupancy for your business."
-        actions={<ExportButton reportKind={reportKind} from={range.from} to={range.to} />}
+        description="Sales, revenue, taxes & fees, occupancy, and gift cards for your business."
+        actions={
+          <ExportButton
+            reportKind={reportKind}
+            from={range.from}
+            to={range.to}
+            basis={bundle.basis}
+            compare={bundle.compare}
+          />
+        }
       />
 
       <div className="flex flex-col gap-6">
         <ReportDateFilter from={range.from} to={range.to} reportKind={reportKind} />
         <ReportTabs active={reportKind} from={range.from} to={range.to} />
 
+        {reportKind === 'sales' ? (
+          <>
+            <SalesControls basis={bundle.basis} compare={bundle.compare} />
+            <SalesReportView report={bundle.sales} />
+          </>
+        ) : null}
         {reportKind === 'revenue' ? (
           <RevenueReportView report={bundle.revenue} brandColor={brandColor} />
         ) : null}
@@ -87,6 +106,9 @@ export default async function ReportsPage({ searchParams }: ReportsPageProps) {
         ) : null}
         {reportKind === 'occupancy' ? (
           <OccupancyReportView report={bundle.occupancy} brandColor={brandColor} />
+        ) : null}
+        {reportKind === 'gift-cards' ? (
+          <GiftCardReportView report={bundle.giftCards} />
         ) : null}
       </div>
     </AdminShell>

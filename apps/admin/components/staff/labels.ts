@@ -73,6 +73,11 @@ export const PERMISSION_META: Record<Permission, { label: string; description: s
     description: 'Issue full and partial refunds.',
     group: 'Bookings',
   },
+  'order:approve': {
+    label: 'Approve payments & refunds',
+    description: 'Sign off on payments and refunds above the approval threshold.',
+    group: 'Bookings',
+  },
   'customer:read': {
     label: 'View customers',
     description: 'See the customer CRM.',

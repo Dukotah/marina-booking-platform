@@ -76,6 +76,27 @@ enum PaymentMethod {
   COMP
 }
 
+enum GiftCardStatus {
+  ACTIVE
+  REDEEMED
+  VOID
+  EXPIRED
+}
+
+// Gift certificates are single-use (redeem-once) — distinct lifecycle from the
+// stored-value GiftCard, which is decremented across many redemptions.
+enum GiftCertificateStatus {
+  ACTIVE
+  REDEEMED
+  VOID
+  EXPIRED
+}
+
+enum PackageStatus {
+  ACTIVE
+  INACTIVE
+}
+
 enum PaymentStatus {
   PAID
   REFUNDED
@@ -103,6 +124,40 @@ enum PromoType {
 enum DiscountType {
   PERCENT
   FLAT
+}
+
+// Upmarket §1 #6 — memberships / season passes.
+//
+// SEASON_PASS: unlimited access within a validity window (no use decrement).
+// PUNCH_CARD:  a finite bundle of N launches; each qualifying booking decrements
+//              CustomerMembership.remaining_uses.
+// MEMBER_RATE: a plain membership that grants member pricing (no built-in uses).
+enum MembershipKind {
+  SEASON_PASS
+  PUNCH_CARD
+  MEMBER_RATE
+}
+
+enum CustomerMembershipStatus {
+  ACTIVE
+  EXPIRED
+  CANCELLED
+  DEPLETED
+}
+
+// Upmarket §1 #6 — dynamic pricing rules. Each rule adjusts a rate's effective
+// price for a given date. Composable: rules apply in `priority` order over the
+// running price, each PERCENT or FLAT (integer cents).
+enum PricingRuleKind {
+  SEASONAL    // active only within [starts_on, ends_on]
+  WEEKEND     // active on the configured weekdays (default Sat/Sun)
+  DEMAND      // active when a slot's booked ratio crosses `demand_threshold`
+  GUIDE_MARKUP // flat/percent surcharge for guided variants (always-on when enabled)
+}
+
+enum PricingAdjustmentType {
+  PERCENT // value is a percentage (e.g. 15 => +15%; -10 => -10%)
+  FLAT    // value is integer cents added (can be negative)
 }
 
 enum StaffRole {
@@ -134,6 +189,15 @@ model Operator {
   brand_color     String   @default("#0ea5e9")
   // Policy
   legal_adult_age Int      @default(18)
+  // Default deposit percentage (1-99) applied at booking when an activity does not
+  // set its own deposit_percent. null / 0 = operator collects payment in full.
+  default_deposit_percent Int?
+  // Manager-approval workflow (Singenuity §2). A payment or refund whose amount is
+  // at/above this threshold (integer cents) requires a manager-level approval
+  // (order:approve) before it may proceed. 0 / null = no approval gate on amount.
+  approval_threshold_cents Int?
+  // When true, EVERY refund requires manager approval regardless of amount.
+  refund_requires_approval Boolean @default(false)
   // Billing (platform subscription)
   plan            String   @default("trial")
   is_active       Boolean  @default(true)
@@ -152,6 +216,18 @@ model Operator {
   waivers      Waiver[]
   integrations Integration[]
   sandbox_messages SandboxMessage[]
+  gift_cards   GiftCard[]
+  gift_certificates GiftCertificate[]
+  packages     Package[]
+  guide_assignments GuideAssignment[]
+  memberships  Membership[]
+  pricing_rules PricingRule[]
+  customer_questions CustomerQuestion[]
+  affiliates   Affiliate[]
+  message_templates  MessageTemplate[]
+  heard_about_options HeardAboutOption[]
+  blackout_dates BlackoutDate[]
+  gl_accounts  GLAccount[]
 }
 
 // ===========================================================================
@@ -177,6 +253,7 @@ model Location {
   activities Activity[]
   resources  Resource[]
   staff      StaffLocation[]
+  blackout_dates BlackoutDate[]
 
   @@index([operator_id])
 }
@@ -199,8 +276,11 @@ model StaffMember {
   created_at    DateTime  @default(now())
 
   locations StaffLocation[]
+  guide_assignments GuideAssignment[]
 
+  // Target of a tenant-composite FK from GuideAssignment.
   @@unique([operator_id, auth_user_id])
+  @@unique([operator_id, id])
   @@index([operator_id])
 }
 
@@ -232,6 +312,14 @@ model Activity {
   visible_online        Boolean          @default(true)
   visible_kiosk         Boolean          @default(true)
   visible_register      Boolean          @default(true)
+  // Per-channel visibility (Singenuity §1 parity). These are opt-OUT flags layered
+  // on top of the visible_* opt-in flags: when true the activity is suppressed from
+  // that surface. hide_price hides pricing (show "call for price") but still lists
+  // the activity. Catalog/POS queries respect these.
+  hide_from_register    Boolean          @default(false)
+  hide_from_display     Boolean          @default(false)
+  hide_from_kiosk       Boolean          @default(false)
+  hide_price            Boolean          @default(false)
   min_participants      Int              @default(1)
   max_participants      Int              @default(10)
   description_html      String?
@@ -239,6 +327,15 @@ model Activity {
   color                 String           @default("#0ea5e9")
   waiver_required       Boolean          @default(true)
   self_reschedule_hours Int              @default(48)
+  // Deposits: when set (1-99), only this % of the total is charged at booking and
+  // the remainder is collected at check-in. null = fall back to the operator
+  // default; 0 or unset on both = pay-in-full.
+  deposit_percent       Int?
+  // Transportation (Singenuity §4): when true this activity includes/offers
+  // transportation; transportation_note holds pickup / logistics copy shown to the
+  // guest at checkout and on confirmations.
+  transportation        Boolean          @default(false)
+  transportation_note   String?
   sort_index            Int              @default(0)
   // Vertical-specific fields (lodging nights, tour meeting point, etc.) live here
   // so the core booking engine stays category-agnostic.
@@ -251,6 +348,11 @@ model Activity {
   fees        Fee[]
   order_items OrderItem[]
   resources   Resource[]  @relation("ActivityResources")
+  package_items PackageItem[]
+  upsells     PackageUpsell[]
+  gift_certificates GiftCertificate[]
+  pricing_rules PricingRule[]
+  customer_questions CustomerQuestion[]
 
   // Target of tenant-composite FKs (D-010 / 0.13): children reference
   // [operator_id, id] so the DB refuses a child whose parent is another tenant's.
@@ -275,6 +377,8 @@ model Rate {
   is_from_price    Boolean     @default(false)
   sort_index       Int         @default(0)
   order_items      OrderItem[]
+  package_items    PackageItem[]
+  pricing_rules    PricingRule[]
 
   @@unique([operator_id, id])
   @@index([operator_id])
@@ -294,6 +398,7 @@ model Timeslot {
   status          TimeslotStatus @default(AVAILABLE)
   created_at      DateTime       @default(now())
   order_items     OrderItem[]
+  guide_assignments GuideAssignment[]
 
   @@unique([operator_id, id])
   @@index([operator_id])
@@ -349,6 +454,35 @@ model ResourceBooking {
 }
 
 // ===========================================================================
+// Guide scheduling (Singenuity §2 day-of ops)
+// ===========================================================================
+
+// Assigns a staff member (typically role GUIDE) to run a specific Timeslot. This
+// is the "who is leading this trip" record the manifest reads. Both parents are
+// tenant-composite FKs ((operator_id, fk) -> parent(operator_id, id)) so a guide
+// or timeslot from another tenant can never be linked. A guide can only be
+// assigned to a given timeslot once (@@unique) — re-assigning is a no-op/update.
+model GuideAssignment {
+  id          String      @id @default(cuid())
+  operator_id String
+  operator    Operator    @relation(fields: [operator_id], references: [id], onDelete: Cascade)
+  timeslot_id String
+  timeslot    Timeslot    @relation(fields: [operator_id, timeslot_id], references: [operator_id, id], onDelete: Cascade)
+  guide_id    String
+  guide       StaffMember @relation(fields: [operator_id, guide_id], references: [operator_id, id], onDelete: Cascade)
+  // Optional free-text role/label for this assignment (e.g. "Lead", "Second").
+  role_label  String?
+  assigned_by String? // StaffMember auth_user_id / actor who created it
+  created_at  DateTime    @default(now())
+
+  @@unique([operator_id, timeslot_id, guide_id])
+  @@unique([operator_id, id])
+  @@index([operator_id])
+  @@index([timeslot_id])
+  @@index([guide_id])
+}
+
+// ===========================================================================
 // Customers
 // ===========================================================================
 
@@ -374,6 +508,7 @@ model Customer {
   updated_at        DateTime @updatedAt
   orders            Order[]
   waiver_signatures WaiverSignature[]
+  memberships       CustomerMembership[]
 
   @@unique([operator_id, email])
   @@unique([operator_id, id])
@@ -405,6 +540,16 @@ model Order {
   promo_code_id        String?
   heard_about_us       String?
   is_returning_guest   Boolean      @default(false)
+  // Affiliate attribution (Singenuity §4). Optional tenant-composite FK to the
+  // Affiliate that referred this order; affiliate_code snapshots the code used at
+  // checkout so reporting survives an affiliate rename/delete.
+  affiliate_id         String?
+  affiliate            Affiliate?   @relation(fields: [operator_id, affiliate_id], references: [operator_id, id])
+  affiliate_code       String?
+  // Answers to operator-defined CustomerQuestions, captured at checkout. Shape:
+  // { [customerQuestionId]: string | string[] | boolean }. JSON keeps custom fields
+  // schema-light while still rendering on the order.
+  question_answers     Json?
   created_at           DateTime     @default(now())
   updated_at           DateTime     @updatedAt
 
@@ -417,6 +562,7 @@ model Order {
   @@index([operator_id])
   @@index([operator_id, status])
   @@index([customer_id])
+  @@index([operator_id, affiliate_id])
 }
 
 model OrderItem {
@@ -474,9 +620,145 @@ model Payment {
   processor_transaction_id String?
   is_manually_keyed        Boolean          @default(false)
   processed_at             DateTime         @default(now())
+  // Set when method = GIFT_CARD: links the payment to the redeemed card.
+  gift_card_id             String?
+  gift_card                GiftCard?        @relation(fields: [operator_id, gift_card_id], references: [operator_id, id])
 
   @@index([operator_id])
   @@index([order_id])
+  @@index([gift_card_id])
+}
+
+/// Prepaid gift card. Issued with a balance, redeemed against orders (a Payment
+/// row with method GIFT_CARD references it). Balance is decremented on redemption;
+/// gift-card liability = sum(balance_cents) of ACTIVE cards.
+model GiftCard {
+  id              String         @id @default(cuid())
+  operator_id     String
+  operator        Operator       @relation(fields: [operator_id], references: [id], onDelete: Cascade)
+  /// Human-enterable redemption code, unique per operator (e.g. LSRA-3F9K-2XQ7).
+  code            String
+  initial_cents   Int
+  balance_cents   Int
+  status          GiftCardStatus @default(ACTIVE)
+  purchaser_email String?
+  recipient_name  String?
+  recipient_email String?
+  message         String?
+  expires_at      DateTime?
+  payments        Payment[]
+  created_at      DateTime       @default(now())
+  updated_at      DateTime       @updatedAt
+
+  @@unique([operator_id, code])
+  @@unique([operator_id, id])
+  @@index([operator_id])
+  @@index([operator_id, status])
+}
+
+/// A single-use gift certificate — DISTINCT from the stored-value GiftCard.
+/// A certificate is either a fixed dollar value OR redeemable for a specific
+/// activity/experience, and is consumed in one redemption (no running balance).
+/// Redeeming records a Payment (method GIFT_CARD) against the order for the
+/// certificate's value and flips the certificate to REDEEMED — it can't be reused.
+model GiftCertificate {
+  id              String                @id @default(cuid())
+  operator_id     String
+  operator        Operator              @relation(fields: [operator_id], references: [id], onDelete: Cascade)
+  /// Human-enterable redemption code, unique per operator.
+  code            String
+  /// Fixed monetary value in integer cents. When an activity is set, this is the
+  /// value credited on redemption (defaults to the activity's from-price if desired
+  /// by the caller, but always stored here so the amount is fixed at issue time).
+  value_cents     Int
+  /// When set, the certificate is for a specific activity/experience rather than a
+  /// generic dollar amount. Tenant-composite FK so it can't point at another tenant.
+  activity_id     String?
+  activity        Activity?             @relation(fields: [operator_id, activity_id], references: [operator_id, id])
+  status          GiftCertificateStatus @default(ACTIVE)
+  purchaser_email String?
+  recipient_name  String?
+  recipient_email String?
+  message         String?
+  expires_at      DateTime?
+  /// The order this certificate was redeemed against (audit), set on redemption.
+  redeemed_order_id String?
+  redeemed_at     DateTime?
+  created_at      DateTime              @default(now())
+  updated_at      DateTime              @updatedAt
+
+  @@unique([operator_id, code])
+  @@unique([operator_id, id])
+  @@index([operator_id])
+  @@index([operator_id, status])
+}
+
+// ===========================================================================
+// Packages (Singenuity §1) — a bundle of activities/rates at a package price
+// ===========================================================================
+
+/// A sellable bundle of one or more activity+rate lines at a single package price.
+/// The package price is authoritative (it need not equal the sum of the lines —
+/// that's the whole point of a bundle discount). Sellable via customer catalog + POS.
+model Package {
+  id              String        @id @default(cuid())
+  operator_id     String
+  operator        Operator      @relation(fields: [operator_id], references: [id], onDelete: Cascade)
+  name_internal   String
+  name_external   String
+  description_html String?
+  /// Bundle price in integer cents — what the customer pays for the whole package.
+  price_cents     Int
+  status          PackageStatus @default(ACTIVE)
+  visible_online  Boolean       @default(true)
+  sort_index      Int           @default(0)
+  created_at      DateTime      @default(now())
+  updated_at      DateTime      @updatedAt
+
+  items PackageItem[]
+
+  @@unique([operator_id, id])
+  @@index([operator_id])
+  @@index([operator_id, status])
+}
+
+/// One line within a Package: an activity + rate + quantity. Both parents are
+/// tenant-composite FKs so a package can never bundle another tenant's catalog.
+model PackageItem {
+  id          String   @id @default(cuid())
+  operator_id String
+  package_id  String
+  package     Package  @relation(fields: [operator_id, package_id], references: [operator_id, id], onDelete: Cascade)
+  activity_id String
+  activity    Activity @relation(fields: [operator_id, activity_id], references: [operator_id, id])
+  rate_id     String
+  rate        Rate     @relation(fields: [operator_id, rate_id], references: [operator_id, id])
+  quantity    Int      @default(1)
+  sort_index  Int      @default(0)
+
+  @@unique([operator_id, id])
+  @@index([operator_id])
+  @@index([operator_id, package_id])
+}
+
+/// A per-activity optional add-on offered at checkout (Singenuity §1 upsells).
+/// e.g. "Add a photo package (+$25)" attached to a specific activity. Surfaced at
+/// checkout as an opt-in line the customer may add.
+model PackageUpsell {
+  id          String   @id @default(cuid())
+  operator_id String
+  activity_id String
+  activity    Activity @relation(fields: [operator_id, activity_id], references: [operator_id, id], onDelete: Cascade)
+  name        String
+  description String?
+  price_cents Int
+  is_active   Boolean  @default(true)
+  sort_index  Int      @default(0)
+  created_at  DateTime @default(now())
+
+  @@unique([operator_id, id])
+  @@index([operator_id])
+  @@index([operator_id, activity_id])
 }
 
 model Note {
@@ -569,14 +851,45 @@ model Waiver {
   operator_id            String
   operator               Operator          @relation(fields: [operator_id], references: [id], onDelete: Cascade)
   name                   String
+  /// Legacy single-blob body; kept as a fallback when no structured clauses exist.
   template_html          String
+  /// Preamble shown above the clause list (who/what/purpose).
+  intro_html             String?
+  /// Bumped whenever the waiver text changes; snapshotted onto each signature so
+  /// we can always prove exactly which version a customer agreed to.
+  version                Int               @default(1)
   requires_minor_signature Boolean         @default(true)
   is_active              Boolean           @default(true)
   created_at             DateTime          @default(now())
+  updated_at             DateTime          @default(now()) @updatedAt
+  clauses                WaiverClause[]
   signatures             WaiverSignature[]
 
   @@unique([operator_id, id])
   @@index([operator_id])
+}
+
+/// A single agreement within a waiver (assumption of risk, liability release,
+/// invasive-species inspection, alcohol policy, USCG life-jacket rules, boater
+/// competency, minor consent, ...). Each can require its own initials so consent
+/// is granular and legally defensible, not one blanket signature.
+model WaiverClause {
+  id                String   @id @default(cuid())
+  operator_id       String
+  waiver_id         String
+  waiver            Waiver   @relation(fields: [operator_id, waiver_id], references: [operator_id, id], onDelete: Cascade)
+  sort_order        Int      @default(0)
+  title             String
+  body_html         String
+  /// Signer must separately initial this clause (vs. covered by the final signature).
+  requires_initials Boolean  @default(true)
+  /// A required clause blocks signing until acknowledged.
+  is_required       Boolean  @default(true)
+  created_at        DateTime @default(now())
+
+  @@unique([operator_id, id])
+  @@index([operator_id])
+  @@index([operator_id, waiver_id])
 }
 
 model WaiverSignature {
@@ -589,11 +902,19 @@ model WaiverSignature {
   customer_id   String?
   customer      Customer?  @relation(fields: [customer_id], references: [id])
   signer_name   String
+  signer_dob    DateTime?
   signed_at     DateTime   @default(now())
   signature_data String    // base64 image or typed signature
   ip_address    String?
   is_minor      Boolean    @default(false)
   guardian_name String?
+  /// The waiver version that was in effect at signing (matches Waiver.version).
+  waiver_version Int?
+  /// Immutable full rendered HTML of exactly what was presented + agreed to.
+  /// This is the legal record; never regenerate it from the (mutable) waiver.
+  snapshot_html String?
+  /// Per-clause proof: [{ clauseId, title, initials, acknowledgedAt }].
+  acknowledgments Json?
 
   @@index([operator_id])
   @@index([waiver_id])
@@ -602,6 +923,110 @@ model WaiverSignature {
 // ===========================================================================
 // Integrations (per-operator config; not hard-coded)
 // ===========================================================================
+
+// ===========================================================================
+// Memberships / season passes (Upmarket §1 #6-A)
+// ===========================================================================
+
+// A sellable membership product the operator defines: a season pass, an N-launch
+// punch card, or a plain member-rate tier. Holders (CustomerMembership rows) get
+// member pricing at booking; punch cards additionally decrement remaining uses.
+model Membership {
+  id                 String         @id @default(cuid())
+  operator_id        String
+  operator           Operator       @relation(fields: [operator_id], references: [id], onDelete: Cascade)
+  name               String
+  kind               MembershipKind @default(MEMBER_RATE)
+  is_active          Boolean        @default(true)
+  /// Up-front price of the membership itself, integer cents.
+  price_cents        Int            @default(0)
+  /// Member pricing knob applied to a rate's base price when the holder is active.
+  /// PERCENT: percent OFF the base (e.g. 15 => 15% off). FLAT: cents OFF the base.
+  discount_type      DiscountType   @default(PERCENT)
+  discount_value     Int            @default(0)
+  /// For PUNCH_CARD: how many uses a freshly-issued card carries. Ignored otherwise.
+  total_uses         Int?
+  /// Validity length in days from issue (null = no expiry / open-ended season pass).
+  duration_days      Int?
+  created_at         DateTime       @default(now())
+  updated_at         DateTime       @updatedAt
+
+  customer_memberships CustomerMembership[]
+
+  @@unique([operator_id, id])
+  @@index([operator_id])
+  @@index([operator_id, is_active])
+}
+
+// A specific customer's holding of a Membership: tracks validity window and, for
+// punch cards, remaining uses. `applyMemberPricing` reads the ACTIVE row (valid
+// window, uses left) to price a booking; a punch-card booking decrements it.
+model CustomerMembership {
+  id             String                   @id @default(cuid())
+  operator_id    String
+  membership_id  String
+  // Tenant-composite FK: (operator_id, membership_id) -> Membership(operator_id, id).
+  membership     Membership               @relation(fields: [operator_id, membership_id], references: [operator_id, id], onDelete: Cascade)
+  customer_id    String
+  // Tenant-composite FK: (operator_id, customer_id) -> Customer(operator_id, id).
+  customer       Customer                 @relation(fields: [operator_id, customer_id], references: [operator_id, id], onDelete: Cascade)
+  status         CustomerMembershipStatus @default(ACTIVE)
+  /// null for punch cards / unlimited passes.
+  remaining_uses Int?
+  starts_at      DateTime                 @default(now())
+  /// null = no expiry.
+  expires_at     DateTime?
+  created_at     DateTime                 @default(now())
+  updated_at     DateTime                 @updatedAt
+
+  @@unique([operator_id, id])
+  @@index([operator_id])
+  @@index([operator_id, customer_id, status])
+}
+
+// ===========================================================================
+// Dynamic pricing rules (Upmarket §1 #6-C)
+// ===========================================================================
+
+// A composable price adjustment that changes a rate's EFFECTIVE price for a given
+// date/slot. Rules are scoped to a rate, an activity (all its rates), or the whole
+// operator, and applied in `priority` order by @marina/core resolveEffectivePrice.
+model PricingRule {
+  id                String                @id @default(cuid())
+  operator_id       String
+  operator          Operator              @relation(fields: [operator_id], references: [id], onDelete: Cascade)
+  name              String
+  kind              PricingRuleKind
+  adjustment_type   PricingAdjustmentType @default(PERCENT)
+  /// PERCENT: percentage delta (15 => +15%, -10 => -10%). FLAT: integer cents delta.
+  adjustment_value  Int                   @default(0)
+  is_active         Boolean               @default(true)
+  /// Lower runs first; ties broken by created_at. Lets seasonal stack under demand.
+  priority          Int                   @default(0)
+
+  // --- Optional scoping. Null activity_id + null rate_id = applies to every rate. ---
+  activity_id       String?
+  activity          Activity?             @relation(fields: [operator_id, activity_id], references: [operator_id, id], onDelete: Cascade)
+  rate_id           String?
+  rate              Rate?                 @relation(fields: [operator_id, rate_id], references: [operator_id, id], onDelete: Cascade)
+
+  // --- SEASONAL window (inclusive calendar dates, operator-local). ---
+  starts_on         DateTime?
+  ends_on           DateTime?
+  // --- WEEKEND: ISO weekdays the rule fires on (1=Mon..7=Sun). Empty => Sat+Sun. ---
+  weekdays          Int[]                 @default([])
+  // --- DEMAND: fire when a slot's booked ratio >= threshold (0..1). ---
+  demand_threshold  Float?
+
+  created_at        DateTime              @default(now())
+  updated_at        DateTime              @updatedAt
+
+  @@unique([operator_id, id])
+  @@index([operator_id])
+  @@index([operator_id, is_active])
+  @@index([activity_id])
+  @@index([rate_id])
+}
 
 model Integration {
   id          String   @id @default(cuid())
@@ -648,4 +1073,163 @@ model SandboxMessage {
 enum SandboxChannel {
   EMAIL
   SMS
+}
+
+// ===========================================================================
+// Config / settings parity (Singenuity §4)
+// ===========================================================================
+
+/** Field type for an operator-defined custom booking question. */
+enum QuestionType {
+  TEXT
+  TEXTAREA
+  SELECT
+  CHECKBOX
+  NUMBER
+}
+
+/**
+ * An operator-defined custom booking field captured at checkout and shown on the
+ * order. `applies_to` optionally scopes the question to a single activity (null =
+ * every activity). Answers are stored on Order.question_answers as JSON keyed by
+ * this row's id — no per-answer table, keeping custom fields schema-light.
+ */
+model CustomerQuestion {
+  id          String       @id @default(cuid())
+  operator_id String
+  operator    Operator     @relation(fields: [operator_id], references: [id], onDelete: Cascade)
+  label       String
+  type        QuestionType @default(TEXT)
+  required    Boolean      @default(false)
+  /// SELECT-type choices; ignored for other types.
+  options     String[]     @default([])
+  /// Optional activity scope. Tenant-composite FK to Activity([operator_id, id]);
+  /// null means the question applies to every activity.
+  applies_to  String?
+  activity    Activity?    @relation(fields: [operator_id, applies_to], references: [operator_id, id])
+  is_active   Boolean      @default(true)
+  sort_index  Int          @default(0)
+  created_at  DateTime     @default(now())
+  updated_at  DateTime     @updatedAt
+
+  @@unique([operator_id, id])
+  @@index([operator_id])
+  @@index([operator_id, applies_to])
+}
+
+/**
+ * A referral partner. Orders can be attributed to an affiliate by code at checkout;
+ * `code` is unique per operator so a short human code resolves to one partner.
+ */
+model Affiliate {
+  id           String   @id @default(cuid())
+  operator_id  String
+  operator     Operator @relation(fields: [operator_id], references: [id], onDelete: Cascade)
+  name         String
+  /// Human-enterable referral code, unique per operator.
+  code         String
+  email        String?
+  /// Optional commission percent (0-100) for reporting; not applied to pricing.
+  commission_percent Int?
+  is_active    Boolean  @default(true)
+  notes        String?
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+
+  orders       Order[]
+
+  @@unique([operator_id, code])
+  @@unique([operator_id, id])
+  @@index([operator_id])
+}
+
+/** Which transactional message an override applies to. */
+enum MessageTemplateKind {
+  BOOKING_CONFIRMATION
+  BOOKING_REMINDER
+  REFUND_RECEIPT
+}
+
+/**
+ * An operator override for a transactional message. When present (and enabled), the
+ * notifications service uses subject_override / body_override in place of the built-in
+ * default copy; missing fields fall back to defaults. One row per kind per operator.
+ */
+model MessageTemplate {
+  id               String              @id @default(cuid())
+  operator_id      String
+  operator         Operator            @relation(fields: [operator_id], references: [id], onDelete: Cascade)
+  kind             MessageTemplateKind
+  enabled          Boolean             @default(true)
+  subject_override String?
+  /// Plain-text/lightly-formatted body override with {{placeholders}}.
+  body_override    String?
+  created_at       DateTime            @default(now())
+  updated_at       DateTime            @updatedAt
+
+  @@unique([operator_id, kind])
+  @@unique([operator_id, id])
+  @@index([operator_id])
+}
+
+/**
+ * A "How did you hear about us?" attribution option offered at checkout. The chosen
+ * label is snapshotted onto Order.heard_about_us, so options can change without
+ * rewriting history.
+ */
+model HeardAboutOption {
+  id          String   @id @default(cuid())
+  operator_id String
+  operator    Operator @relation(fields: [operator_id], references: [id], onDelete: Cascade)
+  label       String
+  is_active   Boolean  @default(true)
+  sort_index  Int      @default(0)
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  @@unique([operator_id, id])
+  @@index([operator_id])
+}
+
+/**
+ * A blackout window with no availability. Optionally scoped to a single location
+ * (null = every location). `date` is a calendar day (YYYY-MM-DD at UTC midnight);
+ * availability queries suppress slots that fall on a blackout day.
+ */
+model BlackoutDate {
+  id          String    @id @default(cuid())
+  operator_id String
+  operator    Operator  @relation(fields: [operator_id], references: [id], onDelete: Cascade)
+  /// Calendar day, stored as UTC-midnight instant. Interpreted in operator/location tz.
+  date        DateTime
+  /// Optional location scope; null = applies to every location.
+  location_id String?
+  location    Location? @relation(fields: [location_id], references: [id])
+  reason      String?
+  created_at  DateTime  @default(now())
+
+  @@unique([operator_id, id])
+  @@index([operator_id])
+  @@index([operator_id, date])
+}
+
+/**
+ * A general-ledger account for accounting-export grouping. `code` is unique per
+ * operator (e.g. "4000" Revenue). Not wired into pricing — a reporting/export aid.
+ */
+model GLAccount {
+  id          String   @id @default(cuid())
+  operator_id String
+  operator    Operator @relation(fields: [operator_id], references: [id], onDelete: Cascade)
+  code        String
+  name        String
+  /// Coarse grouping for export rollups, e.g. "REVENUE", "TAX", "FEE".
+  category    String?
+  is_active   Boolean  @default(true)
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  @@unique([operator_id, code])
+  @@unique([operator_id, id])
+  @@index([operator_id])
 }

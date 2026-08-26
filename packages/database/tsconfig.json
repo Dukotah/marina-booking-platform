@@ -4,7 +4,13 @@
     "rootDir": ".",
     "outDir": "dist",
     "module": "NodeNext",
-    "moduleResolution": "NodeNext"
+    "moduleResolution": "NodeNext",
+    // Prisma seed + scripts run via `node --experimental-strip-types`, which
+    // resolves relative imports by their real `.ts` path. This package is consumed
+    // from source (main -> src/index.ts) and typechecked with noEmit, so allow the
+    // `.ts` import specifiers the runtime needs.
+    "allowImportingTsExtensions": true,
+    "noEmit": true
   },
   "include": ["src", "prisma", "scripts"]
 }

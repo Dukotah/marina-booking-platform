@@ -13,14 +13,19 @@
  */
 import { Prisma } from '@marina/database';
 import {
+  applyMemberPrice,
   calculatePricing,
+  computeDepositCents,
   computeSlotStatus,
   generateOrderNumber,
+  resolveDepositPercent,
+  resolveEffectivePrice,
   type BookingInput,
   type PricingFee,
   type PricingPromo,
 } from '@marina/core';
 import { withTenant } from '@marina/database';
+import { createPayment, arePaymentsEnabled } from './stripe.js';
 import {
   activityResourcePools,
   bookingWindow,
@@ -28,6 +33,7 @@ import {
   releaseResourceBookings,
   writeResourceBookings,
 } from './resources.js';
+import { bestActiveMemberPricing, consumeMembershipUses } from './memberships.js';
 
 /** How an order entered the system (mirrors Prisma `OrderChannel`). */
 export type BookingChannel = 'CUSTOMER' | 'STAFF' | 'KIOSK';
@@ -66,7 +72,7 @@ export async function createBooking(
     // --- Load + validate the operator (needed for the human order number). ---
     const operator = await tx.operator.findFirst({
       where: { id: operatorId },
-      select: { id: true, location_code: true, is_active: true },
+      select: { id: true, location_code: true, is_active: true, default_deposit_percent: true },
     });
     if (!operator) {
       throw new BookingError('OPERATOR_NOT_FOUND', 'Operator not found', 404);
@@ -84,6 +90,7 @@ export async function createBooking(
         visible_online: true,
         min_participants: true,
         max_participants: true,
+        deposit_percent: true,
       },
     });
     if (!activity) {
@@ -225,12 +232,50 @@ export async function createBooking(
       promoCodeId = promoRow.id;
     }
 
-    const pricing = calculatePricing({
-      items: [{ unitPriceCents: rate.price_cents, quantity: input.quantity }],
-      fees,
-      promo,
-      tipCents: input.tipCents ?? 0,
+    // --- Dynamic pricing (Upmarket §1 #6-C): compose the operator's active pricing
+    //     rules over the rate's base price for THIS slot's date/demand. Rules scoped
+    //     to this rate, this activity, or the whole operator (both scopes null) apply.
+    //     Composes with calculatePricing: the resolved per-unit price becomes the line
+    //     item price. No rules => the base price passes through unchanged. ---
+    const ruleRows = await tx.pricingRule.findMany({
+      where: {
+        is_active: true,
+        OR: [
+          { rate_id: rate.id },
+          { rate_id: null, activity_id: activity.id },
+          { rate_id: null, activity_id: null },
+        ],
+      },
+      select: {
+        kind: true,
+        adjustment_type: true,
+        adjustment_value: true,
+        priority: true,
+        starts_on: true,
+        ends_on: true,
+        weekdays: true,
+        demand_threshold: true,
+        created_at: true,
+      },
+      orderBy: [{ priority: 'asc' }, { created_at: 'asc' }],
     });
+    const bookedRatio =
+      timeslot.capacity_total > 0 ? timeslot.capacity_booked / timeslot.capacity_total : 0;
+    const dynamic = resolveEffectivePrice(
+      rate.price_cents,
+      ruleRows.map((r) => ({
+        kind: r.kind,
+        adjustmentType: r.adjustment_type,
+        adjustmentValue: r.adjustment_value,
+        priority: r.priority,
+        startsOn: r.starts_on,
+        endsOn: r.ends_on,
+        weekdays: r.weekdays,
+        demandThreshold: r.demand_threshold,
+      })),
+      { date: timeslot.datetime, bookedRatio },
+    );
+    const dynamicUnitPriceCents = dynamic.priceCents;
 
     // --- Upsert the customer by (operator, email). ---
     const customer = await tx.customer.upsert({
@@ -266,6 +311,37 @@ export async function createBooking(
     // A customer whose record predates this transaction is a returning guest.
     const isReturningGuest = customer.created_at.getTime() < Date.now() - 1000;
 
+    // --- Member pricing (Upmarket §1 #6-A): if this customer holds an active
+    //     membership, apply its member discount to the (already dynamically-priced)
+    //     per-unit price. Best-discount-wins across multiple holdings. Layered ON TOP
+    //     of dynamic pricing so a member still benefits from seasonal/weekend rules. ---
+    const member = await bestActiveMemberPricing(tx, {
+      customerId: customer.id,
+      basePriceCents: dynamicUnitPriceCents,
+    });
+    const unitPriceCents = member
+      ? applyMemberPrice(dynamicUnitPriceCents, member.discount)
+      : dynamicUnitPriceCents;
+
+    // --- Final server-authoritative pricing from the effective unit price + DB fees. ---
+    const pricing = calculatePricing({
+      items: [{ unitPriceCents, quantity: input.quantity }],
+      fees,
+      promo,
+      tipCents: input.tipCents ?? 0,
+    });
+
+    // --- Deposit resolution: activity override, else operator default. When a
+    //     deposit applies we charge only the deposit now and leave the remainder
+    //     as balance_due (collected at check-in). depositPercent 0 => pay in full. ---
+    const depositPercent = resolveDepositPercent(
+      activity.deposit_percent,
+      operator.default_deposit_percent,
+    );
+    const depositCents =
+      depositPercent > 0 ? computeDepositCents(pricing.totalCents, depositPercent) : 0;
+    const takeDeposit = depositCents > 0 && depositCents < pricing.totalCents;
+
     // --- Generate a per-location, per-day sequential order number. The sequence
     //     counts orders already numbered for THIS slot-day prefix (not orders
     //     created today): future-dated slots share a day, so counting by
@@ -277,6 +353,28 @@ export async function createBooking(
         where: { order_number: { startsWith: numberPrefix } },
       })) + 1;
     const orderNumber = generateOrderNumber(operator.location_code, slotDate, seq);
+
+    // --- Attribution (Singenuity §4): resolve an affiliate code to an Affiliate and
+    //     snapshot the code onto the order, and record the heard-about-us label + any
+    //     custom-question answers. All optional; a bad/unknown affiliate code is simply
+    //     not attributed rather than failing the booking. ---
+    let affiliateId: string | null = null;
+    let affiliateCode: string | null = null;
+    if (input.affiliateCode) {
+      const code = input.affiliateCode.trim();
+      const affiliate = await tx.affiliate.findFirst({
+        where: { code, is_active: true },
+        select: { id: true, code: true },
+      });
+      if (affiliate) {
+        affiliateId = affiliate.id;
+        affiliateCode = affiliate.code;
+      }
+    }
+    const questionAnswers =
+      input.questionAnswers && Object.keys(input.questionAnswers).length > 0
+        ? (input.questionAnswers as Prisma.InputJsonValue)
+        : undefined;
 
     // --- Create the order + its single item. ---
     const order = await tx.order.create({
@@ -292,8 +390,8 @@ export async function createBooking(
         tip_cents: pricing.tipCents,
         discount_cents: pricing.discountCents,
         total_cents: pricing.totalCents,
-        amount_paid_cents: 0,
-        balance_due_cents: pricing.totalCents,
+        amount_paid_cents: takeDeposit ? depositCents : 0,
+        balance_due_cents: takeDeposit ? pricing.totalCents - depositCents : pricing.totalCents,
         promo_code_id: promoCodeId,
         is_returning_guest: isReturningGuest,
         items: {
@@ -306,7 +404,8 @@ export async function createBooking(
               rate_id: rate.id,
               timeslot_id: timeslot.id,
               quantity: input.quantity,
-              unit_price_cents: rate.price_cents,
+              // Effective per-unit price: base -> dynamic pricing rules -> member discount.
+              unit_price_cents: unitPriceCents,
               status: 'UPCOMING',
               driver_name: input.participants[0]?.driver_name ?? null,
               license_number: input.participants[0]?.license ?? null,
@@ -353,6 +452,13 @@ export async function createBooking(
       });
     }
 
+    // --- Punch-card memberships: spend one use per seat booked. No-op for
+    //     unlimited passes / member-rate tiers (null remaining_uses). Depletes the
+    //     holding when it hits zero so it stops granting member pricing. ---
+    if (member && member.kind === 'PUNCH_CARD') {
+      await consumeMembershipUses(tx, member.customerMembershipId, input.quantity);
+    }
+
     // --- Keep customer lifetime value roughly in sync (booking-time estimate). ---
     await tx.customer.update({
       where: { id: customer.id },
@@ -375,6 +481,50 @@ export async function createBooking(
         } as Prisma.InputJsonValue,
       },
     });
+
+    // --- Deposit charge: when a deposit applies, record the (simulated) card
+    //     charge for the deposit amount and audit it. The order's amount_paid /
+    //     balance_due were already set to the deposit split above; this writes the
+    //     matching Payment ledger row so the two never drift. In fake-payments dev
+    //     mode this never touches Stripe; when payments aren't configured at all we
+    //     still split the ledger but skip the Payment row (no processor to charge). ---
+    if (takeDeposit && arePaymentsEnabled()) {
+      const charge = await createPayment({
+        orderId: order.id,
+        sourceId: 'deposit',
+        amountCents: depositCents,
+        idempotencyKey: `deposit-${order.id}`,
+      });
+      await tx.payment.create({
+        data: {
+          operator_id: operatorId,
+          order_id: order.id,
+          method: 'CARD',
+          status: 'PAID',
+          amount_cents: depositCents,
+          card_brand: charge.cardBrand,
+          card_last_four: charge.cardLastFour,
+          cardholder_name: charge.cardholderName,
+          processor: 'STRIPE',
+          processor_transaction_id: charge.paymentId,
+        },
+      });
+      await tx.orderEvent.create({
+        data: {
+          operator_id: operatorId,
+          order_id: order.id,
+          type: 'DEPOSIT',
+          description: `Deposit of ${(depositCents / 100).toFixed(2)} USD collected (${depositPercent}% of total); ${((pricing.totalCents - depositCents) / 100).toFixed(2)} USD due at check-in`,
+          actor: options.actor ?? 'customer',
+          metadata: {
+            depositPercent,
+            depositCents,
+            balanceDueCents: pricing.totalCents - depositCents,
+            totalCents: pricing.totalCents,
+          } as Prisma.InputJsonValue,
+        },
+      });
+    }
 
     return order;
   });
@@ -637,5 +787,124 @@ export async function rescheduleBooking(
         customer: true,
       },
     });
+  });
+}
+
+/** Summary returned after collecting a deposit's remaining balance. */
+export interface CollectBalanceResult {
+  orderId: string;
+  orderNumber: string;
+  paymentId: string;
+  chargedCents: number;
+  amountPaidCents: number;
+  balanceDueCents: number;
+}
+
+/**
+ * Collect the remaining balance on a deposit order (the "pay the rest at check-in"
+ * step). Charges the order's outstanding `balance_due_cents` via the (simulated)
+ * card processor, records a Payment row, zeroes the balance, and writes a
+ * BALANCE_COLLECTED OrderEvent — all inside one tenant transaction so the ledger
+ * can never drift. Idempotent-ish: a zero balance is a clean no-op error.
+ *
+ * Shared by the staff API route and the admin "Collect balance" action. In fake-
+ * payments dev mode no external call is made; when payments are not configured at
+ * all it throws so the caller returns a clean 501.
+ */
+export async function collectBalance(
+  operatorId: string,
+  orderId: string,
+  options: { actor?: string; method?: 'CARD' | 'CASH' } = {},
+): Promise<CollectBalanceResult> {
+  if (!arePaymentsEnabled() && (options.method ?? 'CARD') === 'CARD') {
+    throw new BookingError('PAYMENTS_NOT_CONFIGURED', 'Payments are not configured', 501);
+  }
+
+  return withTenant(operatorId, async (tx) => {
+    const order = await tx.order.findFirst({
+      where: { id: orderId },
+      select: {
+        id: true,
+        order_number: true,
+        status: true,
+        total_cents: true,
+        amount_paid_cents: true,
+        balance_due_cents: true,
+      },
+    });
+    if (!order) {
+      throw new BookingError('ORDER_NOT_FOUND', 'Order not found', 404);
+    }
+    if (order.status === 'CANCELLED') {
+      throw new BookingError('ORDER_CANCELLED', 'This order has been cancelled', 409);
+    }
+    const balanceDue = order.balance_due_cents;
+    if (balanceDue <= 0) {
+      throw new BookingError('NO_BALANCE_DUE', 'This order has no outstanding balance', 400);
+    }
+
+    const method = options.method ?? 'CARD';
+    let cardBrand: string | null = null;
+    let cardLastFour: string | null = null;
+    let cardholderName: string | null = null;
+    let processorTransactionId: string | null = null;
+    if (method === 'CARD') {
+      const charge = await createPayment({
+        orderId: order.id,
+        sourceId: 'balance',
+        amountCents: balanceDue,
+        idempotencyKey: `balance-${order.id}-${order.amount_paid_cents}`,
+      });
+      cardBrand = charge.cardBrand;
+      cardLastFour = charge.cardLastFour;
+      cardholderName = charge.cardholderName;
+      processorTransactionId = charge.paymentId;
+    }
+
+    const payment = await tx.payment.create({
+      data: {
+        operator_id: operatorId,
+        order_id: order.id,
+        method,
+        status: 'PAID',
+        amount_cents: balanceDue,
+        card_brand: cardBrand,
+        card_last_four: cardLastFour,
+        cardholder_name: cardholderName,
+        processor: 'STRIPE',
+        processor_transaction_id: processorTransactionId,
+      },
+    });
+
+    const newAmountPaid = order.amount_paid_cents + balanceDue;
+    await tx.order.update({
+      where: { id: order.id },
+      data: { amount_paid_cents: newAmountPaid, balance_due_cents: 0 },
+    });
+
+    await tx.orderEvent.create({
+      data: {
+        operator_id: operatorId,
+        order_id: order.id,
+        type: 'BALANCE_COLLECTED',
+        description: `Balance of ${(balanceDue / 100).toFixed(2)} USD collected at check-in`,
+        actor: options.actor ?? null,
+        metadata: {
+          paymentId: payment.id,
+          chargedCents: balanceDue,
+          method,
+          amountPaidCents: newAmountPaid,
+        } as Prisma.InputJsonValue,
+      },
+    });
+
+    return {
+      orderId: order.id,
+      orderNumber: order.order_number,
+      paymentId: payment.id,
+      chargedCents: balanceDue,
+      amountPaidCents: newAmountPaid,
+      balanceDueCents: 0,
+    };
   });
 }

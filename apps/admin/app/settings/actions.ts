@@ -168,6 +168,55 @@ export async function updatePolicies(input: PoliciesInput): Promise<ActionResult
 }
 
 // ===========================================================================
+// Manager-approval workflow (Singenuity §2)
+// ===========================================================================
+
+const approvalSchema = z.object({
+  /** Dollar threshold (UI is dollars; stored as cents). Empty/0 = no amount gate. */
+  approval_threshold_dollars: z
+    .number({ invalid_type_error: 'Enter a dollar amount' })
+    .min(0, 'Cannot be negative')
+    .max(1_000_000, 'Seems too high')
+    .nullable(),
+  refund_requires_approval: z.boolean(),
+});
+export type ApprovalInput = z.infer<typeof approvalSchema>;
+
+/**
+ * Save the operator's payment/refund approval policy. Above the threshold (or for
+ * every refund when the flag is set) a manager sign-off (`order:approve`) is
+ * required in the payment/refund paths. Tenant-scoped, gated on operator:manage.
+ */
+export async function updateApprovalSettings(input: ApprovalInput): Promise<ActionResult> {
+  try {
+    const { operatorId } = await requirePermission('operator:manage');
+    const parsed = approvalSchema.safeParse(input);
+    if (!parsed.success) return { ok: false, errors: zodErrors(parsed.error) };
+    const v = parsed.data;
+
+    const cents =
+      v.approval_threshold_dollars && v.approval_threshold_dollars > 0
+        ? Math.round(v.approval_threshold_dollars * 100)
+        : null;
+
+    const db = await getTenantDb();
+    await db.operator.update({
+      where: { id: operatorId },
+      data: {
+        approval_threshold_cents: cents,
+        refund_requires_approval: v.refund_requires_approval,
+      },
+    });
+
+    revalidatePath('/settings/policies');
+    return { ok: true };
+  } catch (err) {
+    if (err instanceof AuthorizationError) return denied();
+    throw err;
+  }
+}
+
+// ===========================================================================
 // Fees & Taxes (Fee CRUD)
 // ===========================================================================
 

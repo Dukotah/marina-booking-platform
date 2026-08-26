@@ -25,7 +25,11 @@ DECLARE
     'Location', 'StaffMember', 'Activity', 'Rate', 'Timeslot', 'Resource',
     'ResourceBooking', 'Customer', 'Order', 'OrderItem', 'Payment', 'Note',
     'OrderEvent', 'Fee', 'MerchandiseItem', 'PromoCode', 'Waiver',
-    'WaiverSignature', 'Integration', 'SandboxMessage'
+    'WaiverClause', 'WaiverSignature', 'Integration', 'GiftCard',
+    'GuideAssignment', 'GiftCertificate', 'Package', 'PackageItem',
+    'PackageUpsell', 'Membership', 'CustomerMembership', 'PricingRule',
+    'CustomerQuestion', 'Affiliate', 'MessageTemplate', 'HeardAboutOption',
+    'BlackoutDate', 'GLAccount', 'SandboxMessage'
   ];
 BEGIN
   FOREACH t IN ARRAY tenant_tables LOOP

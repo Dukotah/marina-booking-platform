@@ -24,6 +24,9 @@ export const PERMISSIONS = [
   'order:read',
   'order:write',
   'order:refund',
+  // Manager-level sign-off for payments/refunds above the operator's approval
+  // threshold (Singenuity §2). Held by OWNER/ADMIN/MANAGER, not line STAFF.
+  'order:approve',
   'customer:read',
   'customer:write',
   'pos:operate',
@@ -41,6 +44,7 @@ export const ROLE_PERMISSIONS: Record<BuiltinRole, readonly Permission[]> = {
     'order:read',
     'order:write',
     'order:refund',
+    'order:approve',
     'customer:read',
     'customer:write',
     'pos:operate',

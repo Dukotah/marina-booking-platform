@@ -82,16 +82,22 @@ export function BookingWidget({ activity }: BookingWidgetProps) {
   const [slot, setSlot] = useState<AvailabilitySlot | null>(null);
   const [quantity, setQuantity] = useState<number>(Math.max(1, activity.minParticipants));
 
-  // Capacity ceiling: never exceed the slot's remaining spots or the activity max.
+  // Capacity ceiling: never exceed the slot's TRUE remaining spots or the activity
+  // max. An unset (0) activity max falls back to the slot's remaining capacity so
+  // it never collapses the ceiling to zero. Mirrors the checkout page clamp.
   const maxQty = useMemo(() => {
-    const cap = slot ? Math.max(1, slot.capacityRemaining) : activity.maxParticipants;
-    return Math.min(activity.maxParticipants, cap);
+    const slotCap = slot ? Math.max(0, slot.capacityRemaining) : Infinity;
+    const activityCap = activity.maxParticipants || slotCap;
+    return Math.max(1, Math.min(activityCap, slotCap));
   }, [slot, activity.maxParticipants]);
 
   const minQty = Math.max(1, activity.minParticipants);
   const clampedQty = Math.min(Math.max(quantity, minQty), Math.max(minQty, maxQty));
 
-  const ready = rate !== null && date !== null && slot !== null;
+  // Ready only when a rate, date, and a slot that TRULY still has room are chosen.
+  // Guards against advancing to checkout on a slot that sold out after selection.
+  const ready =
+    rate !== null && date !== null && slot !== null && slot.capacityRemaining > 0;
   const lineTotalCents = rate ? rate.priceCents * clampedQty : 0;
 
   // Choosing a new date invalidates the previously chosen time slot.
@@ -174,7 +180,7 @@ export function BookingWidget({ activity }: BookingWidgetProps) {
                 aria-label="Decrease guests"
                 disabled={clampedQty <= minQty}
                 onClick={() => setQuantity((q) => Math.max(minQty, q - 1))}
-                className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 text-lg font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-30"
+                className="flex h-11 w-11 items-center justify-center rounded-lg border border-slate-300 text-lg font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-30"
               >
                 −
               </button>
@@ -189,7 +195,7 @@ export function BookingWidget({ activity }: BookingWidgetProps) {
                 aria-label="Increase guests"
                 disabled={clampedQty >= maxQty}
                 onClick={() => setQuantity((q) => Math.min(maxQty, q + 1))}
-                className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 text-lg font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-30"
+                className="flex h-11 w-11 items-center justify-center rounded-lg border border-slate-300 text-lg font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-30"
               >
                 +
               </button>
@@ -232,7 +238,7 @@ export function BookingWidget({ activity }: BookingWidgetProps) {
             type="button"
             disabled={!ready}
             onClick={proceedToCheckout}
-            className="w-full rounded-xl px-4 py-3 text-center text-sm font-semibold text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+            className="flex min-h-[52px] w-full items-center justify-center rounded-xl px-4 py-3 text-center text-base font-semibold text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
             style={{ backgroundColor: accent }}
           >
             {ready ? `Continue to checkout · ${formatUSD(lineTotalCents)}` : 'Continue to checkout'}

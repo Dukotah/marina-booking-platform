@@ -32,6 +32,8 @@ function Row({
 
 export function PriceBreakdown({ order }: { order: OrderSummary }) {
   const fullyPaid = order.balanceDueCents <= 0 && order.amountPaidCents > 0;
+  // A deposit order paid a portion now and owes the rest at check-in.
+  const isDeposit = order.amountPaidCents > 0 && order.balanceDueCents > 0;
 
   return (
     <div className="space-y-3">
@@ -54,9 +56,16 @@ export function PriceBreakdown({ order }: { order: OrderSummary }) {
         </div>
       </div>
 
+      {isDeposit && (
+        <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800">
+          Deposit taken. Pay {formatUSD(order.amountPaidCents)} now,{' '}
+          {formatUSD(order.balanceDueCents)} due at check-in.
+        </p>
+      )}
+
       {(order.amountPaidCents > 0 || order.balanceDueCents > 0) && (
         <div className="space-y-2 border-t border-slate-200 pt-3">
-          <Row label="Amount paid" cents={order.amountPaidCents} muted />
+          <Row label={isDeposit ? 'Deposit paid' : 'Amount paid'} cents={order.amountPaidCents} muted />
           {order.balanceDueCents > 0 ? (
             <div className="flex items-center justify-between text-sm">
               <span className="font-medium text-amber-700">Balance due</span>

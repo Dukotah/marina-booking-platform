@@ -16,9 +16,8 @@
  */
 
 import { bookingInputSchema, promoValidateSchema } from '@marina/core';
+import { createBooking, submitPayment } from '@/lib/orders';
 import {
-  createBooking,
-  submitPayment,
   validatePromo,
   isApiError,
   type CreateBookingPayload,

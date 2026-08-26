@@ -185,3 +185,88 @@ function effectiveCanWrite(role: string, extra: string[]): boolean {
   if (extra.includes('order:write')) return true;
   return role === 'OWNER' || role === 'ADMIN' || role === 'MANAGER' || role === 'STAFF';
 }
+
+// ===========================================================================
+// Guide scheduling (Singenuity §2)
+// ===========================================================================
+
+export interface GuideActionResult {
+  ok: boolean;
+  error?: string;
+}
+
+/**
+ * Assign a guide (staff member) to a timeslot from the manifest. Mirrors the API's
+ * guide service: validates the guide is an active staffer + the slot exists, is
+ * idempotent on (slot, guide), and records the assigning actor. Notifications fire
+ * from the API path; the admin action is the direct-DB write for the dock UI.
+ * Requires `order:write` (same bar as running the manifest).
+ */
+export async function assignGuideAction(
+  timeslotId: string,
+  guideId: string,
+  roleLabel?: string,
+): Promise<GuideActionResult> {
+  if (!timeslotId || !guideId) return { ok: false, error: 'Missing guide or timeslot' };
+
+  const { auth } = await getOperatorContext();
+  if (!effectiveCanWrite(auth.role, auth.extraPermissions)) {
+    return { ok: false, error: 'You do not have permission to schedule guides.' };
+  }
+
+  const db = await getTenantDb();
+
+  const guide = await db.staffMember.findFirst({
+    where: { id: guideId, is_active: true },
+    select: { id: true },
+  });
+  if (!guide) return { ok: false, error: 'Guide is not an active staff member.' };
+
+  const slot = await db.timeslot.findUnique({ where: { id: timeslotId }, select: { id: true } });
+  if (!slot) return { ok: false, error: 'Timeslot not found.' };
+
+  const existing = await db.guideAssignment.findFirst({
+    where: { timeslot_id: timeslotId, guide_id: guideId },
+    select: { id: true },
+  });
+  if (existing) {
+    // Idempotent: update the role label if it changed, otherwise no-op.
+    await db.guideAssignment.update({
+      where: { id: existing.id },
+      data: { role_label: roleLabel?.trim() || null },
+    });
+  } else {
+    await db.guideAssignment.create({
+      data: {
+        operator_id: auth.operatorId,
+        timeslot_id: timeslotId,
+        guide_id: guideId,
+        role_label: roleLabel?.trim() || null,
+        assigned_by: auth.userId,
+      },
+    });
+  }
+
+  revalidatePath('/manifest');
+  return { ok: true };
+}
+
+/** Remove a guide assignment by id. Idempotent (missing → ok). */
+export async function unassignGuideAction(assignmentId: string): Promise<GuideActionResult> {
+  if (!assignmentId) return { ok: false, error: 'Missing assignment id' };
+
+  const { auth } = await getOperatorContext();
+  if (!effectiveCanWrite(auth.role, auth.extraPermissions)) {
+    return { ok: false, error: 'You do not have permission to schedule guides.' };
+  }
+
+  const db = await getTenantDb();
+  const existing = await db.guideAssignment.findUnique({
+    where: { id: assignmentId },
+    select: { id: true },
+  });
+  if (existing) await db.guideAssignment.delete({ where: { id: existing.id } });
+
+  revalidatePath('/manifest');
+  return { ok: true };
+}

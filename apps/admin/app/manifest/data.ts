@@ -1,6 +1,11 @@
 import { getOperatorContext, getTenantDb } from '../../lib/session';
 import { localDayRangeUtc, localMinutesOfDay } from '../../components/manifest/tz';
-import type { ManifestBooking, ManifestRow } from '../../components/manifest/types';
+import type {
+  ManifestBooking,
+  ManifestGuide,
+  ManifestRow,
+  ManifestSlot,
+} from '../../components/manifest/types';
 
 /**
  * Load the Gantt manifest view-model for a single operator-local day.
@@ -16,6 +21,10 @@ export interface ManifestData {
   rows: ManifestRow[];
   totalBookings: number;
   checkedIn: number;
+  /** Sum of capacity_total across the day's slots (utilization denominator). */
+  capacityTotal: number;
+  /** Sum of capacity_booked across the day's slots (utilization numerator). */
+  capacityBooked: number;
 }
 
 export async function loadManifest(isoDate: string): Promise<ManifestData> {
@@ -50,6 +59,15 @@ export async function loadManifest(isoDate: string): Promise<ManifestData> {
           datetime: true,
           capacity_total: true,
           capacity_booked: true,
+          guide_assignments: {
+            select: {
+              id: true,
+              guide_id: true,
+              role_label: true,
+              guide: { select: { name: true, email: true } },
+            },
+            orderBy: { created_at: 'asc' },
+          },
           order_items: {
             where: { status: { not: 'CANCELLED' } },
             select: {
@@ -76,17 +94,43 @@ export async function loadManifest(isoDate: string): Promise<ManifestData> {
 
   let totalBookings = 0;
   let checkedIn = 0;
+  let capacityTotalAll = 0;
+  let capacityBookedAll = 0;
 
   const rows: ManifestRow[] = activities.map((activity) => {
     let capacityTotal = 0;
     let capacityBooked = 0;
     const bookings: ManifestBooking[] = [];
+    const slots: ManifestSlot[] = [];
+    // De-dup guides across the activity's slots for the row-level chip list.
+    const guideById = new Map<string, ManifestGuide>();
 
     for (const slot of activity.timeslots) {
       capacityTotal += slot.capacity_total;
       capacityBooked += slot.capacity_booked;
 
       const startMin = localMinutesOfDay(slot.datetime, timeZone);
+
+      const slotGuides: ManifestGuide[] = slot.guide_assignments.map((g) => {
+        const view: ManifestGuide = {
+          assignmentId: g.id,
+          guideId: g.guide_id,
+          guideName: g.guide.name,
+          guideEmail: g.guide.email,
+          roleLabel: g.role_label,
+        };
+        if (!guideById.has(g.guide_id)) guideById.set(g.guide_id, view);
+        return view;
+      });
+
+      slots.push({
+        timeslotId: slot.id,
+        startISO: slot.datetime.toISOString(),
+        startMin,
+        capacityTotal: slot.capacity_total,
+        capacityBooked: slot.capacity_booked,
+        guides: slotGuides,
+      });
       for (const item of slot.order_items) {
         const durationMin = item.rate?.duration_minutes ?? 240;
         const endMin = Math.min(startMin + durationMin, 24 * 60);
@@ -115,6 +159,9 @@ export async function loadManifest(isoDate: string): Promise<ManifestData> {
     }
 
     bookings.sort((a, b) => a.startMin - b.startMin);
+    slots.sort((a, b) => a.startMin - b.startMin);
+    capacityTotalAll += capacityTotal;
+    capacityBookedAll += capacityBooked;
 
     return {
       activityId: activity.id,
@@ -122,9 +169,43 @@ export async function loadManifest(isoDate: string): Promise<ManifestData> {
       color: activity.color,
       capacityTotal,
       capacityBooked,
+      slots,
+      guides: Array.from(guideById.values()),
       bookings,
     };
   });
 
-  return { timeZone, rows, totalBookings, checkedIn };
+  return {
+    timeZone,
+    rows,
+    totalBookings,
+    checkedIn,
+    capacityTotal: capacityTotalAll,
+    capacityBooked: capacityBookedAll,
+  };
+}
+
+/** A staff member who can be scheduled as a guide (GUIDE role first). */
+export interface GuideRosterEntry {
+  id: string;
+  name: string | null;
+  email: string;
+  role: string;
+}
+
+/**
+ * Load the assignable-guide roster for the current operator. Guides are staff; we
+ * surface the GUIDE role first but allow any active staffer to be scheduled (small
+ * operators wear multiple hats). Tenant-scoped via the RLS client.
+ */
+export async function loadGuideRoster(): Promise<GuideRosterEntry[]> {
+  const db = await getTenantDb();
+  const staff = await db.staffMember.findMany({
+    where: { is_active: true },
+    select: { id: true, name: true, email: true, role: true },
+    orderBy: [{ name: 'asc' }],
+  });
+  return staff
+    .map((s) => ({ id: s.id, name: s.name, email: s.email, role: s.role as string }))
+    .sort((a, b) => (b.role === 'GUIDE' ? 1 : 0) - (a.role === 'GUIDE' ? 1 : 0));
 }

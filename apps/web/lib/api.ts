@@ -12,6 +12,14 @@
  * All money fields are integer cents (see @marina/types money helpers).
  */
 
+import { DEMO_MODE } from './demo/config';
+import {
+  getDemoCatalog,
+  getDemoActivity,
+  getDemoAvailability,
+  getDemoPromo,
+} from './demo/fixtures';
+
 // Server-side: call the API directly. Browser-side: use this app's own origin
 // (empty base → relative `/api/...`) and let the Next rewrite proxy it to the API,
 // so client calls don't depend on the API being reachable at localhost from the
@@ -95,9 +103,19 @@ export interface CatalogActivity {
   color: string;
   photoUrls: string[];
   waiverRequired: boolean;
-  /** Lowest bookable price, or null when no rates are configured. */
+  /** When true, pricing is suppressed on this activity ("call for price"). */
+  hidePrice?: boolean;
+  /** Lowest bookable price, or null when no rates are configured / price hidden. */
   fromPriceCents: number | null;
   rates: CatalogRate[];
+}
+
+/** An optional add-on offered at checkout for an activity (package upsell). */
+export interface ActivityUpsell {
+  id: string;
+  name: string;
+  description: string | null;
+  priceCents: number;
 }
 
 /** Full detail for a single activity's booking page. */
@@ -105,6 +123,31 @@ export interface ActivityDetail extends CatalogActivity {
   minParticipants: number;
   descriptionHtml: string | null;
   selfRescheduleHours: number;
+  /** Optional checkout add-ons; absent on older API responses. */
+  upsells?: ActivityUpsell[];
+}
+
+/** One line within a Package bundle. */
+export interface PackageItem {
+  id: string;
+  activityId: string;
+  activityName: string;
+  rateId: string;
+  rateName: string;
+  quantity: number;
+  unitPriceCents: number;
+  lineTotalCents: number;
+}
+
+/** A sellable activity/rate bundle at a single package price. */
+export interface CatalogPackage {
+  id: string;
+  name: string;
+  descriptionHtml: string | null;
+  priceCents: number;
+  aLaCarteCents: number;
+  savingsCents: number;
+  items: PackageItem[];
 }
 
 /** A single bookable time on a given day. */
@@ -187,7 +230,7 @@ export interface PaymentResult {
  * items are nested. We map it to the flat `OrderSummary` the pages consume so the
  * contract lives in exactly one place.
  */
-interface ApiOrder {
+export interface ApiOrder {
   id: string;
   orderNumber: string;
   status: OrderSummary['status'];
@@ -217,7 +260,7 @@ interface ApiOrder {
   }>;
 }
 
-function mapApiOrder(o: ApiOrder): OrderSummary {
+export function mapApiOrder(o: ApiOrder): OrderSummary {
   return {
     id: o.id,
     orderNumber: o.orderNumber,
@@ -293,7 +336,7 @@ interface RequestOptions {
   signal?: AbortSignal;
 }
 
-async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
+export async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   const { method = 'GET', body, cache = 'no-store', revalidate, signal } = opts;
 
   const headers: Record<string, string> = {
@@ -364,12 +407,33 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 
 /** The full bookable catalog (active, online-visible activities) for the tenant. */
 export async function getCatalog(): Promise<CatalogActivity[]> {
+  if (DEMO_MODE) return getDemoCatalog();
   const data = await request<{ activities: CatalogActivity[] }>('/api/activities');
   return data.activities;
 }
 
+/** The active, online-visible package bundles for the tenant (empty in demo mode). */
+export async function getPackages(): Promise<CatalogPackage[]> {
+  if (DEMO_MODE) return [];
+  const data = await request<{ packages: CatalogPackage[] }>('/api/packages');
+  return data.packages;
+}
+
+/** Priced detail for a single package bundle. */
+export async function getPackage(id: string): Promise<CatalogPackage> {
+  const data = await request<{ package: CatalogPackage }>(
+    `/api/packages/${encodeURIComponent(id)}`,
+  );
+  return data.package;
+}
+
 /** Detail for a single activity's booking page. */
 export async function getActivity(id: string): Promise<ActivityDetail> {
+  if (DEMO_MODE) {
+    const activity = getDemoActivity(id);
+    if (!activity) throw new ApiError('Activity not found', 404, 'NOT_FOUND');
+    return activity;
+  }
   const data = await request<{ activity: ActivityDetail }>(
     `/api/activities/${encodeURIComponent(id)}`,
   );
@@ -384,6 +448,7 @@ export async function getAvailability(
   activityId: string,
   isoDate: string,
 ): Promise<AvailabilityDay> {
+  if (DEMO_MODE) return getDemoAvailability(activityId, isoDate);
   const qs = new URLSearchParams({ date: isoDate });
   return request<AvailabilityDay>(
     `/api/activities/${encodeURIComponent(activityId)}/availability?${qs.toString()}`,
@@ -395,87 +460,81 @@ export async function validatePromo(
   code: string,
   activityId: string,
 ): Promise<PromoValidation> {
+  if (DEMO_MODE) return getDemoPromo(code, activityId);
   return request<PromoValidation>('/api/promos/validate', {
     method: 'POST',
     body: { code, activityId },
   });
 }
 
-/** Create a booking (order). Returns the order summary with computed totals. */
-export async function createBooking(
-  payload: CreateBookingPayload,
-): Promise<OrderSummary> {
-  const data = await request<{ order: ApiOrder }>('/api/bookings', {
+// ---------------------------------------------------------------------------
+// Waivers (public: active clauses + clause-level signing)
+// ---------------------------------------------------------------------------
+
+/** A single clause of the active waiver, in display order. */
+export interface WaiverClause {
+  id: string;
+  sortOrder: number;
+  title: string;
+  bodyHtml: string;
+  requiresInitials: boolean;
+  isRequired: boolean;
+}
+
+/** The active waiver plus its ordered clauses, for the clause-level signing UI. */
+export interface ActiveWaiver {
+  id: string;
+  name: string;
+  version: number;
+  introHtml: string | null;
+  templateHtml: string;
+  requiresMinorSignature: boolean;
+  clauses: WaiverClause[];
+}
+
+/** Fetch the tenant's active waiver + clauses (optionally scoped to an activity). */
+export async function getActiveWaiver(activityId?: string): Promise<ActiveWaiver> {
+  const qs = activityId ? `?activityId=${encodeURIComponent(activityId)}` : '';
+  const body = await request<{ waiver: ActiveWaiver }>(`/api/waivers/active${qs}`);
+  return body.waiver;
+}
+
+/** One per-clause acknowledgment submitted with a signature. */
+export interface WaiverAcknowledgment {
+  clauseId: string;
+  initials?: string;
+}
+
+export interface SignWaiverPayload {
+  orderItemId: string;
+  signerName: string;
+  signerDob?: string;
+  signatureData: string;
+  isMinor: boolean;
+  guardianName?: string;
+  acknowledgments: WaiverAcknowledgment[];
+}
+
+export interface SignWaiverResponse {
+  signature: {
+    id: string;
+    orderItemId: string | null;
+    signerName: string;
+    signedAt: string;
+    acknowledgments: Array<{ clauseId: string; title: string; initials: string | null }>;
+  };
+}
+
+/** Submit a clause-level waiver signature for an order item. */
+export async function signWaiver(payload: SignWaiverPayload): Promise<SignWaiverResponse> {
+  return request<SignWaiverResponse>('/api/waivers/sign', {
     method: 'POST',
     body: payload,
   });
-  return mapApiOrder(data.order);
 }
 
-/** Fetch an order by its public order number (used on the confirmation page). */
-export async function getOrder(orderNumber: string): Promise<OrderSummary> {
-  const data = await request<{ order: ApiOrder }>(
-    `/api/orders/${encodeURIComponent(orderNumber)}`,
-  );
-  return mapApiOrder(data.order);
-}
-
-/**
- * Customer self-service reschedule: move a booking item to a different time slot
- * of the same activity. Identity is gated server-side by the email on the order
- * (the magic-link stub), and the move must fall inside the activity's
- * self-reschedule window. `orderItemId` is required when the order has more than
- * one active item. Returns the updated order summary.
- */
-export async function rescheduleBooking(
-  orderNumber: string,
-  payload: { email: string; timeslotId: string; orderItemId?: string },
-): Promise<OrderSummary> {
-  const data = await request<{ order: ApiOrder | null }>(
-    `/api/orders/${encodeURIComponent(orderNumber)}/self-reschedule`,
-    { method: 'POST', body: payload },
-  );
-  if (!data.order) {
-    throw new ApiError(
-      'The reschedule did not return an updated order.',
-      502,
-      'NO_ORDER',
-    );
-  }
-  return mapApiOrder(data.order);
-}
-
-/**
- * Submit a payment for an order using a tokenized payment source.
- * @param sourceId Stripe PaymentMethod id from Stripe Elements (sent as `sourceId`).
- *                 In dev-fake-payments mode a placeholder id is accepted.
- */
-export async function submitPayment(
-  orderId: string,
-  sourceId: string,
-): Promise<PaymentResult> {
-  const data = await request<{
-    payment: {
-      id: string;
-      status: PaymentResult['status'];
-      amountCents: number;
-      cardBrand: string | null;
-      cardLastFour: string | null;
-      processorTransactionId: string | null;
-      receiptUrl: string | null;
-    };
-    order: { id: string; amountPaidCents: number; balanceDueCents: number };
-  }>('/api/payments/charge', {
-    method: 'POST',
-    body: { orderId, sourceId },
-  });
-  return {
-    paymentId: data.payment.id,
-    status: data.payment.status,
-    amountCents: data.payment.amountCents,
-    balanceDueCents: data.order.balanceDueCents,
-    cardLastFour: data.payment.cardLastFour,
-    cardBrand: data.payment.cardBrand,
-    receiptUrl: data.payment.receiptUrl,
-  };
-}
+// Order-mutating operations (create/pay/get/reschedule) live in `./orders` — a
+// server-only module — because in DEMO_MODE they reach a cookie-backed store that
+// imports `next/headers`, which must never be pulled into the client bundle. This
+// module (client-reachable via the availability/catalog components) stays free of
+// that dependency. See ./orders.

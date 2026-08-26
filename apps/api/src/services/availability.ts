@@ -159,6 +159,43 @@ async function resolveActivityTimezone(db: TenantClient, activityId: string): Pr
   return activity.location?.timezone ?? activity.operator.timezone;
 }
 
+/**
+ * The set of blackout calendar days (YYYY-MM-DD, operator/location timezone) that
+ * overlap [rangeStart, rangeEnd). A blackout scoped to a location applies only when
+ * the activity belongs to that location; unscoped (location_id null) blackouts apply
+ * everywhere. Availability queries drop any slot whose day is in this set.
+ */
+async function blackoutDayKeys(
+  db: TenantClient,
+  activityId: string,
+  timeZone: string,
+  rangeStart: Date,
+  rangeEnd: Date,
+): Promise<Set<string>> {
+  const activity = await db.activity.findUnique({
+    where: { id: activityId },
+    select: { location_id: true },
+  });
+  const locationId = activity?.location_id ?? null;
+
+  const rows = await db.blackoutDate.findMany({
+    where: {
+      date: { gte: startOfDay(rangeStart), lt: rangeEnd },
+      OR: [{ location_id: null }, ...(locationId ? [{ location_id: locationId }] : [])],
+    },
+    select: { date: true },
+  });
+
+  const keys = new Set<string>();
+  for (const r of rows) keys.add(dayKey(timeZone, r.date));
+  return keys;
+}
+
+/** UTC-midnight of the day containing `d`, so a blackout stored at midnight is caught. */
+function startOfDay(d: Date): Date {
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+}
+
 function toView(slot: {
   id: string;
   datetime: Date;
@@ -191,6 +228,13 @@ export async function getDayAvailability(
   const parts = parseDateParts(params.date, 'date');
   const timeZone = await resolveActivityTimezone(db, params.activityId);
   const { start, end } = dayBoundsUtc(timeZone, parts);
+
+  // Blackout days (Singenuity §4): if this calendar day is blacked out, no slots are
+  // bookable — return an empty set without even loading the timeslots.
+  const blackout = await blackoutDayKeys(db, params.activityId, timeZone, start, end);
+  if (blackout.has(params.date)) {
+    return { activityId: params.activityId, date: params.date, timezone: timeZone, timeslots: [] };
+  }
 
   const slots = await db.timeslot.findMany({
     where: {
@@ -315,19 +359,22 @@ export async function getRangeAvailability(
     throw new AvailabilityError(`Range too large (max ${MAX_RANGE_DAYS} days)`);
   }
 
-  const slots = await db.timeslot.findMany({
-    where: {
-      activity_id: params.activityId,
-      status: { not: 'CANCELLED' },
-      datetime: { gte: rangeStart, lt: rangeEnd },
-    },
-    orderBy: { datetime: 'asc' },
-    select: {
-      datetime: true,
-      capacity_total: true,
-      capacity_booked: true,
-    },
-  });
+  const [slots, blackout] = await Promise.all([
+    db.timeslot.findMany({
+      where: {
+        activity_id: params.activityId,
+        status: { not: 'CANCELLED' },
+        datetime: { gte: rangeStart, lt: rangeEnd },
+      },
+      orderBy: { datetime: 'asc' },
+      select: {
+        datetime: true,
+        capacity_total: true,
+        capacity_booked: true,
+      },
+    }),
+    blackoutDayKeys(db, params.activityId, timeZone, rangeStart, rangeEnd),
+  ]);
 
   // Seed every calendar day in the range so days with no slots still appear (red).
   const buckets = new Map<
@@ -359,11 +406,13 @@ export async function getRangeAvailability(
   const days: DayAvailability[] = [...buckets.entries()]
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
     .map(([date, b]) => {
-      const remaining = Math.max(0, b.capacityTotal - b.capacityBooked);
-      // A day is red when nothing can be booked. Otherwise reuse the slot-status rule
-      // on the day's aggregate capacity: FULL/-ish -> red, FILLING_UP -> yellow, else green.
+      const isBlackout = blackout.has(date);
+      const remaining = isBlackout ? 0 : Math.max(0, b.capacityTotal - b.capacityBooked);
+      // A day is red when nothing can be booked (including an operator blackout).
+      // Otherwise reuse the slot-status rule on the day's aggregate capacity:
+      // FULL/-ish -> red, FILLING_UP -> yellow, else green.
       let signal: DayAvailability['signal'];
-      if (b.slotCount === 0 || remaining <= 0) {
+      if (isBlackout || b.slotCount === 0 || remaining <= 0) {
         signal = 'red';
       } else {
         const status = computeSlotStatus(b.capacityTotal, b.capacityBooked);

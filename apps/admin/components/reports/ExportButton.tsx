@@ -13,6 +13,10 @@ export interface ExportButtonProps {
   /** Resolved range (ISO YYYY-MM-DD) — passed to the server action. */
   from: string;
   to: string;
+  /** Active date basis (order vs appointment) for the Sales report. */
+  basis?: string;
+  /** Whether comparison-vs-prior-period mode is on. */
+  compare?: boolean;
 }
 
 /**
@@ -22,7 +26,7 @@ export interface ExportButtonProps {
  * URL. Errors (e.g. missing permission) surface inline rather than failing
  * silently.
  */
-export function ExportButton({ reportKind, from, to }: ExportButtonProps) {
+export function ExportButton({ reportKind, from, to, basis, compare }: ExportButtonProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -30,7 +34,7 @@ export function ExportButton({ reportKind, from, to }: ExportButtonProps) {
     setBusy(true);
     setError(null);
     try {
-      const result = await exportReportCsv(reportKind, from, to);
+      const result = await exportReportCsv(reportKind, from, to, basis, compare ? '1' : undefined);
       if (!result.ok || !result.csv || !result.filename) {
         setError(result.error ?? 'Export failed. Please try again.');
         return;

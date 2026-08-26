@@ -16,21 +16,30 @@
  * order summary / price / payment become a sticky right rail. All money is
  * integer cents and the displayed pricing uses @marina/core.
  */
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { FormProvider, useForm } from 'react-hook-form';
 import { AlertTriangle } from 'lucide-react';
 import { calculatePricing } from '@marina/core';
 import { Button, Card, CardContent, CardHeader, CardTitle } from '@marina/ui';
 import type { StripeConfig } from '@/app/checkout/stripe-config';
+import type { WalletConfig } from '@/app/checkout/wallet-config';
 import { placeOrder } from '@/app/checkout/actions';
+import {
+  clearRememberedGuest,
+  loadRememberedGuest,
+  saveRememberedGuest,
+  type RememberedGuest,
+} from '@/lib/guest';
 import { OrderSummary } from './OrderSummary';
 import { CustomerFields } from './CustomerFields';
+import { GuestPrefillBanner } from './GuestPrefillBanner';
 import { ParticipantFields } from './ParticipantFields';
 import { WaiverSection } from './WaiverSection';
 import { PromoField } from './PromoField';
 import { TipSelector } from './TipSelector';
 import { PriceBreakdown } from './PriceBreakdown';
+import { WalletExpress } from './WalletExpress';
 import { PaymentSection, type PaymentSectionHandle } from './PaymentSection';
 import type {
   AppliedPromo,
@@ -42,6 +51,8 @@ import type {
 interface CheckoutClientProps {
   selection: CheckoutSelection;
   stripe: StripeConfig;
+  /** Express-wallet (Apple/Google Pay) seam config — gated behind a flag. */
+  wallet: WalletConfig;
   /** Operator (white-label) name for the waiver copy. */
   operatorName: string;
 }
@@ -78,6 +89,7 @@ function Section({
 export function CheckoutClient({
   selection,
   stripe,
+  wallet,
   operatorName,
 }: CheckoutClientProps) {
   const router = useRouter();
@@ -87,6 +99,8 @@ export function CheckoutClient({
   const [tipCents, setTipCents] = useState(0);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // Returning-guest ("book again") prefill, read from this device only.
+  const [rememberedGuest, setRememberedGuest] = useState<RememberedGuest | null>(null);
 
   const paymentRef = useRef<PaymentSectionHandle>(null);
 
@@ -117,6 +131,28 @@ export function CheckoutClient({
     } else if (next < current.length) {
       methods.setValue('participants', current.slice(0, next));
     }
+  };
+
+  // On mount, surface a remembered guest (if any) so a returning visitor can
+  // one-tap prefill. Read after hydration to keep SSR/CSR markup identical.
+  useEffect(() => {
+    setRememberedGuest(loadRememberedGuest());
+  }, []);
+
+  // One-tap "book again": fill the lead-guest fields from the remembered guest.
+  const applyRememberedGuest = () => {
+    if (!rememberedGuest) return;
+    methods.setValue('firstName', rememberedGuest.firstName, { shouldDirty: true });
+    methods.setValue('lastName', rememberedGuest.lastName, { shouldDirty: true });
+    methods.setValue('email', rememberedGuest.email, { shouldDirty: true });
+    methods.setValue('phone', rememberedGuest.phone, { shouldDirty: true });
+    setRememberedGuest(null); // banner dismisses once applied
+  };
+
+  // "Not you?" — forget the saved guest on this device.
+  const forgetRememberedGuest = () => {
+    clearRememberedGuest();
+    setRememberedGuest(null);
   };
 
   // Base the tip presets on the post-discount subtotal (integer cents).
@@ -178,6 +214,14 @@ export function CheckoutClient({
         return;
       }
 
+      // Remember this guest (this device only) so their next booking is one-tap.
+      saveRememberedGuest({
+        firstName: values.firstName,
+        lastName: values.lastName,
+        email: values.email,
+        phone: values.phone,
+      });
+
       router.push(`/confirmation?order=${encodeURIComponent(result.order.orderNumber)}`);
     } catch {
       setSubmitError('Something went wrong completing your booking. Please try again.');
@@ -194,8 +238,17 @@ export function CheckoutClient({
           <div className="order-2 space-y-6 lg:order-1">
             <Section
               title="Guest details"
-              description="We'll send your confirmation and receipt to this email."
+              description="No account needed — book as a guest. We'll send your confirmation and receipt to this email."
             >
+              {rememberedGuest && (
+                <div className="mb-4">
+                  <GuestPrefillBanner
+                    guest={rememberedGuest}
+                    onUse={applyRememberedGuest}
+                    onDismiss={forgetRememberedGuest}
+                  />
+                </div>
+              )}
               <CustomerFields />
             </Section>
 
@@ -216,6 +269,14 @@ export function CheckoutClient({
             )}
 
             <Section title="Payment" description="Secure card payment.">
+              {/* Express-wallet seam (Apple/Google Pay). Renders nothing unless
+                  NEXT_PUBLIC_ENABLE_WALLET_PAY is on; onExpressPay left unwired
+                  until a real PaymentRequest integration is added. */}
+              {wallet.enabled && (
+                <div className="mb-4">
+                  <WalletExpress enabled={wallet.enabled} />
+                </div>
+              )}
               <PaymentSection ref={paymentRef} stripe={stripe} />
             </Section>
           </div>

@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { z } from 'zod';
 import { assertPermission } from '@marina/auth';
 import type { Env } from '../context.js';
 import { requireStaff } from '../middleware/auth.js';
@@ -12,7 +13,9 @@ export const activities = new Hono<Env>();
  */
 activities.get('/', async (c) => {
   const rows = await c.var.db.activity.findMany({
-    where: { status: 'ACTIVE', visible_online: true },
+    // Per-channel visibility (Singenuity §1): the online catalog is the "display"
+    // surface, so it also excludes anything flagged hide_from_display.
+    where: { status: 'ACTIVE', visible_online: true, hide_from_display: false },
     orderBy: { sort_index: 'asc' },
     include: {
       rates: {
@@ -22,24 +25,33 @@ activities.get('/', async (c) => {
     },
   });
 
-  const catalog = rows.map((a) => ({
-    id: a.id,
-    name: a.name_external,
-    category: a.category,
-    maxParticipants: a.max_participants,
-    color: a.color,
-    photoUrls: a.photo_urls,
-    waiverRequired: a.waiver_required,
-    fromPriceCents:
-      a.rates.find((r) => r.is_from_price)?.price_cents ??
-      a.rates.reduce<number | null>((min, r) => (min === null ? r.price_cents : Math.min(min, r.price_cents)), null),
-    rates: a.rates.map((r) => ({
-      id: r.id,
-      name: r.name_external,
-      priceCents: r.price_cents,
-      durationMinutes: r.duration_minutes,
-    })),
-  }));
+  const catalog = rows.map((a) => {
+    // hide_price: list the activity but suppress pricing ("call for price").
+    const fromPriceCents = a.hide_price
+      ? null
+      : (a.rates.find((r) => r.is_from_price)?.price_cents ??
+        a.rates.reduce<number | null>(
+          (min, r) => (min === null ? r.price_cents : Math.min(min, r.price_cents)),
+          null,
+        ));
+    return {
+      id: a.id,
+      name: a.name_external,
+      category: a.category,
+      maxParticipants: a.max_participants,
+      color: a.color,
+      photoUrls: a.photo_urls,
+      waiverRequired: a.waiver_required,
+      hidePrice: a.hide_price,
+      fromPriceCents,
+      rates: a.rates.map((r) => ({
+        id: r.id,
+        name: r.name_external,
+        priceCents: r.price_cents,
+        durationMinutes: r.duration_minutes,
+      })),
+    };
+  });
 
   return c.json({ activities: catalog });
 });
@@ -64,10 +76,14 @@ activities.get('/manage', requireStaff, async (c) => {
 activities.get('/:id', async (c) => {
   const id = c.req.param('id');
   const row = await c.var.db.activity.findFirst({
-    where: { id, status: 'ACTIVE', visible_online: true },
+    where: { id, status: 'ACTIVE', visible_online: true, hide_from_display: false },
     include: {
       rates: {
         where: { is_active: true, internal_only: false },
+        orderBy: { sort_index: 'asc' },
+      },
+      upsells: {
+        where: { is_active: true },
         orderBy: { sort_index: 'asc' },
       },
     },
@@ -77,12 +93,13 @@ activities.get('/:id', async (c) => {
     return c.json({ error: 'Activity not found' }, 404);
   }
 
-  const fromPriceCents =
-    row.rates.find((r) => r.is_from_price)?.price_cents ??
-    row.rates.reduce<number | null>(
-      (min, r) => (min === null ? r.price_cents : Math.min(min, r.price_cents)),
-      null,
-    );
+  const fromPriceCents = row.hide_price
+    ? null
+    : (row.rates.find((r) => r.is_from_price)?.price_cents ??
+      row.rates.reduce<number | null>(
+        (min, r) => (min === null ? r.price_cents : Math.min(min, r.price_cents)),
+        null,
+      ));
 
   return c.json({
     activity: {
@@ -96,12 +113,20 @@ activities.get('/:id', async (c) => {
       waiverRequired: row.waiver_required,
       descriptionHtml: row.description_html,
       selfRescheduleHours: row.self_reschedule_hours,
+      hidePrice: row.hide_price,
       fromPriceCents,
       rates: row.rates.map((r) => ({
         id: r.id,
         name: r.name_external,
         priceCents: r.price_cents,
         durationMinutes: r.duration_minutes,
+      })),
+      // Optional add-ons offered at checkout (Singenuity §1 package upsells).
+      upsells: row.upsells.map((u) => ({
+        id: u.id,
+        name: u.name,
+        description: u.description,
+        priceCents: u.price_cents,
       })),
     },
   });
@@ -141,5 +166,67 @@ activities.get('/:id/availability', async (c) => {
     }
     throw err;
   }
+});
+
+// ---------------------------------------------------------------------------
+// Package upsells — optional per-activity add-ons offered at checkout.
+// (Public checkout reads them via GET /:id above; these manage them.)
+// ---------------------------------------------------------------------------
+
+/** GET /api/activities/:id/upsells — staff list all upsells for an activity. */
+activities.get('/:id/upsells', requireStaff, async (c) => {
+  assertPermission(c.var.auth, 'activity:read');
+  const activityId = c.req.param('id');
+  const rows = await c.var.db.packageUpsell.findMany({
+    where: { activity_id: activityId },
+    orderBy: { sort_index: 'asc' },
+  });
+  return c.json({ upsells: rows });
+});
+
+const upsellSchema = z.object({
+  name: z.string().trim().min(1, 'Name is required').max(160),
+  description: z.string().trim().max(1000).optional(),
+  priceCents: z.number().int().nonnegative('priceCents must be >= 0'),
+  isActive: z.boolean().default(true),
+  sortIndex: z.number().int().nonnegative().default(0),
+});
+
+/** POST /api/activities/:id/upsells — staff attach an add-on to an activity. */
+activities.post('/:id/upsells', requireStaff, async (c) => {
+  assertPermission(c.var.auth, 'activity:write');
+  const activityId = c.req.param('id');
+  const activity = await c.var.db.activity.findUnique({ where: { id: activityId } });
+  if (!activity) return c.json({ error: 'Activity not found' }, 404);
+
+  const body = await c.req.json().catch(() => null);
+  const parsed = upsellSchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ error: 'Invalid input', issues: parsed.error.flatten() }, 400);
+  }
+  const upsell = await c.var.db.packageUpsell.create({
+    data: {
+      operator_id: c.var.operatorId,
+      activity_id: activityId,
+      name: parsed.data.name,
+      description: parsed.data.description ?? null,
+      price_cents: parsed.data.priceCents,
+      is_active: parsed.data.isActive,
+      sort_index: parsed.data.sortIndex,
+    },
+  });
+  return c.json({ upsell }, 201);
+});
+
+/** DELETE /api/activities/:id/upsells/:upsellId — staff remove an add-on. */
+activities.delete('/:id/upsells/:upsellId', requireStaff, async (c) => {
+  assertPermission(c.var.auth, 'activity:write');
+  const upsellId = c.req.param('upsellId');
+  const existing = await c.var.db.packageUpsell.findUnique({ where: { id: upsellId } });
+  if (!existing || existing.activity_id !== c.req.param('id')) {
+    return c.json({ error: 'Upsell not found' }, 404);
+  }
+  await c.var.db.packageUpsell.delete({ where: { id: upsellId } });
+  return c.json({ deleted: true, id: upsellId });
 });
 

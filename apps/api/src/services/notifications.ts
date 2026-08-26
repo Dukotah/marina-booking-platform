@@ -41,6 +41,7 @@ import {
   bookingFacts,
 } from './notification-data.js';
 import { sendReminderSms } from './sms.js';
+import { loadTemplateOverride, resolveTemplate } from './message-templates.js';
 
 export type { NotificationResult };
 
@@ -206,10 +207,28 @@ export async function sendBookingConfirmation(input: {
 
     const [html, text] = await Promise.all([renderEmail(element), renderEmailText(element)]);
 
+    // Editable message templates (Singenuity §4): let the operator override the
+    // subject line. The body still renders from the branded React template; a blank
+    // or missing override cleanly falls back to the default subject.
+    const override = await loadTemplateOverride(db, 'BOOKING_CONFIRMATION');
+    const { subject } = resolveTemplate({
+      defaultSubject: `Your booking is confirmed — ${order.order_number} · ${formatUSD(order.total_cents)}`,
+      override,
+      facts: {
+        order_number: order.order_number,
+        total: formatUSD(order.total_cents),
+        activity: facts.activityName,
+        date: facts.dateLabel,
+        time: facts.timeLabel,
+        brand_name: brand.brandName,
+        customer_name: order.customer.first_name || fullName(order.customer.first_name, order.customer.last_name),
+      },
+    });
+
     return dispatch({
       brandName: brand.brandName,
       to: order.customer.email,
-      subject: `Your booking is confirmed — ${order.order_number} · ${formatUSD(order.total_cents)}`,
+      subject,
       html,
       text,
     });
@@ -407,6 +426,50 @@ export async function sendRefundReceipt(input: {
     });
   } catch (err) {
     console.error('[notifications] sendRefundReceipt failed:', err);
+    return skipped('unexpected failure');
+  }
+}
+
+/**
+ * Notify a guide (staff member) that they've been scheduled to run a trip. Uses a
+ * plain HTML/text body through the same Resend choke point (no dedicated template,
+ * keeping guide scheduling migration-light). Never throws; no-ops without a key.
+ */
+export async function sendGuideAssignmentEmail(input: {
+  operatorId: string;
+  brandName: string;
+  guideEmail: string;
+  guideName?: string | null;
+  activityName: string;
+  dateLabel: string;
+  timeLabel: string;
+  locationLabel?: string;
+  roleLabel?: string | null;
+}): Promise<NotificationResult> {
+  try {
+    if (!input.guideEmail || !input.guideEmail.includes('@')) {
+      return skipped('guide has no email');
+    }
+    const greeting = input.guideName ? `Hi ${input.guideName},` : 'Hi,';
+    const where = input.locationLabel ? ` at ${input.locationLabel}` : '';
+    const roleLine = input.roleLabel ? ` Your role: ${input.roleLabel}.` : '';
+    const line = `You're scheduled to guide "${input.activityName}"${where} on ${input.dateLabel} at ${input.timeLabel}.${roleLine}`;
+
+    const text = `${greeting}\n\n${line}\n\n— ${input.brandName}`;
+    const html =
+      `<div style="font-family:system-ui,Segoe UI,Arial,sans-serif;font-size:15px;line-height:1.5;color:#0f172a">` +
+      `<p>${greeting}</p><p>${line.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</p>` +
+      `<p style="color:#64748b">— ${input.brandName}</p></div>`;
+
+    return dispatch({
+      brandName: input.brandName,
+      to: input.guideEmail,
+      subject: `You're guiding ${input.activityName} — ${input.dateLabel}`,
+      html,
+      text,
+    });
+  } catch (err) {
+    console.error('[notifications] sendGuideAssignmentEmail failed:', err);
     return skipped('unexpected failure');
   }
 }

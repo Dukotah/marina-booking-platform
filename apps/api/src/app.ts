@@ -11,9 +11,14 @@ import { payments } from './routes/payments.js';
 import { customers } from './routes/customers.js';
 import { waivers } from './routes/waivers.js';
 import { promos } from './routes/promos.js';
+import { giftCards } from './routes/gift-cards.js';
+import { giftCertificates } from './routes/gift-certificates.js';
+import { packages } from './routes/packages.js';
 import { merchandise } from './routes/merchandise.js';
 import { pos } from './routes/pos.js';
+import { guides } from './routes/guides.js';
 import { operator } from './routes/operator.js';
+import { settings } from './routes/settings.js';
 import { webhooks } from './routes/webhooks.js';
 import { internal } from './routes/internal.js';
 
@@ -95,9 +100,14 @@ api.route('/payments', payments);
 api.route('/customers', customers);
 api.route('/waivers', waivers);
 api.route('/promos', promos);
+api.route('/gift-cards', giftCards);
+api.route('/gift-certificates', giftCertificates);
+api.route('/packages', packages);
 api.route('/merchandise', merchandise);
 api.route('/pos', pos);
+api.route('/guides', guides);
 api.route('/operator', operator);
+api.route('/settings', settings);
 
 // Echo the resolved tenant — handy sanity check during scaffolding.
 api.get('/whoami', (c) => c.json({ operatorId: c.var.operatorId }));

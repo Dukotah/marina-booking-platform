@@ -69,6 +69,17 @@ export const bookingInputSchema = z.object({
   promoCode: z.string().trim().min(1).max(64).optional(),
   /** Optional gratuity in integer cents. */
   tipCents: z.number().int().nonnegative().optional(),
+  /** "How did you hear about us?" — the chosen option label, snapshotted onto the order. */
+  heardAboutUs: z.string().trim().max(120).optional(),
+  /** Affiliate/referral code entered at checkout; resolved to an Affiliate for attribution. */
+  affiliateCode: z.string().trim().max(64).optional(),
+  /**
+   * Answers to operator-defined CustomerQuestions, keyed by question id. Values are
+   * kept loose (string / string[] / boolean / number) and stored as JSON on the order.
+   */
+  questionAnswers: z
+    .record(z.string(), z.union([z.string(), z.array(z.string()), z.boolean(), z.number()]))
+    .optional(),
 });
 export type BookingInput = z.infer<typeof bookingInputSchema>;
 

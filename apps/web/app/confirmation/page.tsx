@@ -15,7 +15,8 @@
  */
 import type { Metadata } from 'next';
 import { formatLongDate, formatTime } from '@/lib/format';
-import { getOrder, isApiError, type OrderSummary } from '@/lib/api';
+import { getOrder } from '@/lib/orders';
+import { isApiError, type OrderSummary } from '@/lib/api';
 import { getBrand, brandStyle } from '@/lib/brand';
 import SiteHeader from '@/components/layout/SiteHeader';
 import SiteFooter from '@/components/layout/SiteFooter';

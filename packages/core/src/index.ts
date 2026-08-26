@@ -7,11 +7,20 @@ export { createId, generateOrderNumber } from './ids.js';
 
 export {
   calculatePricing,
+  resolveDepositPercent,
+  computeDepositCents,
+  applyMemberPrice,
+  resolveEffectivePrice,
+  isRuleActive,
   type PricingItem,
   type PricingFee,
   type PricingPromo,
   type PricingInput,
   type PricingResult,
+  type MemberDiscount,
+  type PricingRuleSpec,
+  type PricingRuleContext,
+  type EffectivePriceResult,
 } from './pricing.js';
 
 export {
@@ -38,3 +47,24 @@ export {
   type RateInput,
   type PromoValidateInput,
 } from './schemas.js';
+
+export {
+  DATE_BASES,
+  DATE_BASIS_LABEL,
+  resolveDateBasis,
+  computeDelta,
+  previousPeriod,
+  summarizePayments,
+  PAYMENT_METHOD_KEYS,
+  PAYMENT_METHOD_LABEL,
+  rollUpByLocation,
+  type DateBasis,
+  type Delta,
+  type PaymentMethodKey,
+  type PaymentMethodTotal,
+  type PaymentRow,
+  type PaymentsSummary,
+  type LocationMetricRow,
+  type LocationRollUpRow,
+  type LocationRollUp,
+} from './reports.js';
