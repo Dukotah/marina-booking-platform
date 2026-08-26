@@ -37,6 +37,10 @@ Get-Content .env | Where-Object { $_ -match '^\s*[A-Za-z_][A-Za-z0-9_]*\s*=' } |
     $v = $v.Trim() -replace '^"', '' -replace '"$', ''
     [Environment]::SetEnvironmentVariable($k.Trim(), $v, 'Process')
 }
+# The dev run wants development mode. This is set HERE, not in .env, because a
+# pinned NODE_ENV=development leaks into `next build` and breaks the /404 + /500
+# static export ("<Html> should not be imported outside of pages/_document").
+$env:NODE_ENV = 'development'
 Ok "env loaded ($(if ($env:DATABASE_URL) { 'DATABASE_URL set' } else { 'DATABASE_URL MISSING' }))"
 
 # --- Postgres (lives in WSL; Windows reaches it on 127.0.0.1:5432) ---------
