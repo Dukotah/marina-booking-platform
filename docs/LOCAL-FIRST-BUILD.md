@@ -42,6 +42,8 @@ Do not re-litigate these. They were checked, not assumed.
 | **Test state** | **111/111 pass live** — 69 `@marina/core`, 34 `@marina/api`, 8 tenant-isolation. Zero skips when the cluster is running. |
 | **Docker** | Not installed. Do not require it. |
 | **Smart App Control** | **Enforcing.** Unsigned Windows executables are blocked (this is why `embedded-postgres`-style downloads fail). Never suggest disabling it — it is irreversible. Use WSL for anything needing an unsigned binary. |
+| **NODE_ENV** | Never pin it in `.env`. `next dev` and `next build` each set it themselves; a pinned `development` makes `next build` render with React's dev bundle and fails the /404 + /500 export with a misleading `<Html> should not be imported outside of pages/_document`. Fixed in 32bb36a. |
+| **Two clones** | There is a second clone at `\\wsl.localhost\Ubuntu\home\dukotah\marina-booking-platform`. It once held ~12k lines of uncommitted work (recovered in 9efd44d). Check it before assuming something was never built. |
 | **pnpm** | **Not on PATH.** Every PowerShell command must be prefixed with `$env:PATH = "C:\Program Files\nodejs\node_modules\corepack\shims;$env:PATH"`. Fixing this permanently is a Phase 0 task. |
 | **Broken installs** | If tsc reports `Cannot find type definition file for 'node'` or pnpm throws `EACCES`, the per-package `node_modules` junctions have gone dangling. Fix: `rmdir /s /q` each `apps/*/node_modules` and `packages/*/node_modules`, then `pnpm install`, then `pnpm db:generate`. |
 | **Deploys** | Both Vercel projects have an "Ignored Build Step" that cancels every git push. CLI deploys (`vercel deploy --prod --yes`) bypass it. Do not assume a push deployed anything. |
@@ -247,7 +249,12 @@ this table impossible to write.
 
 ## 12. Phase status
 
-- [ ] Phase 0 — Local Sandbox
+- [~] Phase 0 — Local Sandbox — **mostly done (2026-08-26).**
+      Done: `pnpm dev:local` one-command up; a believable season of seed data
+      (108 customers, 281 orders); the email + SMS sink and the `/dev` Local
+      Console inbox; `pnpm verify`. Still open: the scriptable payment
+      simulator with forceable outcomes, webhook replay, the clock control,
+      the reset button, storage/auth/errors drivers, and Playwright.
 - [ ] Phase 1 — Money correctness
 - [ ] Phase 2 — Customer experience
 - [ ] Phase 3 — Operator depth
