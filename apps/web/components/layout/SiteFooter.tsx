@@ -16,7 +16,7 @@ interface FooterLink {
 
 const LINKS: FooterLink[] = [
   { label: 'Book', href: '/' },
-  { label: 'My Booking', href: '/lookup' },
+  { label: 'My Booking', href: '/account' },
   { label: 'Terms', href: '/terms' },
   { label: 'Privacy', href: '/privacy' },
 ];

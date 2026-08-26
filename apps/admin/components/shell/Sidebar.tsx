@@ -107,7 +107,7 @@ export function Sidebar({ brandName, logoUrl, showPlatformLink = false }: Sideba
       )}
 
       <div className="border-t border-slate-800 p-4 text-xs text-slate-500">
-        Powered by your team
+        &copy; {new Date().getFullYear()} {brandName}
       </div>
     </aside>
   );

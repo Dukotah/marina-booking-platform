@@ -13,6 +13,7 @@
     "APP_BASE_DOMAIN",
     "NODE_ENV",
     "PORT",
+    "BRAND_*",
     "NEXT_PUBLIC_*",
     "CLERK_*",
     "STRIPE_*",
