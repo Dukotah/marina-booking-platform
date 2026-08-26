@@ -17,7 +17,12 @@
     "db:rls": "pnpm --filter @marina/database rls",
     "db:approle": "pnpm --filter @marina/database approle",
     "db:seed": "pnpm --filter @marina/database seed",
-    "db:studio": "pnpm --filter @marina/database studio"
+    "db:studio": "pnpm --filter @marina/database studio",
+    "dev:local": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-local.ps1",
+    "dev:setup": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-local.ps1 -NoServers",
+    "verify": "turbo run typecheck test build",
+    "db:seed:season": "pnpm --filter @marina/database seed:season",
+    "db:reset": "pnpm db:seed && pnpm db:seed:season"
   },
   "devDependencies": {
     "turbo": "^2.5.0",

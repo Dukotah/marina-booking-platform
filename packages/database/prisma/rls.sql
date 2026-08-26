@@ -25,7 +25,7 @@ DECLARE
     'Location', 'StaffMember', 'Activity', 'Rate', 'Timeslot', 'Resource',
     'ResourceBooking', 'Customer', 'Order', 'OrderItem', 'Payment', 'Note',
     'OrderEvent', 'Fee', 'MerchandiseItem', 'PromoCode', 'Waiver',
-    'WaiverSignature', 'Integration'
+    'WaiverSignature', 'Integration', 'SandboxMessage'
   ];
 BEGIN
   FOREACH t IN ARRAY tenant_tables LOOP

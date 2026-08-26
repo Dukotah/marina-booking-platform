@@ -151,6 +151,7 @@ model Operator {
   promo_codes  PromoCode[]
   waivers      Waiver[]
   integrations Integration[]
+  sandbox_messages SandboxMessage[]
 }
 
 // ===========================================================================
@@ -614,4 +615,37 @@ model Integration {
 
   @@unique([operator_id, key])
   @@index([operator_id])
+}
+
+// ---------------------------------------------------------------------------
+// Local sandbox
+// ---------------------------------------------------------------------------
+
+/// Every email and SMS the system "sent" while running with SANDBOX=local.
+/// This is what makes the product testable end-to-end with no Resend/Twilio
+/// account: the message is rendered and stored exactly as it would be sent, and
+/// the Local Console (/dev in the admin app) reads it back.
+/// Tenant-scoped and under RLS like everything else.
+model SandboxMessage {
+  id           String         @id @default(cuid())
+  operator_id  String
+  operator     Operator       @relation(fields: [operator_id], references: [id], onDelete: Cascade)
+  channel      SandboxChannel
+  kind         String
+  to_address   String
+  from_address String?
+  subject      String?
+  body_html    String?
+  body_text    String?
+  order_id     String?
+  order_number String?
+  created_at   DateTime       @default(now())
+
+  @@index([operator_id])
+  @@index([operator_id, created_at])
+}
+
+enum SandboxChannel {
+  EMAIL
+  SMS
 }

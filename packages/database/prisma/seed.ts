@@ -12,6 +12,9 @@ import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
 const OP_ID = 'lsra';
 
+/** Days of past timeslots to create, so seed-season.ts has history to book into. */
+const SEASON_HISTORY_DAYS = 60;
+
 /** round to nearest whole dollar, in cents */
 const cents = (n: number) => Math.round(n) * 100;
 
@@ -195,9 +198,12 @@ async function main() {
           data: ratesFor(s).map((r) => ({ ...r, operator_id: operator.id, activity_id: activity.id })),
         });
 
-        // Bookable timeslots for the next 30 days so the booking flow works out of
-        // the box (dev/dogfooding). Hours are stored in UTC matching ~8am–4pm PT;
-        // not DST-exact (dev data). Capacity = the activity's max party size.
+        // Bookable timeslots. Forward 30 days so the booking flow works out of the
+        // box; back 60 days so the season seed (seed-season.ts) has real history to
+        // hang orders on — an operator evaluating us needs dashboards, reports and
+        // the manifest to show a working business, not zeroes. Hours are stored in
+        // UTC matching ~8am–4pm PT; not DST-exact (dev data). Capacity = the
+        // activity's max party size.
         const SLOT_HOURS = [8, 10, 12, 14, 16];
         const PT_UTC_OFFSET = 7; // PDT; good enough for local dev.
         const day0 = new Date();
@@ -208,7 +214,7 @@ async function main() {
           datetime: Date;
           capacity_total: number;
         }[] = [];
-        for (let d = 1; d <= 30; d++) {
+        for (let d = -SEASON_HISTORY_DAYS; d <= 30; d++) {
           for (const h of SLOT_HOURS) {
             const dt = new Date(day0);
             dt.setUTCDate(day0.getUTCDate() + d);
@@ -245,7 +251,9 @@ async function main() {
 
       console.log(`  operator ${operator.name_external}`);
       console.log(`  ${ACTIVITIES.length} activities seeded`);
-      console.log(`  timeslots seeded (30 days × 5/day per activity)`);
+      console.log(
+        `  timeslots seeded (${SEASON_HISTORY_DAYS} days back + 30 forward × 5/day per activity)`,
+      );
       console.log(`  Pontoon Fleet shared resource → ${pontoonActivityIds.length} activities`);
     },
     { maxWait: 15000, timeout: 120000 },

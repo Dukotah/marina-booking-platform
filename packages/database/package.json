@@ -17,7 +17,8 @@
     "seed": "node --experimental-strip-types prisma/seed.ts",
     "studio": "prisma studio",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "seed:season": "node --experimental-strip-types prisma/seed-season.ts"
   },
   "prisma": {
     "seed": "node --experimental-strip-types prisma/seed.ts"
