@@ -1,7 +1,13 @@
 // @marina/core — shared domain logic (pricing, availability, validation, ids).
 // All exports are named; no default exports.
 
-export { toCents, fromCents, formatUSD, roundCents } from './money.js';
+// Money primitives. Re-exported wholesale: every helper here is the shared,
+// tested way to touch cents, and callers reaching past the barrel into
+// './money.js' is how divergent rounding crept in before.
+export * from './money.js';
+
+// Accounting / GL mapping and the QuickBooks + Xero export builders.
+export * from './accounting.js';
 
 export { createId, generateOrderNumber } from './ids.js';
 

@@ -1,0 +1,64 @@
+/*
+ * Document-level styles for the embedded booking flow.
+ *
+ * Loaded only by the /embed layout, so these rules never reach the standalone
+ * portal. They exist to undo the assumptions a normal page makes and an embedded
+ * one must not: a full-viewport minimum height and an opaque page background.
+ *
+ * Two selectors say the same thing everywhere: `:has()` gets it right with no
+ * JavaScript on current browsers, and `.marina-embed-body` is the class the
+ * bridge adds at runtime for engines that lack `:has()`.
+ */
+
+html:has(#marina-embed) {
+  background: transparent;
+}
+
+body:has(> #marina-embed),
+body.marina-embed-body {
+  /*
+   * The root layout sets `min-h-screen` on <body>. Inside an iframe 100vh IS the
+   * iframe's height, so the document could never measure shorter than the frame
+   * it sits in — the widget would grow once and then refuse to shrink. The
+   * `!important` overrides a utility class from a file this feature does not own.
+   */
+  min-height: 0 !important;
+  height: auto !important;
+  /*
+   * Transparent so an inline widget blends into whatever the operator's page has
+   * behind it; the flow paints its own white surfaces on top.
+   */
+  background: transparent !important;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* Comfortable tap targets on phones, without touching the shared components. */
+@media (max-width: 480px) {
+  #marina-embed button,
+  #marina-embed [role='button'],
+  #marina-embed select,
+  #marina-embed input:not([type='checkbox']):not([type='radio']) {
+    min-height: 44px;
+  }
+}
+
+/*
+ * The reused portal components carry the site's own focus conventions, but a
+ * widget is often the only interactive thing in its corner of a page — make the
+ * ring unmistakable for keyboard users.
+ */
+#marina-embed :focus-visible {
+  outline: 2px solid var(--brand-color, #0ea5e9);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #marina-embed *,
+  #marina-embed *::before,
+  #marina-embed *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

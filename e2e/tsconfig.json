@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    // Playwright transpiles these itself and emits nothing, so this project exists only
+    // to typecheck. DOM is needed because helpers run `page.evaluate` bodies against the
+    // browser's globals.
+    "lib": ["ES2022", "DOM"],
+    "types": ["node"],
+    "noEmit": true,
+    "declaration": false,
+    "moduleResolution": "Bundler",
+    "noUncheckedIndexedAccess": true
+  },
+  // The root config lives outside this directory but is part of the same program.
+  "include": ["**/*.ts", "../playwright.config.ts"]
+}

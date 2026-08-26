@@ -23,3 +23,86 @@ body {
   display: flex;
   flex-direction: column;
 }
+
+@layer base {
+  /*
+   * iOS Safari inflates text in landscape, which reflows the booking widget
+   * after first paint and costs CLS on exactly the device class we care about.
+   */
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  /*
+   * `touch-action: manipulation` removes the ~300ms double-tap-to-zoom wait that
+   * mobile Safari still applies to taps. On a slow connection that delay is a
+   * meaningful slice of the sub-30-second booking budget, and it makes every
+   * chip in the date/time pickers feel sluggish.
+   */
+  a,
+  button,
+  summary,
+  [role='button'],
+  [role='radio'] {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /*
+   * A guaranteed focus indicator for anything that doesn't style its own. Lives
+   * in `base` so component-level `focus-visible:ring-*` utilities still win.
+   */
+  :focus-visible {
+    outline: 2px solid var(--brand-color);
+    outline-offset: 2px;
+  }
+}
+
+@layer utilities {
+  /*
+   * Horizontal date strip: the primary date control on mobile. Snapping keeps a
+   * whole day chip in view after a flick, and `overscroll-behavior` stops the
+   * swipe from chaining into a browser back-navigation gesture mid-booking.
+   */
+  .day-strip {
+    scroll-snap-type: x proximity;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .day-strip > * {
+    scroll-snap-align: center;
+  }
+
+  /* Scrollbar gutters would change the strip's height between platforms. */
+  .no-scrollbar {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Sticky mobile CTA clearance on notched phones. */
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+}
+
+/*
+ * Respect the OS "reduce motion" setting everywhere. Beyond the accessibility
+ * win this also stops the loading pulses from burning main-thread time on the
+ * low-end phones this flow targets.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

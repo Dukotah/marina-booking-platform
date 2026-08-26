@@ -140,9 +140,28 @@ export async function createPayment(input: {
   sourceId: string;
   amountCents: number;
   idempotencyKey: string;
+  /**
+   * Optional and ignored by Stripe, which needs no tenant. The local payment
+   * simulator uses it to skip a cross-tenant order lookup — REQUIRED when charging
+   * from inside a transaction that created the order, because that lookup runs on a
+   * separate connection and cannot see the uncommitted row.
+   */
+  operatorId?: string;
 }): Promise<StripePaymentResult> {
   if (!Number.isInteger(input.amountCents) || input.amountCents <= 0) {
     throw new StripePaymentError('Charge amount must be a positive integer (cents)', 400);
+  }
+
+  // Local sandbox: hand the charge to the payment simulator, which models the real
+  // PaymentIntent state machine (3DS challenges, decline codes, timeouts, disputes,
+  // idempotent replay) instead of rubber-stamping every charge. It supersedes the
+  // crude always-succeed fake below. Imported dynamically because the simulator
+  // imports this module's error/result types — a static import would be circular.
+  {
+    const sandbox = await import('./payments-sandbox.js');
+    if (sandbox.sandboxPaymentsEnabled()) {
+      return sandbox.createPayment(input);
+    }
   }
 
   // Dev simulator: succeed without touching Stripe.
@@ -214,9 +233,20 @@ export async function refundPayment(input: {
   paymentId: string;
   amountCents: number;
   reason?: string;
+  /** See createPayment: used by the local simulator, ignored by Stripe. */
+  operatorId?: string;
 }): Promise<StripeRefundResult> {
   if (!Number.isInteger(input.amountCents) || input.amountCents <= 0) {
     throw new StripePaymentError('Refund amount must be a positive integer (cents)', 400);
+  }
+
+  // Local sandbox: the simulator owns the charge, so it must own the refund too —
+  // otherwise a refund would succeed against a payment that never existed there.
+  {
+    const sandbox = await import('./payments-sandbox.js');
+    if (sandbox.sandboxPaymentsEnabled()) {
+      return sandbox.refundPayment(input);
+    }
   }
 
   // Dev simulator: refund without touching Stripe.

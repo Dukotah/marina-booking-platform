@@ -21,6 +21,11 @@ import { operator } from './routes/operator.js';
 import { settings } from './routes/settings.js';
 import { webhooks } from './routes/webhooks.js';
 import { internal } from './routes/internal.js';
+import { health } from './routes/health.js';
+import { uploads } from './routes/uploads.js';
+import { accounting } from './routes/accounting.js';
+import { channels } from './routes/channels.js';
+import { customerAuth } from './routes/customer-auth.js';
 
 export const app = new Hono<Env>();
 
@@ -77,8 +82,9 @@ app.use(
   }),
 );
 
-// Liveness — no tenant required.
-app.get('/health', (c) => c.json({ ok: true, service: 'marina-api' }));
+// Liveness, readiness and build info — no tenant required. /health/ready actually
+// round-trips the database, so it is a real readiness probe, not a static 200.
+app.route('/health', health);
 
 // Webhooks resolve their own tenant from the event payload — they receive no
 // x-operator-slug header, so they live OUTSIDE the tenant middleware.
@@ -86,6 +92,11 @@ app.route('/webhooks', webhooks);
 
 // Scheduled-job endpoints (reminder sweep) — no tenant context; secret-gated.
 app.route('/internal', internal);
+
+// Uploaded images. Mounted OUTSIDE the tenant middleware deliberately: serving a
+// file is public (an <img> tag carries no tenant header), while the router applies
+// tenantMiddleware + requireStaff itself on POST and DELETE.
+app.route('/uploads', uploads);
 
 // Everything under /api is tenant-scoped.
 const api = new Hono<Env>();
@@ -108,6 +119,9 @@ api.route('/pos', pos);
 api.route('/guides', guides);
 api.route('/operator', operator);
 api.route('/settings', settings);
+api.route('/accounting', accounting);
+api.route('/channels', channels);
+api.route('/customer-auth', customerAuth);
 
 // Echo the resolved tenant — handy sanity check during scaffolding.
 api.get('/whoami', (c) => c.json({ operatorId: c.var.operatorId }));

@@ -109,6 +109,8 @@ payments.post('/charge', async (c) => {
       sourceId,
       amountCents,
       idempotencyKey: parsed.data.idempotencyKey ?? createId(),
+      // Saves the local simulator a cross-tenant order lookup.
+      operatorId: c.var.operatorId,
     });
   } catch (err) {
     return stripeErrorResponse(c, err);
@@ -253,6 +255,7 @@ payments.post('/:id/refund', requireStaff, async (c) => {
       paymentId: payment.processor_transaction_id,
       amountCents,
       reason: parsed.data.reason,
+      operatorId: c.var.operatorId,
     });
   } catch (err) {
     return stripeErrorResponse(c, err);

@@ -494,6 +494,9 @@ export async function createBooking(
         sourceId: 'deposit',
         amountCents: depositCents,
         idempotencyKey: `deposit-${order.id}`,
+        // We are inside the transaction that created this order, so the simulator
+        // cannot look the tenant up yet — hand it over.
+        operatorId,
       });
       await tx.payment.create({
         data: {
@@ -854,6 +857,7 @@ export async function collectBalance(
         sourceId: 'balance',
         amountCents: balanceDue,
         idempotencyKey: `balance-${order.id}-${order.amount_paid_cents}`,
+        operatorId,
       });
       cardBrand = charge.cardBrand;
       cardLastFour = charge.cardLastFour;

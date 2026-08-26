@@ -97,12 +97,21 @@ enum PackageStatus {
   INACTIVE
 }
 
+// REQUIRES_ACTION and DISPUTED are appended, not slotted in logically, because
+// Postgres can only add enum values at the end — keeping the schema in the same
+// order as the type avoids a spurious diff on the next migrate.
+//
+// REQUIRES_ACTION: a 3DS/SCA challenge is outstanding. Without it the charge is
+// neither paid nor failed and the old code treated it as a decline (Phase 1).
+// DISPUTED: a chargeback landed against a payment that had already succeeded.
 enum PaymentStatus {
   PAID
   REFUNDED
   PARTIAL_REFUND
   FAILED
   PRE_AUTHORIZED
+  REQUIRES_ACTION
+  DISPUTED
 }
 
 enum PaymentProcessor {
@@ -216,6 +225,7 @@ model Operator {
   waivers      Waiver[]
   integrations Integration[]
   sandbox_messages SandboxMessage[]
+  sandbox_payment_attempts SandboxPaymentAttempt[]
   gift_cards   GiftCard[]
   gift_certificates GiftCertificate[]
   packages     Package[]
@@ -228,6 +238,12 @@ model Operator {
   heard_about_options HeardAboutOption[]
   blackout_dates BlackoutDate[]
   gl_accounts  GLAccount[]
+  sandbox_webhooks SandboxWebhook[]
+  sandbox_clock SandboxClock?
+  sandbox_errors SandboxError[]
+  audit_logs   AuditLog[]
+  channels     Channel[]
+  accounting_exports AccountingExport[]
 }
 
 // ===========================================================================
@@ -353,6 +369,7 @@ model Activity {
   gift_certificates GiftCertificate[]
   pricing_rules PricingRule[]
   customer_questions CustomerQuestion[]
+  channel_listings ChannelListing[]
 
   // Target of tenant-composite FKs (D-010 / 0.13): children reference
   // [operator_id, id] so the DB refuses a child whose parent is another tenant's.
@@ -550,6 +567,12 @@ model Order {
   // { [customerQuestionId]: string | string[] | boolean }. JSON keeps custom fields
   // schema-light while still rendering on the order.
   question_answers     Json?
+  // Checkout de-duplication key supplied by the client. The whole booking is one
+  // transaction, so a double-submit or a retried request on flaky rural service
+  // would otherwise create a second order AND a second charge. The unique index
+  // is the durable guard: the replay loses the race and the caller returns the
+  // order that already exists. Null on staff/POS orders that aren't retryable.
+  idempotency_key      String?
   created_at           DateTime     @default(now())
   updated_at           DateTime     @updatedAt
 
@@ -557,8 +580,10 @@ model Order {
   payments Payment[]
   notes    Note[]
   history  OrderEvent[]
+  channel_bookings ChannelBooking[]
 
   @@unique([operator_id, id])
+  @@unique([operator_id, idempotency_key])
   @@index([operator_id])
   @@index([operator_id, status])
   @@index([customer_id])
@@ -620,10 +645,15 @@ model Payment {
   processor_transaction_id String?
   is_manually_keyed        Boolean          @default(false)
   processed_at             DateTime         @default(now())
+  // The key sent to the processor for this charge, persisted so the guard survives
+  // a crash between "processor accepted" and "we wrote the row". Retrying with the
+  // same key hits the unique index instead of taking a second payment.
+  idempotency_key          String?
   // Set when method = GIFT_CARD: links the payment to the redeemed card.
   gift_card_id             String?
   gift_card                GiftCard?        @relation(fields: [operator_id, gift_card_id], references: [operator_id, id])
 
+  @@unique([operator_id, idempotency_key])
   @@index([operator_id])
   @@index([order_id])
   @@index([gift_card_id])
@@ -1073,6 +1103,340 @@ model SandboxMessage {
 enum SandboxChannel {
   EMAIL
   SMS
+}
+
+/// The local twin of Sentry. The errors provider writes one row per throw and the
+/// Local Console renders it with the stack, so a crash mid-booking is diagnosable
+/// on this laptop with no Sentry account.
+///
+/// One row per occurrence rather than a deduped counter: the console groups on
+/// `fingerprint` when it wants "×23", but a test asserting "exactly one error
+/// fired" needs the raw occurrences, and a counter would hide the second one.
+model SandboxError {
+  id          String   @id @default(cuid())
+  operator_id String
+  operator    Operator @relation(fields: [operator_id], references: [id], onDelete: Cascade)
+  /// Which process threw: "api", "web", "admin", or a job name.
+  source      String
+  /// error.name — TypeError, BookingError, PrismaClientKnownRequestError.
+  name        String
+  message     String
+  stack       String?
+  /// Stable hash of name + message shape + top frame, so repeats of the same bug
+  /// collapse into one console entry even though each occurrence is its own row.
+  fingerprint String
+  /// Request context shown beside the stack: route, method, order id, actor.
+  /// Callers redact secrets before writing — this is readable in the console.
+  context     Json?
+  created_at  DateTime @default(now())
+
+  @@index([operator_id])
+  @@index([operator_id, created_at])
+  @@index([operator_id, fingerprint])
+}
+
+/// What the payment simulator was told to do (or did). These are the real
+/// outcomes Stripe can produce, not a happy path: a 3DS challenge, a hard
+/// decline, a network timeout with an indeterminate result, and a chargeback
+/// arriving days after a successful charge.
+enum SandboxPaymentOutcome {
+  SUCCEEDED
+  REQUIRES_ACTION
+  DECLINED
+  TIMEOUT
+  DISPUTED
+}
+
+/// Where an attempt actually stands. Mirrors a Stripe PaymentIntent lifecycle
+/// with one extra state at the front: QUEUED, meaning the owner has scripted
+/// this outcome but no charge has consumed it yet.
+enum SandboxPaymentAttemptStatus {
+  QUEUED
+  REQUIRES_ACTION
+  SUCCEEDED
+  FAILED
+  DISPUTED
+  CANCELLED
+}
+
+/// Delivery state of a simulated webhook. Delivery can fail — that is the point
+/// of having the state, and of `replay_of_id`.
+enum SandboxWebhookStatus {
+  PENDING
+  DELIVERED
+  FAILED
+}
+
+/// A scripted payment outcome, and then the record of the attempt that consumed
+/// it. The Local Console writes a QUEUED row ("make the next card decline"), the
+/// payments provider pops it at charge time and fills in intent_id / amount /
+/// order, then advances `status` as the simulated intent moves. Rows that were
+/// never consumed stay QUEUED (or are CANCELLED when the owner clears the queue),
+/// which is exactly what the console needs to render "next outcome: DECLINED".
+///
+/// `outcome` is what was asked for; `status` is what happened. They diverge on
+/// REQUIRES_ACTION (challenge issued, then SUCCEEDED or FAILED) and on DISPUTED
+/// (charge succeeded first, chargeback landed later).
+model SandboxPaymentAttempt {
+  id              String                      @id @default(cuid())
+  operator_id     String
+  operator        Operator                    @relation(fields: [operator_id], references: [id], onDelete: Cascade)
+  /// The simulator's PaymentIntent-shaped reference (e.g. pi_sbx_...). Null while
+  /// the row is only a queued instruction — no charge has been made yet.
+  intent_id       String?
+  /// Integer cents. Null on a queued instruction, which has no amount yet.
+  amount_cents    Int?
+  outcome         SandboxPaymentOutcome
+  status          SandboxPaymentAttemptStatus @default(QUEUED)
+  /// Set once a charge consumes the row. Deliberately a SOFT link with no foreign
+  /// key: booking.ts charges the deposit INSIDE the transaction that creates the
+  /// order, so at insert time the order is not yet visible to the simulator's
+  /// separate connection and a real FK rejects the row. This is a local testing
+  /// artifact, so referential rigour here is not worth breaking the charge path;
+  /// the console tolerates an attempt whose order has since been deleted.
+  order_id        String?
+  /// Stripe-shaped machine code for the failure, e.g. card_declined,
+  /// expired_card, processing_error. Null unless the attempt failed.
+  failure_code    String?
+  /// The caller's idempotency key. Unique per operator so a double-submit
+  /// replays this attempt instead of creating a second charge.
+  idempotency_key String?
+  /// Driver-specific detail the console renders: 3DS return URL, capture state,
+  /// partial-capture amounts. Kept as JSON so the simulator can grow without a
+  /// migration for every new outcome knob.
+  metadata        Json?
+  /// When a QUEUED instruction was popped by a real charge.
+  consumed_at     DateTime?
+  created_at      DateTime                    @default(now())
+  updated_at      DateTime                    @updatedAt
+
+  webhooks SandboxWebhook[]
+
+  @@unique([operator_id, id])
+  @@unique([operator_id, intent_id])
+  @@unique([operator_id, idempotency_key])
+  @@index([operator_id])
+  @@index([operator_id, status])
+  @@index([operator_id, created_at])
+  @@index([order_id])
+}
+
+/// A webhook the simulator emitted, stored so the Local Console can inspect the
+/// exact payload and replay it. Payloads use the same event shapes Stripe sends,
+/// so the handler under test is the production handler.
+///
+/// A replay is a NEW row pointing at the original via `replay_of_id` — the
+/// original is never mutated, so the console shows the full delivery history.
+model SandboxWebhook {
+  id           String                 @id @default(cuid())
+  operator_id  String
+  operator     Operator               @relation(fields: [operator_id], references: [id], onDelete: Cascade)
+  /// Stripe-shaped event name, e.g. payment_intent.succeeded, charge.dispute.created.
+  event_type   String
+  payload      Json
+  status       SandboxWebhookStatus   @default(PENDING)
+  delivered_at DateTime?
+  /// Set when delivery failed, so the console can show why before you replay.
+  error        String?
+  /// The attempt that emitted this event, when the event came from a payment.
+  attempt_id   String?
+  attempt      SandboxPaymentAttempt? @relation(fields: [operator_id, attempt_id], references: [operator_id, id], onDelete: Cascade)
+  /// Set on a replay: the webhook this one re-sends.
+  replay_of_id String?
+  replay_of    SandboxWebhook?        @relation("SandboxWebhookReplays", fields: [operator_id, replay_of_id], references: [operator_id, id], onDelete: Cascade)
+  replays      SandboxWebhook[]       @relation("SandboxWebhookReplays")
+  created_at   DateTime               @default(now())
+
+  @@unique([operator_id, id])
+  @@index([operator_id])
+  @@index([operator_id, created_at])
+  @@index([operator_id, event_type])
+  @@index([attempt_id])
+  @@index([replay_of_id])
+}
+
+/// The operator's sandbox clock offset, in seconds ahead of real time. One row
+/// per operator. Everything time-dependent (pre-arrival reminders, no-show
+/// sweeps, membership expiry) reads "now" through the clock provider, so setting
+/// this to +86400 makes tomorrow's reminders fire immediately instead of after a
+/// day of waiting. Zero (or no row) means real time.
+model SandboxClock {
+  id             String   @id @default(cuid())
+  operator_id    String   @unique
+  operator       Operator @relation(fields: [operator_id], references: [id], onDelete: Cascade)
+  offset_seconds Int      @default(0)
+  created_at     DateTime @default(now())
+  updated_at     DateTime @updatedAt
+}
+
+// ===========================================================================
+// Audit log (Phase 5 — trust and operations)
+// ===========================================================================
+
+/// Append-only record of anything that touched money or personal data. Rows are
+/// only ever INSERTed: there is deliberately no `updated_at` and no update path,
+/// because an audit trail that can be edited proves nothing. If a fact turns out
+/// to be wrong, write a correcting row — never rewrite history.
+///
+/// `before` / `after` hold the changed fields only (not whole records), so the
+/// log stays readable and does not become a second copy of the database. Callers
+/// are responsible for redacting secrets before they land here.
+model AuditLog {
+  id          String   @id @default(cuid())
+  operator_id String
+  operator    Operator @relation(fields: [operator_id], references: [id], onDelete: Cascade)
+  /// Who did it: a StaffMember auth_user_id, a customer id, or "system" for a
+  /// scheduled sweep. Never blank — an unattributed audit row is not evidence.
+  actor       String
+  /// The actor's capacity: a StaffRole name, or "customer" / "system".
+  actor_role  String
+  /// Dotted verb naming what happened, e.g. payment.refund, customer.update,
+  /// waiver.sign. Indexed with created_at so "everything that touched money last
+  /// month" is one range scan.
+  action      String
+  entity_type String
+  entity_id   String
+  before      Json?
+  after       Json?
+  ip          String?
+  created_at  DateTime @default(now())
+
+  @@index([operator_id])
+  @@index([operator_id, created_at])
+  @@index([operator_id, action, created_at])
+  @@index([operator_id, entity_type, entity_id])
+  @@index([operator_id, actor, created_at])
+}
+
+// ===========================================================================
+// Distribution — channels / OTAs (Phase 4)
+// ===========================================================================
+
+/// Which distribution partner a Channel talks to. MOCK is first-class, not a
+/// test seam bolted on: it is the driver the owner exercises locally, and it
+/// behaves like a real channel (async inventory push, delayed booking pull,
+/// commission deducted) so the code path under test is the production one.
+enum ChannelKind {
+  MOCK
+  VIATOR
+  GET_YOUR_GUIDE
+  EXPEDIA
+  TRIPADVISOR
+  AIRBNB_EXPERIENCES
+  CUSTOM
+}
+
+/// An OTA / affiliate sales channel the operator distributes inventory through.
+/// Credentials and endpoint settings live in `config` (same shape as Integration)
+/// so adding a partner never needs a migration.
+model Channel {
+  id                 String      @id @default(cuid())
+  operator_id        String
+  operator           Operator    @relation(fields: [operator_id], references: [id], onDelete: Cascade)
+  name               String
+  kind               ChannelKind @default(MOCK)
+  enabled            Boolean     @default(false)
+  /// Whole percent (0-100) the channel keeps. Advisory: the authoritative money
+  /// figure is ChannelBooking.commission_cents, snapshotted at booking time so a
+  /// later rate change never rewrites past commissions.
+  commission_percent Int         @default(0)
+  config             Json        @default("{}")
+  created_at         DateTime    @default(now())
+  updated_at         DateTime    @updatedAt
+
+  listings ChannelListing[]
+  bookings ChannelBooking[]
+
+  @@unique([operator_id, name])
+  @@unique([operator_id, id])
+  @@index([operator_id])
+  @@index([operator_id, enabled])
+}
+
+/// One Activity published to one Channel. Both parents are tenant-composite FKs
+/// so a listing can never expose another tenant's activity.
+model ChannelListing {
+  id              String   @id @default(cuid())
+  operator_id     String
+  channel_id      String
+  channel         Channel  @relation(fields: [operator_id, channel_id], references: [operator_id, id], onDelete: Cascade)
+  activity_id     String
+  activity        Activity @relation(fields: [operator_id, activity_id], references: [operator_id, id], onDelete: Cascade)
+  /// The partner's own id for this listing, returned by their create call.
+  external_ref    String?
+  is_active       Boolean  @default(true)
+  last_synced_at  DateTime?
+  /// Why the last inventory push failed, if it did. Null after a clean sync.
+  last_sync_error String?
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  @@unique([operator_id, channel_id, activity_id])
+  @@unique([operator_id, id])
+  @@index([operator_id])
+  @@index([operator_id, channel_id])
+  @@index([activity_id])
+}
+
+/// A booking that arrived from a channel and the Order it produced.
+/// `external_ref` is unique per channel so pulling the same booking twice is a
+/// no-op instead of a duplicate order — channels retry, and they do not
+/// guarantee exactly-once delivery.
+model ChannelBooking {
+  id               String   @id @default(cuid())
+  operator_id      String
+  channel_id       String
+  channel          Channel  @relation(fields: [operator_id, channel_id], references: [operator_id, id], onDelete: Cascade)
+  order_id         String
+  order            Order    @relation(fields: [operator_id, order_id], references: [operator_id, id], onDelete: Cascade)
+  /// The channel's booking reference.
+  external_ref     String
+  /// Integer cents the channel keeps on this booking, fixed at import time.
+  commission_cents Int      @default(0)
+  /// The payload exactly as received, kept for reconciliation disputes.
+  raw              Json
+  created_at       DateTime @default(now())
+
+  @@unique([operator_id, channel_id, external_ref])
+  @@index([operator_id])
+  @@index([operator_id, channel_id])
+  @@index([order_id])
+}
+
+// ===========================================================================
+// Accounting exports (Phase 4)
+// ===========================================================================
+
+enum AccountingExportKind {
+  QUICKBOOKS
+  XERO
+  CSV
+}
+
+/// One generated export run. The row is the receipt: it records the period, the
+/// row count and the total so a later run over the same window can be checked
+/// against it, which is what "the export actually reconciles a day" means.
+/// GL mapping is not duplicated here — it reads GLAccount.category, and `config`
+/// holds only the per-run overrides.
+model AccountingExport {
+  id           String               @id @default(cuid())
+  operator_id  String
+  operator     Operator             @relation(fields: [operator_id], references: [id], onDelete: Cascade)
+  kind         AccountingExportKind @default(CSV)
+  /// Inclusive start / exclusive end of the exported window, stored UTC.
+  period_start DateTime
+  period_end   DateTime
+  generated_at DateTime             @default(now())
+  /// StaffMember auth_user_id who ran it, or null for a scheduled run.
+  generated_by String?
+  row_count    Int                  @default(0)
+  /// Integer cents: the sum of the exported rows, for reconciliation.
+  total_cents  Int                  @default(0)
+  config       Json                 @default("{}")
+
+  @@index([operator_id])
+  @@index([operator_id, generated_at])
+  @@index([operator_id, kind, period_start])
 }
 
 // ===========================================================================

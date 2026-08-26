@@ -45,7 +45,9 @@ export function SiteFooter() {
             <Link
               key={link.href}
               href={link.href}
-              className="text-sm text-slate-500 transition-colors hover:text-slate-900"
+              // slate-500 is the lightest slate that still clears 4.5:1 on white
+              // (4.76:1). Anything lighter fails WCAG 1.4.3 for body text.
+              className="rounded text-sm text-slate-500 transition-colors hover:text-slate-900"
             >
               {link.label}
             </Link>
@@ -55,7 +57,7 @@ export function SiteFooter() {
 
       <div className="border-t border-slate-100">
         <div className="mx-auto max-w-6xl px-4 py-4">
-          <p className="text-xs text-slate-400">
+          <p className="text-xs text-slate-500">
             &copy; {year} {brand.name}. All rights reserved.
           </p>
         </div>

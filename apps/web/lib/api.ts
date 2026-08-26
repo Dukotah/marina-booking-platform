@@ -212,7 +212,15 @@ export interface OrderSummary {
 /** Outcome of submitting a payment for an order (maps the API charge response). */
 export interface PaymentResult {
   paymentId: string;
-  status: 'PAID' | 'PARTIAL_REFUND' | 'REFUNDED' | 'FAILED' | 'PRE_AUTHORIZED';
+  status:
+    | 'PAID'
+    | 'PARTIAL_REFUND'
+    | 'REFUNDED'
+    | 'FAILED'
+    | 'PRE_AUTHORIZED'
+    // 3DS/SCA challenge outstanding — the guest must complete it before capture.
+    | 'REQUIRES_ACTION'
+    | 'DISPUTED';
   amountCents: number;
   /** Order balance remaining after the charge. */
   balanceDueCents: number;

@@ -29,7 +29,9 @@ DECLARE
     'GuideAssignment', 'GiftCertificate', 'Package', 'PackageItem',
     'PackageUpsell', 'Membership', 'CustomerMembership', 'PricingRule',
     'CustomerQuestion', 'Affiliate', 'MessageTemplate', 'HeardAboutOption',
-    'BlackoutDate', 'GLAccount', 'SandboxMessage'
+    'BlackoutDate', 'GLAccount', 'SandboxMessage', 'SandboxPaymentAttempt',
+    'SandboxWebhook', 'SandboxClock', 'SandboxError', 'AuditLog', 'Channel',
+    'ChannelListing', 'ChannelBooking', 'AccountingExport'
   ];
 BEGIN
   FOREACH t IN ARRAY tenant_tables LOOP

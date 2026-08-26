@@ -15,13 +15,18 @@
  * Mobile-first: a single stacked column on small screens; on large screens the
  * order summary / price / payment become a sticky right rail. All money is
  * integer cents and the displayed pricing uses @marina/core.
+ *
+ * Accessibility: each card is a labelled <section> with an <h2> (the page owns
+ * the <h1>), a failed submit moves focus to an error summary that links to the
+ * offending controls (WCAG 3.3.1/3.3.3), and asynchronous progress and failures
+ * are announced through live regions rather than only appearing on screen.
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { FormProvider, useForm } from 'react-hook-form';
+import { FormProvider, useForm, type FieldErrors } from 'react-hook-form';
 import { AlertTriangle } from 'lucide-react';
 import { calculatePricing } from '@marina/core';
-import { Button, Card, CardContent, CardHeader, CardTitle } from '@marina/ui';
+import { Button, Card, CardContent, CardHeader } from '@marina/ui';
 import type { StripeConfig } from '@/app/checkout/stripe-config';
 import type { WalletConfig } from '@/app/checkout/wallet-config';
 import { placeOrder } from '@/app/checkout/actions';
@@ -65,6 +70,71 @@ function makeParticipants(count: number): ParticipantFormValue[] {
   return Array.from({ length: count }, () => emptyParticipant());
 }
 
+/** One validation failure, in the order a sighted user meets it on the page. */
+interface CheckoutErrorEntry {
+  key: string;
+  /** Human label for the control, so the summary reads without context. */
+  label: string;
+  message: string;
+  /** DOM id to jump to. Absent when the control has no id to anchor at. */
+  fieldId?: string;
+}
+
+/**
+ * Flatten react-hook-form's nested error object into a linkable list.
+ *
+ * The ids here are the ones CustomerFields / ParticipantFields / WaiverSection
+ * put on their inputs; a mismatch shows up as a summary entry that renders as
+ * plain text instead of a link, which is why the id is optional rather than
+ * assumed.
+ */
+function collectFieldErrors(errors: FieldErrors<CheckoutFormValues>): CheckoutErrorEntry[] {
+  const out: CheckoutErrorEntry[] = [];
+  const add = (key: string, label: string, message: unknown, fieldId?: string) => {
+    if (typeof message === 'string' && message.length > 0) {
+      out.push({ key, label, message, fieldId });
+    }
+  };
+
+  add('firstName', 'First name', errors.firstName?.message, 'firstName');
+  add('lastName', 'Last name', errors.lastName?.message, 'lastName');
+  add('email', 'Email', errors.email?.message, 'email');
+  add('phone', 'Phone', errors.phone?.message, 'phone');
+
+  const participants = errors.participants;
+  if (Array.isArray(participants)) {
+    participants.forEach((participant, i) => {
+      if (!participant) return;
+      const who = `Driver ${i + 1}`;
+      add(
+        `participant-${i}-name`,
+        `${who} — full name`,
+        participant.driver_name?.message,
+        `participant-${i}-name`,
+      );
+      add(
+        `participant-${i}-license`,
+        `${who} — driver license #`,
+        participant.license?.message,
+        `participant-${i}-license`,
+      );
+      add(
+        `participant-${i}-dob`,
+        `${who} — date of birth`,
+        participant.dob?.message,
+        `participant-${i}-dob`,
+      );
+    });
+  }
+
+  // The waiver acceptance checkbox has no id of its own, so this entry cannot
+  // link anywhere yet — see docs/ACCESSIBILITY.md.
+  add('waiverAccepted', 'Liability waiver', errors.waiverAccepted?.message);
+  add('signatureName', 'Signature', errors.signatureName?.message, 'signatureName');
+
+  return out;
+}
+
 /** A titled section card used down the main column. */
 function Section({
   title,
@@ -75,14 +145,24 @@ function Section({
   description?: string;
   children: React.ReactNode;
 }) {
+  const headingId = useId();
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{title}</CardTitle>
-        {description && <p className="text-sm text-slate-500">{description}</p>}
-      </CardHeader>
-      <CardContent>{children}</CardContent>
-    </Card>
+    <section aria-labelledby={headingId}>
+      <Card>
+        <CardHeader>
+          {/* An <h2>, not the Card's default <h3>: the page heading is the <h1>
+              and a skipped level breaks heading navigation (WCAG 1.3.1). */}
+          <h2
+            id={headingId}
+            className="text-lg font-semibold leading-none tracking-tight"
+          >
+            {title}
+          </h2>
+          {description && <p className="text-sm text-slate-500">{description}</p>}
+        </CardHeader>
+        <CardContent>{children}</CardContent>
+      </Card>
+    </section>
   );
 }
 
@@ -97,15 +177,29 @@ export function CheckoutClient({
   const [quantity, setQuantity] = useState(selection.quantity);
   const [promo, setPromo] = useState<AppliedPromo | null>(null);
   const [tipCents, setTipCents] = useState(0);
-  const [submitError, setSubmitError] = useState<string | null>(null);
+  // Nonce-carrying so a repeated identical failure still re-announces.
+  const [submitError, setSubmitError] = useState<{ message: string; nonce: number } | null>(
+    null,
+  );
   const [submitting, setSubmitting] = useState(false);
+  // Bumped on every failed validation pass so focus returns to the summary even
+  // when the same fields fail twice in a row.
+  const [invalidCount, setInvalidCount] = useState(0);
   // Returning-guest ("book again") prefill, read from this device only.
   const [rememberedGuest, setRememberedGuest] = useState<RememberedGuest | null>(null);
 
   const paymentRef = useRef<PaymentSectionHandle>(null);
+  const errorSummaryRef = useRef<HTMLDivElement>(null);
+
+  const summaryHeadingId = useId();
+  const reservationHeadingId = useId();
+  const tipHeadingId = useId();
 
   const methods = useForm<CheckoutFormValues>({
     mode: 'onTouched',
+    // We move focus to the error summary instead of the first bad field, so the
+    // guest hears everything that failed rather than only the first thing.
+    shouldFocusError: false,
     defaultValues: {
       firstName: '',
       lastName: '',
@@ -117,6 +211,12 @@ export function CheckoutClient({
       signatureName: '',
     },
   });
+
+  const fieldErrors = collectFieldErrors(methods.formState.errors);
+  const showErrorSummary = invalidCount > 0 && fieldErrors.length > 0;
+
+  const fail = (message: string) =>
+    setSubmitError((prev) => ({ message, nonce: (prev?.nonce ?? 0) + 1 }));
 
   // Keep the participant field array sized to the chosen quantity, preserving any
   // already-entered values.
@@ -138,6 +238,12 @@ export function CheckoutClient({
   useEffect(() => {
     setRememberedGuest(loadRememberedGuest());
   }, []);
+
+  // A failed validation pass is silent to a screen reader unless focus moves —
+  // the guest would otherwise press "Complete booking" and hear nothing.
+  useEffect(() => {
+    if (invalidCount > 0) errorSummaryRef.current?.focus();
+  }, [invalidCount]);
 
   // One-tap "book again": fill the lead-guest fields from the remembered guest.
   const applyRememberedGuest = () => {
@@ -167,11 +273,17 @@ export function CheckoutClient({
     return subtotalCents - discountCents;
   }, [selection.rate.priceCents, quantity, promo]);
 
+  const onInvalid = () => {
+    setSubmitError(null);
+    setInvalidCount((n) => n + 1);
+  };
+
   const onSubmit = async (values: CheckoutFormValues) => {
     setSubmitError(null);
+    setInvalidCount(0);
 
     if (!stripe.configured && !stripe.fakeMode) {
-      setSubmitError(
+      fail(
         'Online payments are not configured for this site yet, so this booking cannot be completed online. Please contact us to finish your reservation.',
       );
       return;
@@ -182,7 +294,7 @@ export function CheckoutClient({
       // Tokenize the card first — no order is created if the card is invalid.
       const tokenResult = await paymentRef.current?.tokenize();
       if (!tokenResult || !tokenResult.ok) {
-        setSubmitError(tokenResult?.error ?? 'Please enter your card details.');
+        fail(tokenResult?.error ?? 'Please enter your card details.');
         return;
       }
 
@@ -210,7 +322,7 @@ export function CheckoutClient({
       });
 
       if (!result.ok) {
-        setSubmitError(result.error);
+        fail(result.error);
         return;
       }
 
@@ -224,7 +336,7 @@ export function CheckoutClient({
 
       router.push(`/confirmation?order=${encodeURIComponent(result.order.orderNumber)}`);
     } catch {
-      setSubmitError('Something went wrong completing your booking. Please try again.');
+      fail('Something went wrong completing your booking. Please try again.');
     } finally {
       setSubmitting(false);
     }
@@ -232,7 +344,46 @@ export function CheckoutClient({
 
   return (
     <FormProvider {...methods}>
-      <form onSubmit={methods.handleSubmit(onSubmit)} noValidate>
+      <form onSubmit={methods.handleSubmit(onSubmit, onInvalid)} noValidate>
+        {/*
+          Error summary. Focused (not role="alert") after a failed submit: moving
+          focus here reads the whole list once, and every entry is a link to the
+          control that needs fixing — one thumb-tap away on a phone.
+        */}
+        {showErrorSummary && (
+          <div
+            ref={errorSummaryRef}
+            tabIndex={-1}
+            aria-labelledby={summaryHeadingId}
+            className="mb-6 rounded-lg border border-red-300 bg-red-50 p-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-600 focus-visible:ring-offset-2"
+          >
+            <h2
+              id={summaryHeadingId}
+              className="flex items-center gap-2 text-sm font-semibold text-red-800"
+            >
+              <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden />
+              {fieldErrors.length === 1
+                ? 'There is 1 problem with your booking details'
+                : `There are ${fieldErrors.length} problems with your booking details`}
+            </h2>
+            <ul className="mt-2 space-y-1 text-sm text-red-800">
+              {fieldErrors.map((entry) => (
+                <li key={entry.key}>
+                  {entry.fieldId ? (
+                    <a href={`#${entry.fieldId}`} className="rounded underline">
+                      {entry.label}: {entry.message}
+                    </a>
+                  ) : (
+                    <span>
+                      {entry.label}: {entry.message}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_22rem]">
           {/* Main column ----------------------------------------------------- */}
           <div className="order-2 space-y-6 lg:order-1">
@@ -253,7 +404,7 @@ export function CheckoutClient({
             </Section>
 
             <Section
-              title={quantity > 1 ? 'Driver information' : 'Driver information'}
+              title="Driver information"
               description="Each driver must provide their details."
             >
               <ParticipantFields count={quantity} />
@@ -284,47 +435,64 @@ export function CheckoutClient({
           {/* Sticky summary rail -------------------------------------------- */}
           <div className="order-1 lg:order-2">
             <div className="space-y-4 lg:sticky lg:top-20">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Your reservation</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-5">
-                  <OrderSummary
-                    selection={selection}
-                    quantity={quantity}
-                    onQuantityChange={setQty}
-                  />
-
-                  <div className="border-t border-slate-200 pt-4">
-                    <PromoField
-                      activityId={selection.activityId}
-                      applied={promo}
-                      onApply={setPromo}
-                      onClear={() => setPromo(null)}
-                    />
-                  </div>
-
-                  <div className="border-t border-slate-200 pt-4">
-                    <p className="mb-3 text-sm font-medium text-slate-700">
-                      Add a tip
-                    </p>
-                    <TipSelector
-                      baseCents={tipBaseCents}
-                      tipCents={tipCents}
-                      onChange={setTipCents}
-                    />
-                  </div>
-
-                  <div className="border-t border-slate-200 pt-4">
-                    <PriceBreakdown
-                      unitPriceCents={selection.rate.priceCents}
+              <section aria-labelledby={reservationHeadingId}>
+                <Card>
+                  <CardHeader>
+                    <h2
+                      id={reservationHeadingId}
+                      className="text-lg font-semibold leading-none tracking-tight"
+                    >
+                      Your reservation
+                    </h2>
+                  </CardHeader>
+                  <CardContent className="space-y-5">
+                    <OrderSummary
+                      selection={selection}
                       quantity={quantity}
-                      promo={promo}
-                      tipCents={tipCents}
+                      onQuantityChange={setQty}
                     />
-                  </div>
-                </CardContent>
-              </Card>
+
+                    <div className="border-t border-slate-200 pt-4">
+                      <PromoField
+                        activityId={selection.activityId}
+                        applied={promo}
+                        onApply={setPromo}
+                        onClear={() => setPromo(null)}
+                      />
+                    </div>
+
+                    {/* The tip presets are a set of related toggles; grouping
+                        them under the visible label gives each button context
+                        when a screen reader reaches it out of order. */}
+                    <div
+                      role="group"
+                      aria-labelledby={tipHeadingId}
+                      className="border-t border-slate-200 pt-4"
+                    >
+                      <p
+                        id={tipHeadingId}
+                        className="mb-3 text-sm font-medium text-slate-700"
+                      >
+                        Add a tip
+                      </p>
+                      <TipSelector
+                        baseCents={tipBaseCents}
+                        tipCents={tipCents}
+                        onChange={setTipCents}
+                      />
+                    </div>
+
+                    <div className="border-t border-slate-200 pt-4">
+                      <PriceBreakdown
+                        unitPriceCents={selection.rate.priceCents}
+                        quantity={quantity}
+                        promo={promo}
+                        tipCents={tipCents}
+                      />
+                    </div>
+                  </CardContent>
+                </Card>
+              </section>
 
               {submitError && (
                 <div
@@ -332,7 +500,7 @@ export function CheckoutClient({
                   className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700"
                 >
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
-                  <span>{submitError}</span>
+                  <span>{submitError.message}</span>
                 </div>
               )}
 
@@ -347,7 +515,16 @@ export function CheckoutClient({
                 {submitting ? 'Processing…' : 'Complete booking'}
               </Button>
 
-              <p className="text-center text-xs text-slate-400">
+              {/*
+                Payment can take several seconds on rural cell service. A polite
+                live region turns that dead time into something audible instead
+                of a button that silently stops responding.
+              */}
+              <p role="status" className="sr-only">
+                {submitting ? 'Processing your booking. Please wait.' : ''}
+              </p>
+
+              <p className="text-center text-xs text-slate-500">
                 By completing this booking you agree to the terms and any
                 applicable cancellation policy.
               </p>

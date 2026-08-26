@@ -6,7 +6,9 @@ export type PaymentStatusValue =
   | 'REFUNDED'
   | 'PARTIAL_REFUND'
   | 'FAILED'
-  | 'PRE_AUTHORIZED';
+  | 'PRE_AUTHORIZED'
+  | 'REQUIRES_ACTION'
+  | 'DISPUTED';
 
 const STYLES: Record<PaymentStatusValue, { label: string; className: string }> = {
   PAID: { label: 'Paid', className: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20' },
@@ -17,6 +19,14 @@ const STYLES: Record<PaymentStatusValue, { label: string; className: string }> =
   },
   FAILED: { label: 'Failed', className: 'bg-red-50 text-red-700 ring-red-600/20' },
   PRE_AUTHORIZED: { label: 'Pre-authorized', className: 'bg-sky-50 text-sky-700 ring-sky-600/20' },
+  // The guest has been sent to a 3DS/SCA challenge and has not finished it. Money
+  // is not captured yet, so this reads as pending, not as a failure.
+  REQUIRES_ACTION: {
+    label: 'Awaiting 3-D Secure',
+    className: 'bg-indigo-50 text-indigo-700 ring-indigo-600/20',
+  },
+  // A chargeback is open against this payment; funds are held pending evidence.
+  DISPUTED: { label: 'Disputed', className: 'bg-rose-50 text-rose-700 ring-rose-600/20' },
 };
 
 /** Color-coded payment status pill used in the order detail payments table. */
