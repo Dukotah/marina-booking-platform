@@ -78,8 +78,13 @@ function summarizeDay(day: AvailabilityDay): DayState {
   let openSlots = 0;
 
   for (const slot of day.slots) {
-    if (STATUS_RANK[slot.status] > STATUS_RANK[best]) best = slot.status;
-    if (slot.status !== 'FULL') {
+    // Trust TRUE remaining capacity over the status label: a slot with no spots
+    // left (e.g. exhausted by resource-booking overlaps that getDayAvailability
+    // already subtracts) is effectively FULL even if labelled AVAILABLE. This
+    // guarantees the calendar never advertises a day that can't actually book.
+    const effectiveStatus: SlotStatus = slot.capacityRemaining <= 0 ? 'FULL' : slot.status;
+    if (STATUS_RANK[effectiveStatus] > STATUS_RANK[best]) best = effectiveStatus;
+    if (effectiveStatus !== 'FULL') {
       spotsRemaining += Math.max(0, slot.capacityRemaining);
       openSlots += 1;
     }

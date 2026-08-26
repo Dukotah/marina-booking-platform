@@ -372,6 +372,73 @@ export async function refundPaymentAction(input: {
   return ok(resultMessage || 'Refund processed.');
 }
 
+// ---------------------------------------------------------------------------
+// Collect the remaining balance on a deposit order
+// ---------------------------------------------------------------------------
+
+/**
+ * Collect the outstanding balance on a deposit order ("pay the rest at check-in").
+ * The (simulated) card charge is owned by the payments/processor logic in the API,
+ * so this action asks the API to charge the balance, record the Payment + zero the
+ * balance_due, and log a BALANCE_COLLECTED OrderEvent — then revalidates the page.
+ * Never throws; an unreachable/misconfigured API degrades to a clear message.
+ */
+export async function collectBalanceAction(input: {
+  orderId: string;
+  method?: 'CARD' | 'CASH';
+}): Promise<ActionResult> {
+  const auth = await authorize('order:write', 'You do not have permission to collect payments.');
+  if ('denied' in auth) return auth.denied;
+  const { ctx } = auth;
+
+  const base = (process.env.API_BASE_URL ?? process.env.NEXT_PUBLIC_API_BASE_URL ?? '').replace(
+    /\/+$/,
+    '',
+  );
+  if (!base) return fail('The payments service is not configured.');
+
+  try {
+    const res = await fetch(
+      `${base}/api/orders/${encodeURIComponent(input.orderId)}/collect-balance`,
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-operator-id': ctx.operatorId,
+          ...(process.env.INTERNAL_API_TOKEN
+            ? { authorization: `Bearer ${process.env.INTERNAL_API_TOKEN}` }
+            : {}),
+        },
+        body: JSON.stringify({ method: input.method ?? 'CARD' }),
+        cache: 'no-store',
+      },
+    );
+
+    if (res.ok) {
+      const data = (await res.json().catch(() => null)) as
+        | { result?: { chargedCents?: number; orderNumber?: string } }
+        | null;
+      const charged = data?.result?.chargedCents;
+      revalidateOrder(input.orderId);
+      return ok(
+        typeof charged === 'number'
+          ? `Collected $${(charged / 100).toFixed(2)}. Order paid in full.`
+          : 'Balance collected. Order paid in full.',
+      );
+    }
+
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    if (res.status === 400 && body?.error) return fail(body.error);
+    if (res.status === 404) return fail('Order not found.');
+    if (res.status === 409 && body?.error) return fail(body.error);
+    if (res.status === 501) return fail('Payments are not configured.');
+    return fail(body?.error ?? `Could not collect the balance (${res.status}).`);
+  } catch (err) {
+    console.error('[orders] collectBalanceAction failed:', err);
+    return fail('Could not reach the payments service. Please try again.');
+  }
+}
+
 /** Internal control-flow error mapped to a user-facing message inside actions. */
 class ActionError extends Error {
   constructor(message: string) {

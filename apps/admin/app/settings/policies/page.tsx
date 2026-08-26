@@ -1,6 +1,7 @@
 import { PageHeader } from '../../../components/shell';
 import { getTenantDb, requirePermission } from '../../../lib/session';
 import { PoliciesForm, type PoliciesFormValues } from '../../../components/settings/PoliciesForm';
+import { ApprovalForm, type ApprovalFormValues } from '../../../components/settings/ApprovalForm';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,7 +25,14 @@ export default async function PoliciesPage() {
   const db = await getTenantDb();
 
   const [operator, policies] = await Promise.all([
-    db.operator.findFirst({ select: { legal_adult_age: true, timezone: true } }),
+    db.operator.findFirst({
+      select: {
+        legal_adult_age: true,
+        timezone: true,
+        approval_threshold_cents: true,
+        refund_requires_approval: true,
+      },
+    }),
     db.integration.findFirst({ where: { key: 'policies' }, select: { config: true } }),
   ]);
 
@@ -37,6 +45,13 @@ export default async function PoliciesPage() {
     checkin_instructions: readString(cfg.checkin_instructions),
   };
 
+  const approvalInitial: ApprovalFormValues = {
+    approval_threshold_dollars: operator?.approval_threshold_cents
+      ? operator.approval_threshold_cents / 100
+      : null,
+    refund_requires_approval: operator?.refund_requires_approval ?? false,
+  };
+
   return (
     <>
       <PageHeader
@@ -44,6 +59,10 @@ export default async function PoliciesPage() {
         description="Adult age, timezone, cancellation, and check-in rules for your bookings."
       />
       <PoliciesForm initial={initial} />
+
+      <div className="mt-8">
+        <ApprovalForm initial={approvalInitial} />
+      </div>
     </>
   );
 }

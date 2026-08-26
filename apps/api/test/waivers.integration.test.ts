@@ -140,6 +140,16 @@ describe.skipIf(!HAS_DB)('waivers API (live HTTP vs Neon, LSRA seed)', () => {
   });
 
   it('POST /api/waivers/sign records the signature and flips the derived flags', async () => {
+    // The enriched waiver requires every required clause to be acknowledged with
+    // initials, so fetch the active clauses and initial them all.
+    const activeRes = await app.request('/api/waivers/active', { headers: { 'x-operator-slug': SLUG } });
+    const active = (await activeRes.json()) as {
+      waiver: { clauses: Array<{ id: string; isRequired: boolean; requiresInitials: boolean }> };
+    };
+    const acknowledgments = (active.waiver.clauses ?? [])
+      .filter((cl) => cl.isRequired || cl.requiresInitials)
+      .map((cl) => ({ clauseId: cl.id, initials: 'WS' }));
+
     const res = await app.request('/api/waivers/sign', {
       method: 'POST',
       headers: jsonHeaders,
@@ -148,6 +158,7 @@ describe.skipIf(!HAS_DB)('waivers API (live HTTP vs Neon, LSRA seed)', () => {
         signerName: 'Waiver Signer',
         signatureData: 'data:image/png;base64,aGVsbG8=',
         isMinor: false,
+        acknowledgments,
       }),
     });
     expect(res.status).toBe(201);

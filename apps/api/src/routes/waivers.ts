@@ -1,11 +1,16 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { z } from 'zod';
-import { createId } from '@marina/core';
 import { assertPermission } from '@marina/auth';
 import type { Env } from '../context.js';
 import { requireStaff } from '../middleware/auth.js';
 import { rateLimit } from '../middleware/rate-limit.js';
+import {
+  getActiveWaiverWithClauses,
+  signWaiver,
+  getWaiverPacket,
+  WaiverError,
+} from '../services/waivers-service.js';
 
 /**
  * Waivers API. All access is automatically tenant-scoped by RLS via `c.var.db`;
@@ -23,18 +28,34 @@ export const waivers = new Hono<Env>();
 // staff GET / route below runs behind requireStaff and is not throttled.
 const publicRateLimit = rateLimit();
 
+/** One per-clause acknowledgment carried in POST /sign. */
+const acknowledgmentSchema = z.object({
+  clauseId: z.string().min(1),
+  /** The signer's initials for this clause (required when the clause requires initials). */
+  initials: z.string().trim().max(16).optional(),
+});
+
 /** Body for POST /sign — a customer (or guardian) signing a waiver for an item. */
 const signWaiverSchema = z.object({
   orderItemId: z.string().min(1, 'orderItemId is required'),
   signerName: z.string().trim().min(1, 'signerName is required').max(120),
+  /** ISO date string (YYYY-MM-DD or full ISO); used to flag minors + kept on record. */
+  signerDob: z.string().trim().min(1).max(40).optional(),
   /** Base64 image data URL or a typed signature string. */
   signatureData: z.string().trim().min(1, 'signatureData is required').max(500_000),
   isMinor: z.boolean().default(false),
   guardianName: z.string().trim().min(1).max(120).optional(),
+  /** Per-clause acknowledgments; every required clause must appear here. */
+  acknowledgments: z.array(acknowledgmentSchema).default([]),
 });
 
 /** Query for GET / — which order's signatures to return. */
 const orderSignaturesSchema = z.object({
+  orderId: z.string().min(1, 'orderId is required'),
+});
+
+/** Query for GET /packet — which order to build the print packet for. */
+const packetSchema = z.object({
   orderId: z.string().min(1, 'orderId is required'),
 });
 
@@ -53,15 +74,15 @@ function clientIp(c: Context<Env>): string | null {
 }
 
 /**
- * GET /active — public. Returns the tenant's active waiver template so the
- * booking/checkout UI can render it. If an operator has more than one active
- * waiver, the most recently created one is treated as current.
+ * GET /active — public. Returns the tenant's active waiver template plus its
+ * ordered clauses so the booking/checkout UI can render a clause-by-clause,
+ * initial-each-section signing flow. `?activityId=` is accepted for a future
+ * per-activity waiver mapping. If an operator has more than one active waiver, the
+ * most recently created one is treated as current.
  */
 waivers.get('/active', async (c) => {
-  const waiver = await c.var.db.waiver.findFirst({
-    where: { is_active: true },
-    orderBy: { created_at: 'desc' },
-  });
+  const activityId = c.req.query('activityId') || undefined;
+  const waiver = await getActiveWaiverWithClauses(c.var.operatorId, activityId);
 
   if (!waiver) {
     return c.json({ error: 'No active waiver configured' }, 404);
@@ -71,8 +92,19 @@ waivers.get('/active', async (c) => {
     waiver: {
       id: waiver.id,
       name: waiver.name,
-      templateHtml: waiver.template_html,
-      requiresMinorSignature: waiver.requires_minor_signature,
+      version: waiver.version,
+      introHtml: waiver.introHtml,
+      // Kept as `templateHtml` for backward compatibility with existing callers.
+      templateHtml: waiver.templateHtml,
+      requiresMinorSignature: waiver.requiresMinorSignature,
+      clauses: waiver.clauses.map((cl) => ({
+        id: cl.id,
+        sortOrder: cl.sortOrder,
+        title: cl.title,
+        bodyHtml: cl.bodyHtml,
+        requiresInitials: cl.requiresInitials,
+        isRequired: cl.isRequired,
+      })),
     },
   });
 });
@@ -88,80 +120,65 @@ waivers.post('/sign', publicRateLimit, async (c) => {
   if (!parsed.success) {
     return c.json({ error: 'Invalid request', issues: parsed.error.issues }, 400);
   }
-  const { orderItemId, signerName, signatureData, isMinor, guardianName } = parsed.data;
+  const { orderItemId, signerName, signerDob, signatureData, isMinor, guardianName, acknowledgments } =
+    parsed.data;
 
-  // A minor signing requires a guardian to co-sign.
-  if (isMinor && !guardianName) {
-    return c.json({ error: 'guardianName is required when isMinor is true' }, 400);
-  }
+  try {
+    const signature = await signWaiver(c.var.operatorId, {
+      orderItemId,
+      signerName,
+      signerDob,
+      signatureData,
+      isMinor,
+      guardianName,
+      acknowledgments,
+      ipAddress: clientIp(c),
+    });
 
-  // Resolve the active waiver template for this tenant.
-  const waiver = await c.var.db.waiver.findFirst({
-    where: { is_active: true },
-    orderBy: { created_at: 'desc' },
-  });
-  if (!waiver) {
-    return c.json({ error: 'No active waiver configured' }, 404);
-  }
-
-  // Load the target order item (RLS scopes this to the current tenant) and the
-  // owning order's customer so we can flag their waiver as on file.
-  const orderItem = await c.var.db.orderItem.findFirst({
-    where: { id: orderItemId },
-    select: { id: true, order: { select: { customer_id: true } } },
-  });
-  if (!orderItem) {
-    return c.json({ error: 'Order item not found' }, 404);
-  }
-
-  const ipAddress = clientIp(c);
-  const signedAt = new Date();
-  const customerId = orderItem.order.customer_id;
-
-  const signature = await c.var.db.$transaction(async (tx) => {
-    const created = await tx.waiverSignature.create({
-      data: {
-        id: createId(),
-        operator_id: c.var.operatorId,
-        waiver_id: waiver.id,
-        order_item_id: orderItem.id,
-        customer_id: customerId,
-        signer_name: signerName,
-        signed_at: signedAt,
-        signature_data: signatureData,
-        ip_address: ipAddress,
-        is_minor: isMinor,
-        guardian_name: guardianName ?? null,
+    return c.json(
+      {
+        signature: {
+          id: signature.id,
+          waiverId: signature.waiverId,
+          waiverVersion: signature.waiverVersion,
+          orderItemId: signature.orderItemId,
+          signerName: signature.signerName,
+          signedAt: signature.signedAt,
+          isMinor: signature.isMinor,
+          guardianName: signature.guardianName,
+          acknowledgments: signature.acknowledgments,
+        },
       },
-    });
+      201,
+    );
+  } catch (err) {
+    if (err instanceof WaiverError) {
+      return c.json({ error: err.message, code: err.code }, err.status as 400 | 404);
+    }
+    throw err;
+  }
+});
 
-    await tx.orderItem.update({
-      where: { id: orderItem.id },
-      data: { waiver_signed: true, waiver_signed_at: signedAt },
-    });
+/**
+ * GET /packet — staff (order:read). Returns the full signed waiver packet for an
+ * order: every signature with its IMMUTABLE snapshot + per-clause acknowledgments,
+ * plus reservation/party details, for the print-optimized check-in packet staff
+ * send out on the boat (supplementing the CA Boater Card).
+ */
+waivers.get('/packet', requireStaff, async (c) => {
+  assertPermission(c.var.auth, 'order:read');
 
-    await tx.customer.update({
-      where: { id: customerId },
-      data: { waiver_on_file: true },
-    });
+  const parsed = packetSchema.safeParse({ orderId: c.req.query('orderId') });
+  if (!parsed.success) {
+    return c.json({ error: 'Invalid request', issues: parsed.error.issues }, 400);
+  }
 
-    return created;
-  });
+  const packet = await getWaiverPacket(c.var.operatorId, parsed.data.orderId);
+  if (!packet) {
+    return c.json({ error: 'Order not found' }, 404);
+  }
 
-  return c.json(
-    {
-      signature: {
-        id: signature.id,
-        waiverId: signature.waiver_id,
-        orderItemId: signature.order_item_id,
-        signerName: signature.signer_name,
-        signedAt: signature.signed_at,
-        isMinor: signature.is_minor,
-        guardianName: signature.guardian_name,
-      },
-    },
-    201,
-  );
+  return c.json({ packet });
 });
 
 /**

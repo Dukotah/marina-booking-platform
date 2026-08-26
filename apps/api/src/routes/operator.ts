@@ -74,6 +74,8 @@ const operatorUpdateSchema = z
     logo_light_url: z.string().trim().url().max(2048).nullable(),
     brand_color: hexColor,
     legal_adult_age: z.number().int().min(13).max(25),
+    // Deposit default: 1-99 = take that % at booking, rest at check-in; null = pay in full.
+    default_deposit_percent: z.number().int().min(1).max(99).nullable(),
     custom_domain: z.string().trim().min(1).max(253).toLowerCase().nullable(),
   })
   .partial()
@@ -123,6 +125,7 @@ function serializeOperator(o: OperatorRow) {
     logo_light_url: o.logo_light_url,
     brand_color: o.brand_color,
     legal_adult_age: o.legal_adult_age,
+    default_deposit_percent: o.default_deposit_percent,
     plan: o.plan,
     is_active: o.is_active,
     created_at: o.created_at,

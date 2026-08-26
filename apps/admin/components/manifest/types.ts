@@ -37,6 +37,28 @@ export interface ManifestListItem extends ManifestBooking {
 }
 
 /** A manifest row: one activity and all of its bookings for the day. */
+/** A guide scheduled to run a given timeslot (day-of ops). */
+export interface ManifestGuide {
+  assignmentId: string;
+  guideId: string;
+  guideName: string | null;
+  guideEmail: string;
+  roleLabel: string | null;
+}
+
+/** Per-timeslot fill for the "1/3" utilization badges + conflict highlight. */
+export interface ManifestSlot {
+  timeslotId: string;
+  /** ISO start (operator-local wall clock as rendered). */
+  startISO: string;
+  /** Minutes since midnight for the slot start. */
+  startMin: number;
+  capacityTotal: number;
+  capacityBooked: number;
+  /** Guides scheduled on this slot. */
+  guides: ManifestGuide[];
+}
+
 export interface ManifestRow {
   activityId: string;
   activityName: string;
@@ -46,6 +68,10 @@ export interface ManifestRow {
   capacityTotal: number;
   /** Sum of capacity_booked across the day's timeslots for this activity. */
   capacityBooked: number;
+  /** Per-timeslot fill for utilization badges + conflict detection. */
+  slots: ManifestSlot[];
+  /** Distinct guides scheduled across this activity's slots for the day. */
+  guides: ManifestGuide[];
   bookings: ManifestBooking[];
 }
 

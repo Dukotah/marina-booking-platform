@@ -8,6 +8,7 @@ import {
   ShieldCheck,
   ShieldAlert,
   CreditCard,
+  Printer,
 } from 'lucide-react';
 import type { Permission } from '@marina/types';
 import { AdminShell } from '../../../components/shell/AdminShell';
@@ -344,6 +345,7 @@ export default async function OrderDetailPage({
                 canRefund={canRefund}
                 canWrite={canWrite}
                 refundablePayments={refundablePayments}
+                balanceDueCents={order.balance_due_cents}
               />
             </section>
           ) : null}
@@ -419,23 +421,34 @@ export default async function OrderDetailPage({
             {waiverItems.length === 0 ? (
               <p className="text-sm text-slate-500">No waiver required for this order.</p>
             ) : (
-              <div
-                className={
-                  waiverComplete
-                    ? 'flex items-center gap-2 text-sm font-medium text-emerald-700'
-                    : 'flex items-center gap-2 text-sm font-medium text-amber-700'
-                }
-              >
-                {waiverComplete ? (
-                  <ShieldCheck className="h-5 w-5" aria-hidden />
-                ) : (
-                  <ShieldAlert className="h-5 w-5" aria-hidden />
-                )}
-                <span>
-                  {waiversSigned} of {waiverItems.length} signed
-                  {waiverComplete ? ' — all set' : ''}
-                </span>
-              </div>
+              <>
+                <div
+                  className={
+                    waiverComplete
+                      ? 'flex items-center gap-2 text-sm font-medium text-emerald-700'
+                      : 'flex items-center gap-2 text-sm font-medium text-amber-700'
+                  }
+                >
+                  {waiverComplete ? (
+                    <ShieldCheck className="h-5 w-5" aria-hidden />
+                  ) : (
+                    <ShieldAlert className="h-5 w-5" aria-hidden />
+                  )}
+                  <span>
+                    {waiversSigned} of {waiverItems.length} signed
+                    {waiverComplete ? ' — all set' : ''}
+                  </span>
+                </div>
+                {waiversSigned > 0 ? (
+                  <Link
+                    href={`/orders/${order.id}/waiver-packet`}
+                    className="mt-3 inline-flex items-center gap-2 rounded-md border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                  >
+                    <Printer className="h-4 w-4" aria-hidden />
+                    Print waiver packet
+                  </Link>
+                ) : null}
+              </>
             )}
           </section>
         </div>

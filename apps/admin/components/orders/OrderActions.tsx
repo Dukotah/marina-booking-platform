@@ -2,13 +2,14 @@
 
 import { useId, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { Ban, Mail, Undo2, Loader2, X } from 'lucide-react';
+import { Ban, Mail, Undo2, Loader2, X, Wallet } from 'lucide-react';
 import { formatUSD } from '../../lib/format';
 import { cn } from '../../lib/cn';
 import {
   cancelOrderAction,
   resendConfirmationAction,
   refundPaymentAction,
+  collectBalanceAction,
   type ActionResult,
 } from '../../app/orders/actions';
 
@@ -33,6 +34,8 @@ export interface OrderActionsProps {
   canWrite: boolean;
   /** Payments that still have a refundable balance. */
   refundablePayments: RefundablePayment[];
+  /** Outstanding balance in integer cents (drives the "Collect balance" action). */
+  balanceDueCents: number;
 }
 
 type Banner = { ok: boolean; message: string } | null;
@@ -50,6 +53,7 @@ export function OrderActions({
   canRefund,
   canWrite,
   refundablePayments,
+  balanceDueCents,
 }: OrderActionsProps) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -72,6 +76,7 @@ export function OrderActions({
   }
 
   const hasRefundable = refundablePayments.length > 0;
+  const hasBalanceDue = balanceDueCents > 0 && !isCancelled;
 
   return (
     <div className="space-y-3">
@@ -111,6 +116,26 @@ export function OrderActions({
           >
             {pending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Mail className="h-4 w-4" aria-hidden />}
             Resend confirmation
+          </button>
+        ) : null}
+
+        {canWrite && hasBalanceDue ? (
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => run(() => collectBalanceAction({ orderId, method: 'CARD' }))}
+            title={`Charge the remaining ${formatUSD(balanceDueCents)} balance`}
+            className={cn(
+              'inline-flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800 shadow-sm',
+              'hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50',
+            )}
+          >
+            {pending ? (
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+            ) : (
+              <Wallet className="h-4 w-4" aria-hidden />
+            )}
+            Collect balance ({formatUSD(balanceDueCents)})
           </button>
         ) : null}
 

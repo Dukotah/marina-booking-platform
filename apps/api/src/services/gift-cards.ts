@@ -1,0 +1,272 @@
+/**
+ * Gift card service — issue, look up, and redeem prepaid gift cards.
+ *
+ * A gift card holds a balance in integer cents. Redemption against an order
+ * records a Payment (method GIFT_CARD) that references the card, decrements the
+ * balance, and updates the order's amount_paid / balance_due — the exact same
+ * settle-against-order pattern the Stripe/POS payment paths use. All balance
+ * mutation runs inside a single tenant-scoped transaction (`withTenant`) so RLS
+ * scopes every row and concurrent redemptions can't oversell a card.
+ *
+ * Gift-card liability (money owed to holders) = SUM(balance_cents) of ACTIVE cards.
+ */
+
+import { randomInt } from 'node:crypto';
+import { Prisma, forOperator, withTenant, type GiftCard } from '@marina/database';
+import { formatUSD } from '@marina/core';
+
+/** A typed, user-facing failure that route handlers map to a clean HTTP status. */
+export class GiftCardError extends Error {
+  readonly status: number;
+  readonly code: string;
+  constructor(code: string, message: string, status = 400) {
+    super(message);
+    this.name = 'GiftCardError';
+    this.code = code;
+    this.status = status;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Code generation
+// ---------------------------------------------------------------------------
+
+// Unambiguous alphabet — no 0/O/1/I/L to avoid read/transcription errors.
+const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+
+function randomSegment(length = 4): string {
+  let out = '';
+  for (let i = 0; i < length; i++) out += CODE_ALPHABET[randomInt(CODE_ALPHABET.length)];
+  return out;
+}
+
+/** A human-typable code like `A7QK-9MTX-3RJP`. */
+function generateCode(): string {
+  return `${randomSegment()}-${randomSegment()}-${randomSegment()}`;
+}
+
+/** Normalize user-entered codes (case + surrounding whitespace) for lookup. */
+export function normalizeCode(code: string): string {
+  return code.trim().toUpperCase();
+}
+
+// ---------------------------------------------------------------------------
+// Issue
+// ---------------------------------------------------------------------------
+
+export interface IssueGiftCardInput {
+  initialCents: number;
+  purchaserEmail?: string;
+  recipientName?: string;
+  recipientEmail?: string;
+  message?: string;
+  /** Optional expiry; ACTIVE cards with a past expiry are treated as EXPIRED on use. */
+  expiresAt?: Date;
+}
+
+/**
+ * Issue a new ACTIVE gift card with a unique code and the given starting balance.
+ * Retries on the (rare) code collision against the per-operator unique index.
+ */
+export async function issueGiftCard(
+  operatorId: string,
+  input: IssueGiftCardInput,
+): Promise<GiftCard> {
+  if (!Number.isInteger(input.initialCents) || input.initialCents <= 0) {
+    throw new GiftCardError('INVALID_AMOUNT', 'Gift card amount must be a positive whole number of cents.');
+  }
+  const db = forOperator(operatorId);
+
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const code = generateCode();
+    try {
+      return await db.giftCard.create({
+        data: {
+          operator_id: operatorId,
+          code,
+          initial_cents: input.initialCents,
+          balance_cents: input.initialCents,
+          status: 'ACTIVE',
+          purchaser_email: input.purchaserEmail ?? null,
+          recipient_name: input.recipientName ?? null,
+          recipient_email: input.recipientEmail ?? null,
+          message: input.message ?? null,
+          expires_at: input.expiresAt ?? null,
+        },
+      });
+    } catch (err) {
+      // Unique-constraint collision on (operator_id, code) → try a fresh code.
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') continue;
+      throw err;
+    }
+  }
+  throw new GiftCardError('CODE_COLLISION', 'Could not allocate a unique gift card code; please retry.', 500);
+}
+
+// ---------------------------------------------------------------------------
+// Lookup / validate (public balance check + checkout preview)
+// ---------------------------------------------------------------------------
+
+export interface GiftCardCheck {
+  valid: boolean;
+  code: string;
+  balanceCents: number;
+  status: GiftCard['status'];
+  /** Present when valid is false. */
+  reason?: string;
+}
+
+/** Load a card by its (normalized) code within the operator. */
+export async function getGiftCardByCode(
+  operatorId: string,
+  code: string,
+): Promise<GiftCard | null> {
+  const db = forOperator(operatorId);
+  return db.giftCard.findUnique({
+    where: { operator_id_code: { operator_id: operatorId, code: normalizeCode(code) } },
+  });
+}
+
+/** Is this card usable right now? Safe to expose publicly (balance check). */
+export async function checkGiftCard(operatorId: string, code: string): Promise<GiftCardCheck> {
+  const card = await getGiftCardByCode(operatorId, code);
+  if (!card) {
+    return { valid: false, code: normalizeCode(code), balanceCents: 0, status: 'VOID', reason: 'No gift card with that code.' };
+  }
+  const base = { code: card.code, balanceCents: card.balance_cents, status: card.status };
+  if (card.status === 'VOID') return { valid: false, ...base, reason: 'This gift card has been voided.' };
+  if (card.status === 'REDEEMED' || card.balance_cents <= 0)
+    return { valid: false, ...base, reason: 'This gift card has no remaining balance.' };
+  if (card.expires_at && card.expires_at.getTime() < Date.now())
+    return { valid: false, ...base, status: 'EXPIRED', reason: 'This gift card has expired.' };
+  return { valid: true, ...base };
+}
+
+// ---------------------------------------------------------------------------
+// Redeem (settle against an order)
+// ---------------------------------------------------------------------------
+
+export interface RedeemGiftCardInput {
+  code: string;
+  orderId: string;
+  /** Cap the amount to apply; defaults to the order's full outstanding balance. */
+  amountCents?: number;
+  /** Audit actor (e.g. 'customer' or a staff id/email). */
+  actor?: string;
+}
+
+export interface RedeemGiftCardResult {
+  giftCardId: string;
+  code: string;
+  /** Cents actually applied to the order this redemption. */
+  appliedCents: number;
+  /** Remaining balance on the card after redemption. */
+  cardBalanceCents: number;
+  cardStatus: GiftCard['status'];
+  /** Order totals after applying the gift card. */
+  orderAmountPaidCents: number;
+  orderBalanceDueCents: number;
+}
+
+/**
+ * Apply a gift card to an order. Applies min(card balance, requested amount,
+ * order balance due). Atomic: reloads the card + order inside the transaction so
+ * two concurrent redemptions can't spend the same balance twice.
+ */
+export async function redeemGiftCard(
+  operatorId: string,
+  input: RedeemGiftCardInput,
+): Promise<RedeemGiftCardResult> {
+  const normalized = normalizeCode(input.code);
+
+  return withTenant(operatorId, async (tx) => {
+    const card = await tx.giftCard.findUnique({
+      where: { operator_id_code: { operator_id: operatorId, code: normalized } },
+    });
+    if (!card) throw new GiftCardError('NOT_FOUND', 'No gift card with that code.', 404);
+    if (card.status === 'VOID') throw new GiftCardError('VOID', 'This gift card has been voided.');
+    if (card.expires_at && card.expires_at.getTime() < Date.now()) {
+      if (card.status !== 'EXPIRED') {
+        await tx.giftCard.update({ where: { id: card.id }, data: { status: 'EXPIRED' } });
+      }
+      throw new GiftCardError('EXPIRED', 'This gift card has expired.');
+    }
+    if (card.balance_cents <= 0 || card.status === 'REDEEMED') {
+      throw new GiftCardError('INSUFFICIENT_BALANCE', 'This gift card has no remaining balance.');
+    }
+
+    const order = await tx.order.findUnique({ where: { id: input.orderId } });
+    if (!order) throw new GiftCardError('ORDER_NOT_FOUND', 'Order not found.', 404);
+
+    const requested = input.amountCents ?? order.balance_due_cents;
+    const applied = Math.min(card.balance_cents, requested, order.balance_due_cents);
+    if (applied <= 0) {
+      throw new GiftCardError('NOTHING_TO_APPLY', 'This order has no outstanding balance to cover.');
+    }
+
+    const payment = await tx.payment.create({
+      data: {
+        operator_id: operatorId,
+        order_id: order.id,
+        method: 'GIFT_CARD',
+        status: 'PAID',
+        amount_cents: applied,
+        gift_card_id: card.id,
+      },
+    });
+
+    const newCardBalance = card.balance_cents - applied;
+    const newCardStatus = newCardBalance <= 0 ? 'REDEEMED' : 'ACTIVE';
+    await tx.giftCard.update({
+      where: { id: card.id },
+      data: { balance_cents: newCardBalance, status: newCardStatus },
+    });
+
+    const newAmountPaid = order.amount_paid_cents + applied;
+    const newBalanceDue = Math.max(0, order.total_cents - newAmountPaid);
+    await tx.order.update({
+      where: { id: order.id },
+      data: { amount_paid_cents: newAmountPaid, balance_due_cents: newBalanceDue },
+    });
+
+    await tx.orderEvent.create({
+      data: {
+        operator_id: operatorId,
+        order_id: order.id,
+        type: 'PAYMENT',
+        description: `Redeemed gift card ${card.code} (${formatUSD(applied)})`,
+        actor: input.actor ?? 'customer',
+        metadata: {
+          paymentId: payment.id,
+          giftCardId: card.id,
+          appliedCents: applied,
+          cardBalanceCents: newCardBalance,
+        } as Prisma.InputJsonValue,
+      },
+    });
+
+    return {
+      giftCardId: card.id,
+      code: card.code,
+      appliedCents: applied,
+      cardBalanceCents: newCardBalance,
+      cardStatus: newCardStatus,
+      orderAmountPaidCents: newAmountPaid,
+      orderBalanceDueCents: newBalanceDue,
+    };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Reporting
+// ---------------------------------------------------------------------------
+
+/** Outstanding gift-card liability (money owed to holders) for the operator. */
+export async function giftCardLiabilityCents(operatorId: string): Promise<number> {
+  const db = forOperator(operatorId);
+  const agg = await db.giftCard.aggregate({
+    where: { status: 'ACTIVE' },
+    _sum: { balance_cents: true },
+  });
+  return agg._sum.balance_cents ?? 0;
+}

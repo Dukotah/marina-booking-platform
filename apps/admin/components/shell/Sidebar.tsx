@@ -11,9 +11,11 @@ import {
   Users,
   ScanLine,
   BarChart3,
+  Building2,
   UserCog,
   Settings,
   ShieldCheck,
+  Gift,
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from '../../lib/cn';
@@ -38,14 +40,28 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Activities', href: '/activities', icon: Sailboat },
   { label: 'Customers', href: '/customers', icon: Users },
   { label: 'POS', href: '/pos', icon: ScanLine },
+  { label: 'Gift Certificates', href: '/gift-certificates', icon: Gift },
   { label: 'Reports', href: '/reports', icon: BarChart3 },
+  { label: 'Locations', href: '/reports/locations', icon: Building2 },
   { label: 'Staff', href: '/staff', icon: UserCog },
   { label: 'Settings', href: '/settings', icon: Settings },
 ];
 
-function isActive(pathname: string, href: string): boolean {
+function matchesHref(pathname: string, href: string): boolean {
   if (href === '/') return pathname === '/';
   return pathname === href || pathname.startsWith(`${href}/`);
+}
+
+/**
+ * A nav item is active when it matches the path AND no MORE-specific nav href also
+ * matches — so `/reports/locations` highlights only "Locations", not "Reports"
+ * (whose href is a prefix of it).
+ */
+function isActive(pathname: string, href: string): boolean {
+  if (!matchesHref(pathname, href)) return false;
+  return !NAV_ITEMS.some(
+    (item) => item.href !== href && item.href.length > href.length && matchesHref(pathname, item.href),
+  );
 }
 
 export interface SidebarProps {
@@ -107,7 +123,7 @@ export function Sidebar({ brandName, logoUrl, showPlatformLink = false }: Sideba
       )}
 
       <div className="border-t border-slate-800 p-4 text-xs text-slate-500">
-        Powered by your team
+        &copy; {new Date().getFullYear()} {brandName}
       </div>
     </aside>
   );

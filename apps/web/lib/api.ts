@@ -103,9 +103,19 @@ export interface CatalogActivity {
   color: string;
   photoUrls: string[];
   waiverRequired: boolean;
-  /** Lowest bookable price, or null when no rates are configured. */
+  /** When true, pricing is suppressed on this activity ("call for price"). */
+  hidePrice?: boolean;
+  /** Lowest bookable price, or null when no rates are configured / price hidden. */
   fromPriceCents: number | null;
   rates: CatalogRate[];
+}
+
+/** An optional add-on offered at checkout for an activity (package upsell). */
+export interface ActivityUpsell {
+  id: string;
+  name: string;
+  description: string | null;
+  priceCents: number;
 }
 
 /** Full detail for a single activity's booking page. */
@@ -113,6 +123,31 @@ export interface ActivityDetail extends CatalogActivity {
   minParticipants: number;
   descriptionHtml: string | null;
   selfRescheduleHours: number;
+  /** Optional checkout add-ons; absent on older API responses. */
+  upsells?: ActivityUpsell[];
+}
+
+/** One line within a Package bundle. */
+export interface PackageItem {
+  id: string;
+  activityId: string;
+  activityName: string;
+  rateId: string;
+  rateName: string;
+  quantity: number;
+  unitPriceCents: number;
+  lineTotalCents: number;
+}
+
+/** A sellable activity/rate bundle at a single package price. */
+export interface CatalogPackage {
+  id: string;
+  name: string;
+  descriptionHtml: string | null;
+  priceCents: number;
+  aLaCarteCents: number;
+  savingsCents: number;
+  items: PackageItem[];
 }
 
 /** A single bookable time on a given day. */
@@ -377,6 +412,21 @@ export async function getCatalog(): Promise<CatalogActivity[]> {
   return data.activities;
 }
 
+/** The active, online-visible package bundles for the tenant (empty in demo mode). */
+export async function getPackages(): Promise<CatalogPackage[]> {
+  if (DEMO_MODE) return [];
+  const data = await request<{ packages: CatalogPackage[] }>('/api/packages');
+  return data.packages;
+}
+
+/** Priced detail for a single package bundle. */
+export async function getPackage(id: string): Promise<CatalogPackage> {
+  const data = await request<{ package: CatalogPackage }>(
+    `/api/packages/${encodeURIComponent(id)}`,
+  );
+  return data.package;
+}
+
 /** Detail for a single activity's booking page. */
 export async function getActivity(id: string): Promise<ActivityDetail> {
   if (DEMO_MODE) {
@@ -414,6 +464,72 @@ export async function validatePromo(
   return request<PromoValidation>('/api/promos/validate', {
     method: 'POST',
     body: { code, activityId },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Waivers (public: active clauses + clause-level signing)
+// ---------------------------------------------------------------------------
+
+/** A single clause of the active waiver, in display order. */
+export interface WaiverClause {
+  id: string;
+  sortOrder: number;
+  title: string;
+  bodyHtml: string;
+  requiresInitials: boolean;
+  isRequired: boolean;
+}
+
+/** The active waiver plus its ordered clauses, for the clause-level signing UI. */
+export interface ActiveWaiver {
+  id: string;
+  name: string;
+  version: number;
+  introHtml: string | null;
+  templateHtml: string;
+  requiresMinorSignature: boolean;
+  clauses: WaiverClause[];
+}
+
+/** Fetch the tenant's active waiver + clauses (optionally scoped to an activity). */
+export async function getActiveWaiver(activityId?: string): Promise<ActiveWaiver> {
+  const qs = activityId ? `?activityId=${encodeURIComponent(activityId)}` : '';
+  const body = await request<{ waiver: ActiveWaiver }>(`/api/waivers/active${qs}`);
+  return body.waiver;
+}
+
+/** One per-clause acknowledgment submitted with a signature. */
+export interface WaiverAcknowledgment {
+  clauseId: string;
+  initials?: string;
+}
+
+export interface SignWaiverPayload {
+  orderItemId: string;
+  signerName: string;
+  signerDob?: string;
+  signatureData: string;
+  isMinor: boolean;
+  guardianName?: string;
+  acknowledgments: WaiverAcknowledgment[];
+}
+
+export interface SignWaiverResponse {
+  signature: {
+    id: string;
+    orderItemId: string | null;
+    signerName: string;
+    signedAt: string;
+    acknowledgments: Array<{ clauseId: string; title: string; initials: string | null }>;
+  };
+}
+
+/** Submit a clause-level waiver signature for an order item. */
+export async function signWaiver(payload: SignWaiverPayload): Promise<SignWaiverResponse> {
+  return request<SignWaiverResponse>('/api/waivers/sign', {
+    method: 'POST',
+    body: payload,
   });
 }
 

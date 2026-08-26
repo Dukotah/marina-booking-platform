@@ -49,7 +49,24 @@ const merchandiseLineSchema = z.object({
   unitPriceCents: z.number().int().nonnegative(),
 });
 
-const saleLineSchema = z.discriminatedUnion('kind', [bookingLineSchema, merchandiseLineSchema]);
+/**
+ * A package line on a walk-up sale. Sells a Package bundle: each of its items is
+ * booked into a caller-supplied timeslot, and the bundle's authoritative
+ * price_cents is distributed across the resulting booking lines (largest-remainder)
+ * so the order total equals the package price, not the à-la-carte sum.
+ */
+const packageLineSchema = z.object({
+  kind: z.literal('PACKAGE'),
+  packageId: z.string().min(1, 'packageId is required'),
+  /** One timeslot per package item, in item sort order. */
+  timeslotIds: z.array(z.string().min(1)).min(1, 'A timeslot is required for each package item'),
+});
+
+const saleLineSchema = z.discriminatedUnion('kind', [
+  bookingLineSchema,
+  merchandiseLineSchema,
+  packageLineSchema,
+]);
 
 const saleCustomerSchema = z.object({
   id: z.string().min(1).optional(),
@@ -101,6 +118,7 @@ pos.post('/sale', async (c) => {
   // the priced cart before opening the write transaction.
   const bookingLines = input.lines.filter((l): l is z.infer<typeof bookingLineSchema> => l.kind === 'BOOKING');
   const merchLines = input.lines.filter((l): l is z.infer<typeof merchandiseLineSchema> => l.kind === 'MERCHANDISE');
+  const packageLines = input.lines.filter((l): l is z.infer<typeof packageLineSchema> => l.kind === 'PACKAGE');
 
   // Resolve operator config for order numbering, fees, and tax-exempt handling.
   const operator = await c.var.db.operator.findUnique({
@@ -110,8 +128,14 @@ pos.post('/sale', async (c) => {
   if (!operator) return c.json({ error: 'Operator not found' }, 404);
 
   // --- Validate booking lines ---------------------------------------------
+  // A resolved booking may originate from a BOOKING line or be synthesized from a
+  // PACKAGE line's item, so the line fields are captured explicitly (not tied to
+  // the raw bookingLineSchema) to keep the write loop uniform.
   type ResolvedBooking = {
-    line: z.infer<typeof bookingLineSchema>;
+    activityId: string;
+    rateId: string;
+    timeslotId: string;
+    quantity: number;
     activityName: string;
     locationId: string | null;
     unitPriceCents: number;
@@ -144,11 +168,78 @@ pos.post('/sale', async (c) => {
       return c.json({ error: 'Not permitted to sell at this location' }, 403);
     }
     resolvedBookings.push({
-      line,
+      activityId: line.activityId,
+      rateId: line.rateId,
+      timeslotId: line.timeslotId,
+      quantity: line.quantity,
       activityName: rate.activity.name_internal,
       locationId,
       unitPriceCents: line.unitPriceCentsOverride ?? rate.price_cents,
     });
+  }
+
+  // --- Validate package lines ---------------------------------------------
+  // Each package expands into one booking per item; the bundle price is spread
+  // across those bookings so the order total equals the package price.
+  const { distributePrice } = await import('../services/packages.js');
+  for (const line of packageLines) {
+    const pkg = await c.var.db.package.findFirst({
+      where: { id: line.packageId, status: 'ACTIVE' },
+      include: {
+        items: {
+          orderBy: { sort_index: 'asc' },
+          include: {
+            rate: { select: { id: true, is_active: true, price_cents: true } },
+            activity: { select: { id: true, name_internal: true, location_id: true } },
+          },
+        },
+      },
+    });
+    if (!pkg) return c.json({ error: `Package ${line.packageId} not found` }, 400);
+    if (pkg.items.length !== line.timeslotIds.length) {
+      return c.json(
+        { error: `Package ${line.packageId} has ${pkg.items.length} item(s); provide exactly that many timeslotIds` },
+        400,
+      );
+    }
+
+    // À-la-carte weight per item = rate price * quantity (drives the split).
+    const weights = pkg.items.map((it) => it.rate.price_cents * it.quantity);
+    const shares = distributePrice(pkg.price_cents, weights);
+
+    for (let idx = 0; idx < pkg.items.length; idx++) {
+      const it = pkg.items[idx];
+      const timeslotId = line.timeslotIds[idx];
+      if (!it.rate.is_active) {
+        return c.json({ error: `Package ${line.packageId}: rate ${it.rate_id} is not active` }, 400);
+      }
+      const timeslot = await c.var.db.timeslot.findUnique({ where: { id: timeslotId } });
+      if (!timeslot || timeslot.activity_id !== it.activity_id) {
+        return c.json(
+          { error: `Timeslot ${timeslotId} not found for package activity ${it.activity_id}` },
+          400,
+        );
+      }
+      if (timeslot.capacity_booked + it.quantity > timeslot.capacity_total) {
+        return c.json({ error: `Timeslot ${timeslotId} has insufficient capacity` }, 409);
+      }
+      const locationId = it.activity.location_id;
+      if (locationId && !canAccessLocation(auth, locationId)) {
+        return c.json({ error: 'Not permitted to sell at this location' }, 403);
+      }
+      // The distributed share is the LINE total; divide by quantity for unit price
+      // (integer — the largest-remainder split already guarantees an exact sum).
+      const unit = Math.round(shares[idx] / it.quantity);
+      resolvedBookings.push({
+        activityId: it.activity_id,
+        rateId: it.rate_id,
+        timeslotId,
+        quantity: it.quantity,
+        activityName: it.activity.name_internal,
+        locationId,
+        unitPriceCents: unit,
+      });
+    }
   }
 
   // --- Validate merchandise lines -----------------------------------------
@@ -194,7 +285,7 @@ pos.post('/sale', async (c) => {
 
   // --- Pricing -------------------------------------------------------------
   const items: PricingItem[] = [
-    ...resolvedBookings.map((b) => ({ unitPriceCents: b.unitPriceCents, quantity: b.line.quantity })),
+    ...resolvedBookings.map((b) => ({ unitPriceCents: b.unitPriceCents, quantity: b.quantity })),
     ...resolvedMerch.map((m) => ({ unitPriceCents: m.line.unitPriceCents, quantity: m.line.quantity })),
   ];
 
@@ -300,17 +391,17 @@ pos.post('/sale', async (c) => {
           data: {
             operator_id: operatorId,
             order_id: order.id,
-            activity_id: b.line.activityId,
-            rate_id: b.line.rateId,
-            timeslot_id: b.line.timeslotId,
-            quantity: b.line.quantity,
+            activity_id: b.activityId,
+            rate_id: b.rateId,
+            timeslot_id: b.timeslotId,
+            quantity: b.quantity,
             unit_price_cents: b.unitPriceCents,
             status: 'UPCOMING',
           },
         });
         await tx.timeslot.update({
-          where: { id: b.line.timeslotId },
-          data: { capacity_booked: { increment: b.line.quantity } },
+          where: { id: b.timeslotId },
+          data: { capacity_booked: { increment: b.quantity } },
         });
       }
 
@@ -370,6 +461,7 @@ pos.post('/sale', async (c) => {
             method: input.payment.method,
             bookingLines: resolvedBookings.length,
             merchandiseLines: resolvedMerch.length,
+            packageLines: packageLines.length,
           },
         },
       });

@@ -10,10 +10,16 @@
  * "12.34") — the natural unit for a spreadsheet — while the app keeps integer
  * cents everywhere internally.
  */
-import { fromCents } from '@marina/core';
+import { fromCents, PAYMENT_METHOD_LABEL, type PaymentMethodKey } from '@marina/core';
 import { toCsv, type CsvRow } from './csv';
 import { type ReportKind, REPORT_LABEL } from './kinds';
-import type { OccupancyReport, RevenueReport, TaxesFeesReport } from './queries';
+import type {
+  GiftCardReport,
+  OccupancyReport,
+  RevenueReport,
+  SalesReport,
+  TaxesFeesReport,
+} from './queries';
 
 export { REPORT_LABEL, type ReportKind };
 
@@ -103,20 +109,92 @@ function occupancyCsv(report: OccupancyReport): string {
   return toCsv(header, rows);
 }
 
-/** Bundle slice needed to serialize any of the three reports. */
+function salesCsv(report: SalesReport): string {
+  // Payments-by-method table is the primary body; sales totals + comparison
+  // deltas are appended as labeled sections.
+  const header = ['Payment Method', 'Collected (USD)', 'Refunded (USD)', 'Net (USD)', 'Count'] as const;
+  const rows: CsvRow[] = report.payments.byMethod.map((m) => [
+    PAYMENT_METHOD_LABEL[m.method as PaymentMethodKey] ?? m.method,
+    dollars(m.collectedCents),
+    dollars(m.refundedCents),
+    dollars(m.netCents),
+    m.count,
+  ]);
+  rows.push([
+    'All methods',
+    dollars(report.payments.totals.collectedCents),
+    dollars(report.payments.totals.refundedCents),
+    dollars(report.payments.totals.netCents),
+    report.payments.totals.count,
+  ]);
+
+  rows.push([]);
+  rows.push([`Sales totals (basis: ${report.basis === 'appointment' ? 'appointment date' : 'order date'})`]);
+  rows.push(['Gross Sales (USD)', dollars(report.totals.grossSalesCents)]);
+  rows.push(['Subtotal (USD)', dollars(report.totals.subtotalCents)]);
+  rows.push(['Discounts (USD)', dollars(report.totals.discountCents)]);
+  rows.push(['Net Sales (USD)', dollars(report.totals.netSalesCents)]);
+  rows.push(['Taxes & Fees (USD)', dollars(report.totals.taxesAndFeesCents)]);
+  rows.push(['  Tax (USD)', dollars(report.totals.taxCents)]);
+  rows.push(['  Processing Fees (USD)', dollars(report.totals.processingFeeCents)]);
+  rows.push(['Tips (USD)', dollars(report.totals.tipCents)]);
+  rows.push(['Merchandise (USD)', report.merchandiseCents === null ? 'not tracked' : dollars(report.merchandiseCents)]);
+  rows.push(['Packages (USD)', report.packagesCents === null ? 'not available' : dollars(report.packagesCents)]);
+  rows.push(['Orders', report.totals.orders]);
+
+  if (report.comparison) {
+    const c = report.comparison;
+    rows.push([]);
+    rows.push([`Comparison vs ${c.range.from} – ${c.range.to}`, 'Current', 'Previous', 'Change']);
+    const line = (label: string, cur: number, prev: number) =>
+      rows.push([label, dollars(cur), dollars(prev), dollars(cur - prev)]);
+    line('Gross Sales (USD)', report.totals.grossSalesCents, c.totals.grossSalesCents);
+    line('Taxes & Fees (USD)', report.totals.taxesAndFeesCents, c.totals.taxesAndFeesCents);
+    line('Tips (USD)', report.totals.tipCents, c.totals.tipCents);
+    line('Net Sales (USD)', report.totals.netSalesCents, c.totals.netSalesCents);
+    rows.push(['Orders', report.totals.orders, c.totals.orders, report.totals.orders - c.totals.orders]);
+  }
+
+  return toCsv(header, rows);
+}
+
+function giftCardsCsv(report: GiftCardReport): string {
+  const header = ['Metric', 'Count', 'Amount (USD)'] as const;
+  const rows: CsvRow[] = [
+    ['Outstanding liability', '', dollars(report.liabilityCents)],
+    ['Issued (in range)', report.issued.count, dollars(report.issued.amountCents)],
+    ['Redeemed (in range)', report.redeemed.count, dollars(report.redeemed.amountCents)],
+  ];
+
+  rows.push([]);
+  rows.push(['Card Status', 'Count', 'Balance (USD)']);
+  for (const s of report.byStatus) {
+    rows.push([s.status, s.count, dollars(s.balanceCents)]);
+  }
+
+  return toCsv(header, rows);
+}
+
+/** Bundle slice needed to serialize any report kind. */
 export interface ExportableReports {
   revenue: RevenueReport;
+  sales: SalesReport;
   taxesFees: TaxesFeesReport;
   occupancy: OccupancyReport;
+  giftCards: GiftCardReport;
 }
 
 /** Serialize the requested report kind to a CSV string (no BOM; add at output). */
 export function buildReportCsv(kind: ReportKind, reports: ExportableReports): string {
   switch (kind) {
+    case 'sales':
+      return salesCsv(reports.sales);
     case 'taxes-fees':
       return taxesFeesCsv(reports.taxesFees);
     case 'occupancy':
       return occupancyCsv(reports.occupancy);
+    case 'gift-cards':
+      return giftCardsCsv(reports.giftCards);
     case 'revenue':
     default:
       return revenueCsv(reports.revenue);

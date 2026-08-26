@@ -28,23 +28,22 @@ import {
   BookingReminder,
   RefundReceipt,
   StaffNewBooking,
-  type BrandProps,
 } from '@marina/emails';
+import {
+  type NotificationResult,
+  skipped,
+  brandFromOperator,
+  dateLabelFor,
+  timeLabelFor,
+  fullName,
+  loadOrderBundle,
+  type OrderBundle,
+  bookingFacts,
+} from './notification-data.js';
+import { sendReminderSms } from './sms.js';
+import { loadTemplateOverride, resolveTemplate } from './message-templates.js';
 
-// ---------------------------------------------------------------------------
-// Result type
-// ---------------------------------------------------------------------------
-
-/** Outcome of a notification attempt. Functions never throw — they report here. */
-export interface NotificationResult {
-  sent: boolean;
-  /** Provider message id when sent. */
-  id?: string;
-  /** Why it did not send (skipped / no recipient / provider error). */
-  skippedReason?: string;
-}
-
-const skipped = (reason: string): NotificationResult => ({ sent: false, skippedReason: reason });
+export type { NotificationResult };
 
 // ---------------------------------------------------------------------------
 // Lazy Resend client
@@ -127,49 +126,12 @@ async function dispatch(args: SendArgs): Promise<NotificationResult> {
 }
 
 // ---------------------------------------------------------------------------
-// Branding & formatting helpers
+// Email-specific helpers (shared data/formatting live in notification-data.ts)
 // ---------------------------------------------------------------------------
-
-/** Build white-label email branding props from an operator row. */
-function brandFromOperator(operator: {
-  name_external: string;
-  brand_color: string;
-  logo_light_url: string | null;
-  logo_dark_url: string | null;
-}): BrandProps {
-  return {
-    brandName: operator.name_external,
-    brandColor: operator.brand_color,
-    // Email headers use a colored brand bar, so prefer the light (on-dark) logo.
-    logoUrl: operator.logo_light_url ?? operator.logo_dark_url ?? undefined,
-  };
-}
 
 /** A reply-to / footer contact line assembled from operator data. */
 function contactLine(operator: { name_external: string; phone: string | null; website: string | null }): string {
   return [operator.name_external, operator.phone, operator.website].filter(Boolean).join(' · ');
-}
-
-function dateLabelFor(date: Date, timezone: string): string {
-  return new Intl.DateTimeFormat('en-US', {
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-    timeZone: timezone,
-  }).format(date);
-}
-
-function timeLabelFor(date: Date, timezone: string): string {
-  return new Intl.DateTimeFormat('en-US', {
-    hour: 'numeric',
-    minute: '2-digit',
-    timeZone: timezone,
-  }).format(date);
-}
-
-function fullName(first: string, last: string): string {
-  return [first, last].filter(Boolean).join(' ').trim();
 }
 
 const ENV_URL = (process.env.APP_BASE_URL ?? '').replace(/\/+$/, '');
@@ -181,31 +143,8 @@ function manageUrlFor(slug: string, orderId: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Data loading (tenant-scoped)
+// Email content builders
 // ---------------------------------------------------------------------------
-
-/**
- * Loads an order with everything needed to render booking emails, scoped to the
- * operator via RLS. Returns null if not found (e.g. wrong tenant / deleted).
- */
-async function loadOrderBundle(db: TenantClient, orderId: string) {
-  return db.order.findUnique({
-    where: { id: orderId },
-    include: {
-      operator: true,
-      customer: true,
-      items: {
-        include: {
-          activity: { include: { location: true } },
-          rate: true,
-          timeslot: true,
-        },
-      },
-    },
-  });
-}
-
-type OrderBundle = NonNullable<Awaited<ReturnType<typeof loadOrderBundle>>>;
 
 /** Build the price-breakdown lines for a confirmation email from order totals. */
 function priceLines(order: OrderBundle): Array<{ label: string; amountCents: number }> {
@@ -218,30 +157,6 @@ function priceLines(order: OrderBundle): Array<{ label: string; amountCents: num
     lines.push({ label: 'Processing fee', amountCents: order.processing_fee_cents });
   if (order.tip_cents > 0) lines.push({ label: 'Tip', amountCents: order.tip_cents });
   return lines;
-}
-
-/** Derive activity/date/time/party labels from the order's first/primary item. */
-function bookingFacts(order: OrderBundle) {
-  const operator = order.operator;
-  const timezone =
-    order.items[0]?.activity.location?.timezone ?? operator.timezone ?? 'America/Los_Angeles';
-  const primary = order.items[0];
-  const slotDate = primary?.timeslot.datetime ?? null;
-  const partySize = order.items.reduce((sum, item) => sum + item.quantity, 0) || 1;
-  const activityName =
-    order.items.length > 1
-      ? `${primary?.activity.name_external ?? 'Booking'} +${order.items.length - 1} more`
-      : primary?.activity.name_external ?? 'Your booking';
-
-  return {
-    timezone,
-    activityName,
-    partySize,
-    locationLabel: primary?.activity.location?.name ?? undefined,
-    dateLabel: slotDate ? dateLabelFor(slotDate, timezone) : 'See your booking details',
-    timeLabel: slotDate ? timeLabelFor(slotDate, timezone) : '',
-    slotDate,
-  };
 }
 
 const channelLabelMap: Record<string, string> = {
@@ -292,10 +207,28 @@ export async function sendBookingConfirmation(input: {
 
     const [html, text] = await Promise.all([renderEmail(element), renderEmailText(element)]);
 
+    // Editable message templates (Singenuity §4): let the operator override the
+    // subject line. The body still renders from the branded React template; a blank
+    // or missing override cleanly falls back to the default subject.
+    const override = await loadTemplateOverride(db, 'BOOKING_CONFIRMATION');
+    const { subject } = resolveTemplate({
+      defaultSubject: `Your booking is confirmed — ${order.order_number} · ${formatUSD(order.total_cents)}`,
+      override,
+      facts: {
+        order_number: order.order_number,
+        total: formatUSD(order.total_cents),
+        activity: facts.activityName,
+        date: facts.dateLabel,
+        time: facts.timeLabel,
+        brand_name: brand.brandName,
+        customer_name: order.customer.first_name || fullName(order.customer.first_name, order.customer.last_name),
+      },
+    });
+
     return dispatch({
       brandName: brand.brandName,
       to: order.customer.email,
-      subject: `Your booking is confirmed — ${order.order_number} · ${formatUSD(order.total_cents)}`,
+      subject,
       html,
       text,
     });
@@ -497,6 +430,50 @@ export async function sendRefundReceipt(input: {
   }
 }
 
+/**
+ * Notify a guide (staff member) that they've been scheduled to run a trip. Uses a
+ * plain HTML/text body through the same Resend choke point (no dedicated template,
+ * keeping guide scheduling migration-light). Never throws; no-ops without a key.
+ */
+export async function sendGuideAssignmentEmail(input: {
+  operatorId: string;
+  brandName: string;
+  guideEmail: string;
+  guideName?: string | null;
+  activityName: string;
+  dateLabel: string;
+  timeLabel: string;
+  locationLabel?: string;
+  roleLabel?: string | null;
+}): Promise<NotificationResult> {
+  try {
+    if (!input.guideEmail || !input.guideEmail.includes('@')) {
+      return skipped('guide has no email');
+    }
+    const greeting = input.guideName ? `Hi ${input.guideName},` : 'Hi,';
+    const where = input.locationLabel ? ` at ${input.locationLabel}` : '';
+    const roleLine = input.roleLabel ? ` Your role: ${input.roleLabel}.` : '';
+    const line = `You're scheduled to guide "${input.activityName}"${where} on ${input.dateLabel} at ${input.timeLabel}.${roleLine}`;
+
+    const text = `${greeting}\n\n${line}\n\n— ${input.brandName}`;
+    const html =
+      `<div style="font-family:system-ui,Segoe UI,Arial,sans-serif;font-size:15px;line-height:1.5;color:#0f172a">` +
+      `<p>${greeting}</p><p>${line.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</p>` +
+      `<p style="color:#64748b">— ${input.brandName}</p></div>`;
+
+    return dispatch({
+      brandName: input.brandName,
+      to: input.guideEmail,
+      subject: `You're guiding ${input.activityName} — ${input.dateLabel}`,
+      html,
+      text,
+    });
+  } catch (err) {
+    console.error('[notifications] sendGuideAssignmentEmail failed:', err);
+    return skipped('unexpected failure');
+  }
+}
+
 // ===========================================================================
 // Automated pre-arrival reminders (the scheduler-facing engine)
 // ===========================================================================
@@ -512,10 +489,12 @@ export interface ReminderRunResult {
   operatorId: string;
   /** Orders whose trip falls in the window and hadn't been reminded. */
   due: number;
-  /** Of those, how many actually dispatched (a real email went out). */
+  /** Of those, how many dispatched at least one channel (email and/or SMS). */
   delivered: number;
-  /** Processed but not delivered (e.g. no Resend key, or no email on file). */
+  /** Processed but nothing delivered (e.g. no Resend/Twilio config, or no contact info). */
   noop: number;
+  /** Of the delivered, how many sent a real SMS (Twilio configured + phone on file). */
+  smsDelivered: number;
 }
 
 /**
@@ -561,37 +540,54 @@ export async function runDueReminders(
 
   let delivered = 0;
   let noop = 0;
+  let smsDelivered = 0;
   for (const orderId of dueIds) {
-    let result: NotificationResult;
+    // Send both channels on the same pass. Each is gated independently by its own
+    // provider config (Resend for email, Twilio for SMS) and never throws.
+    let email: NotificationResult;
     try {
-      result = await sendReminder({ operatorId, orderId });
+      email = await sendReminder({ operatorId, orderId });
     } catch (err) {
-      console.error('[notifications] runDueReminders send failed:', err);
-      result = skipped('unexpected failure');
+      console.error('[notifications] runDueReminders email failed:', err);
+      email = skipped('unexpected failure');
     }
-    if (result.sent) delivered += 1;
-    else noop += 1;
 
-    // Stamp the audit event so this order isn't reconsidered next run.
+    let sms: NotificationResult;
+    try {
+      sms = await sendReminderSms({ operatorId, orderId });
+    } catch (err) {
+      console.error('[notifications] runDueReminders sms failed:', err);
+      sms = skipped('unexpected failure');
+    }
+
+    const anySent = email.sent || sms.sent;
+    if (anySent) delivered += 1;
+    else noop += 1;
+    if (sms.sent) smsDelivered += 1;
+
+    const channels = [email.sent ? 'email' : null, sms.sent ? 'SMS' : null].filter(Boolean);
+
+    // Stamp the audit event once (covers both channels) so this order isn't
+    // reconsidered next run — keeps the sweep idempotent even in dev with no keys.
     await db.orderEvent.create({
       data: {
         operator_id: operatorId,
         order_id: orderId,
         type: REMINDER_EVENT_TYPE,
-        description: result.sent
-          ? 'Pre-arrival reminder sent'
-          : `Pre-arrival reminder processed (not delivered: ${result.skippedReason ?? 'no provider'})`,
+        description: anySent
+          ? `Pre-arrival reminder sent (${channels.join(' + ')})`
+          : `Pre-arrival reminder processed (not delivered: email ${email.skippedReason ?? 'n/a'}; sms ${sms.skippedReason ?? 'n/a'})`,
         actor: opts.actor ?? 'system',
         metadata: {
-          delivered: result.sent,
-          providerId: result.id ?? null,
-          reason: result.skippedReason ?? null,
+          delivered: anySent,
+          email: { delivered: email.sent, providerId: email.id ?? null, reason: email.skippedReason ?? null },
+          sms: { delivered: sms.sent, providerId: sms.id ?? null, reason: sms.skippedReason ?? null },
         } as Prisma.InputJsonValue,
       },
     });
   }
 
-  return { operatorId, due: dueIds.length, delivered, noop };
+  return { operatorId, due: dueIds.length, delivered, noop, smsDelivered };
 }
 
 /**
@@ -602,7 +598,7 @@ export async function runDueReminders(
 export async function runAllDueReminders(opts: {
   withinHours: number;
   now?: Date;
-}): Promise<{ operators: number; due: number; delivered: number; noop: number; perOperator: ReminderRunResult[] }> {
+}): Promise<{ operators: number; due: number; delivered: number; noop: number; smsDelivered: number; perOperator: ReminderRunResult[] }> {
   const operators = await adminPrisma.operator.findMany({
     where: { is_active: true },
     select: { id: true },
@@ -618,6 +614,7 @@ export async function runAllDueReminders(opts: {
     due: perOperator.reduce((n, r) => n + r.due, 0),
     delivered: perOperator.reduce((n, r) => n + r.delivered, 0),
     noop: perOperator.reduce((n, r) => n + r.noop, 0),
+    smsDelivered: perOperator.reduce((n, r) => n + r.smsDelivered, 0),
     perOperator,
   };
 }

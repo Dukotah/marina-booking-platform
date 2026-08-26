@@ -1,7 +1,9 @@
 import { AdminShell, PageHeader } from '../../components/shell';
 import { ManifestViews } from '../../components/manifest/ManifestViews';
+import { ManifestUtilization } from '../../components/manifest/ManifestUtilization';
+import { GuideScheduler } from '../../components/manifest/GuideScheduler';
 import { DateNav } from '../../components/manifest/DateNav';
-import { loadManifest } from './data';
+import { loadManifest, loadGuideRoster } from './data';
 import { getOperatorContext, getTenantDb } from '../../lib/session';
 import { normalizeIsoDate } from '../../components/manifest/tz';
 import { formatShortDate } from '../../lib/format';
@@ -29,8 +31,12 @@ export default async function ManifestPage({ searchParams }: ManifestPageProps) 
   const timeZone = operator?.timezone ?? 'America/Los_Angeles';
   const isoDate = normalizeIsoDate(searchParams.date, timeZone);
 
-  const { rows, totalBookings, checkedIn } = await loadManifest(isoDate);
+  const { rows, totalBookings, checkedIn, capacityTotal, capacityBooked } =
+    await loadManifest(isoDate);
+  const roster = await loadGuideRoster();
   const label = formatShortDate(`${isoDate}T12:00:00`);
+  const utilizationPct =
+    capacityTotal > 0 ? Math.round((capacityBooked / capacityTotal) * 100) : 0;
 
   return (
     <AdminShell>
@@ -48,7 +54,16 @@ export default async function ManifestPage({ searchParams }: ManifestPageProps) 
           value={`${checkedIn}/${totalBookings}`}
           tone={checkedIn > 0 ? 'emerald' : 'slate'}
         />
+        <SummaryChip
+          label="Utilization"
+          value={`${capacityBooked}/${capacityTotal} · ${utilizationPct}%`}
+          tone={utilizationPct >= 80 ? 'emerald' : 'slate'}
+        />
       </div>
+
+      <ManifestUtilization rows={rows} />
+
+      <GuideScheduler rows={rows} roster={roster} />
 
       <ManifestViews rows={rows} />
 

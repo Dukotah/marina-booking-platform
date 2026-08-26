@@ -61,6 +61,206 @@ export interface PricingResult {
   totalCents: number;
 }
 
+/**
+ * Resolve the effective deposit percentage for a booking: the activity's own
+ * `deposit_percent` when set, otherwise the operator default. A null/undefined/0
+ * value at either level means "no deposit" (pay in full). Deterministic and pure.
+ *
+ * @returns an integer percentage clamped to 1..99, or 0 when no deposit applies.
+ */
+export const resolveDepositPercent = (
+  activityPercent: number | null | undefined,
+  operatorDefaultPercent: number | null | undefined,
+): number => {
+  const raw =
+    activityPercent != null && activityPercent > 0 ? activityPercent : operatorDefaultPercent;
+  if (raw == null || raw <= 0) return 0;
+  return Math.min(99, Math.max(1, Math.trunc(raw)));
+};
+
+/**
+ * The deposit due now for a given order total and deposit percentage, in integer
+ * cents. A 0 (or out-of-range) percentage means the full total is due now, so the
+ * caller can treat "no deposit" and "deposit" uniformly. The deposit is always at
+ * least 1 cent (when a percent applies) and never exceeds the total.
+ */
+export const computeDepositCents = (totalCents: number, depositPercent: number): number => {
+  const total = Math.max(0, roundCents(totalCents));
+  if (!Number.isFinite(depositPercent) || depositPercent <= 0 || depositPercent >= 100) {
+    // No deposit (or a nonsensical percent) => the whole total is due now.
+    return total;
+  }
+  if (total === 0) return 0;
+  const deposit = roundCents((total * depositPercent) / 100);
+  // Guard the edges: a positive total with a positive percent always owes >= 1c,
+  // and the deposit can never exceed the total.
+  return Math.min(total, Math.max(1, deposit));
+};
+
+// ===========================================================================
+// Member pricing (Upmarket §1 #6-A)
+// ===========================================================================
+
+/**
+ * A member-pricing spec, mirroring the Membership discount knob. PERCENT is a
+ * percent OFF the base price (15 => 15% off); FLAT is integer cents OFF the base.
+ * A membership the customer does NOT hold is expressed as `null` by the caller.
+ */
+export interface MemberDiscount {
+  discountType: 'PERCENT' | 'FLAT';
+  /** PERCENT: a percentage off (15 = 15% off). FLAT: integer cents off. */
+  discountValue: number;
+}
+
+/**
+ * Apply a member discount to a single unit's base price, in integer cents.
+ * Deterministic and pure; the result is clamped to [0, base] so member pricing
+ * can never produce a negative price or (via a bad FLAT) exceed the base. A
+ * null/undefined membership is a clean no-op (returns the base unchanged).
+ */
+export const applyMemberPrice = (
+  basePriceCents: number,
+  member: MemberDiscount | null | undefined,
+): number => {
+  const base = Math.max(0, roundCents(basePriceCents));
+  if (!member || !Number.isFinite(member.discountValue) || member.discountValue <= 0) {
+    return base;
+  }
+  const off =
+    member.discountType === 'PERCENT'
+      ? roundCents((base * member.discountValue) / 100)
+      : roundCents(member.discountValue);
+  return Math.min(base, Math.max(0, base - off));
+};
+
+// ===========================================================================
+// Dynamic pricing rules (Upmarket §1 #6-C)
+// ===========================================================================
+
+/** Which weekdays a WEEKEND rule fires on when none are configured: Sat + Sun. */
+const DEFAULT_WEEKEND: readonly number[] = [6, 7]; // ISO 6=Sat, 7=Sun
+
+/**
+ * A single composable pricing rule, decoupled from Prisma so it is unit-testable.
+ * Mirrors the PricingRule model. Only the fields relevant to a given `kind` are
+ * consulted, so callers can pass the whole row.
+ */
+export interface PricingRuleSpec {
+  kind: 'SEASONAL' | 'WEEKEND' | 'DEMAND' | 'GUIDE_MARKUP';
+  adjustmentType: 'PERCENT' | 'FLAT';
+  /** PERCENT: percentage delta (+15 / -10). FLAT: integer cents delta (can be < 0). */
+  adjustmentValue: number;
+  /** Lower runs first. Ties are the caller's responsibility (e.g. by created_at). */
+  priority?: number;
+  isActive?: boolean;
+  // SEASONAL window (inclusive). Compared by calendar date, not time-of-day.
+  startsOn?: Date | null;
+  endsOn?: Date | null;
+  // WEEKEND: ISO weekdays (1=Mon..7=Sun). Empty => Sat+Sun.
+  weekdays?: number[];
+  // DEMAND: fire when bookedRatio >= threshold (0..1).
+  demandThreshold?: number | null;
+}
+
+/** The evaluation context a rule set is resolved against for one slot/date. */
+export interface PricingRuleContext {
+  /** The slot's start date (used for SEASONAL window + WEEKEND weekday checks). */
+  date: Date;
+  /**
+   * The slot's current booked ratio in 0..1 (booked / total), for DEMAND rules.
+   * Omit/undefined => DEMAND rules never fire (no demand signal available).
+   */
+  bookedRatio?: number;
+}
+
+/** ISO weekday (1=Mon .. 7=Sun) for a date, from its local day-of-week. */
+const isoWeekday = (d: Date): number => {
+  const dow = d.getDay(); // 0=Sun..6=Sat
+  return dow === 0 ? 7 : dow;
+};
+
+/** Whole calendar day (ms) for date-only comparisons, ignoring time-of-day. */
+const dayFloor = (d: Date): number =>
+  new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+
+/** Is this rule active for the given context? Pure and side-effect-free. */
+export const isRuleActive = (rule: PricingRuleSpec, ctx: PricingRuleContext): boolean => {
+  if (rule.isActive === false) return false;
+  switch (rule.kind) {
+    case 'SEASONAL': {
+      const day = dayFloor(ctx.date);
+      if (rule.startsOn && day < dayFloor(rule.startsOn)) return false;
+      if (rule.endsOn && day > dayFloor(rule.endsOn)) return false;
+      return true;
+    }
+    case 'WEEKEND': {
+      const days = rule.weekdays && rule.weekdays.length > 0 ? rule.weekdays : DEFAULT_WEEKEND;
+      return days.includes(isoWeekday(ctx.date));
+    }
+    case 'DEMAND': {
+      const threshold = rule.demandThreshold;
+      if (threshold == null || ctx.bookedRatio == null) return false;
+      return ctx.bookedRatio >= threshold;
+    }
+    case 'GUIDE_MARKUP':
+      // Always-on surcharge when enabled; scoping (which rates) is the caller's job.
+      return true;
+    default:
+      return false;
+  }
+};
+
+/** Apply one adjustment to a running price (integer cents), clamped at >= 0. */
+const applyAdjustment = (priceCents: number, rule: PricingRuleSpec): number => {
+  const delta =
+    rule.adjustmentType === 'PERCENT'
+      ? roundCents((priceCents * rule.adjustmentValue) / 100)
+      : roundCents(rule.adjustmentValue);
+  return Math.max(0, priceCents + delta);
+};
+
+export interface EffectivePriceResult {
+  /** The final per-unit price after every applicable rule, integer cents. */
+  priceCents: number;
+  /** The rules that fired, in application order, with the running price after each. */
+  applied: Array<{ kind: PricingRuleSpec['kind']; deltaCents: number; priceCents: number }>;
+}
+
+/**
+ * Resolve a rate's EFFECTIVE per-unit price for one slot/date by composing every
+ * active dynamic pricing rule over the base price, in `priority` order (lower
+ * first; stable for equal priorities). Each rule adjusts the RUNNING price, so a
+ * +10% weekend rule and a +$5 demand rule stack predictably. Pure and
+ * deterministic — no DB, no clock beyond the passed `ctx.date`.
+ *
+ * Composes cleanly with `calculatePricing`: feed the returned `priceCents` in as
+ * the line item's `unitPriceCents`.
+ */
+export const resolveEffectivePrice = (
+  basePriceCents: number,
+  rules: readonly PricingRuleSpec[],
+  ctx: PricingRuleContext,
+): EffectivePriceResult => {
+  let price = Math.max(0, roundCents(basePriceCents));
+  const applied: EffectivePriceResult['applied'] = [];
+
+  const ordered = [...rules]
+    .map((r, i) => ({ r, i }))
+    .sort((a, b) => (a.r.priority ?? 0) - (b.r.priority ?? 0) || a.i - b.i)
+    .map((x) => x.r);
+
+  for (const rule of ordered) {
+    if (!isRuleActive(rule, ctx)) continue;
+    const next = applyAdjustment(price, rule);
+    if (next !== price) {
+      applied.push({ kind: rule.kind, deltaCents: next - price, priceCents: next });
+      price = next;
+    }
+  }
+
+  return { priceCents: price, applied };
+};
+
 const isTaxFee = (f: PricingFee): boolean =>
   f.type === 'PERCENT' && /tax/i.test(f.name);
 

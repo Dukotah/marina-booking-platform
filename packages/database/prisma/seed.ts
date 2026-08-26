@@ -8,6 +8,7 @@
  * Usage: pnpm --filter @marina/database seed   (needs DATABASE_URL)
  */
 import { PrismaClient } from '@prisma/client';
+import { CA_BOAT_WAIVER_CLAUSES } from './waiver-clauses.ts';
 
 const prisma = new PrismaClient();
 const OP_ID = 'lsra';
@@ -120,17 +121,36 @@ async function main() {
         ],
       });
 
-      // Default waiver
-      await tx.waiver.create({
+      // Default waiver — enriched, clause-level California boat-rental waiver.
+      const waiver = await tx.waiver.create({
         data: {
           operator_id: operator.id,
           name: 'Liability Waiver & Boat Operation Agreement',
           requires_minor_signature: true,
+          intro_html:
+            '<p>This Liability Waiver, Release, and Rental Agreement (the "Agreement") ' +
+            'is made between you (the "Renter") and the boat livery operator (the ' +
+            '"Operator"). Please read every section carefully and initial each one. ' +
+            'The Operator must be 21 or older and present a valid government-issued ' +
+            'photo ID. This packet supplements — and does not replace — the ' +
+            'California Boater Card and applicable California and U.S. Coast Guard ' +
+            'boating laws.</p>',
           template_html:
             '<h1>Liability Waiver</h1><p>Operator must be 21+. Valid government photo ID required. ' +
             'I acknowledge the risks of watercraft operation and agree to the rental terms, ' +
             'cancellation policy, and fuel/damage responsibilities.</p>',
         },
+      });
+      await tx.waiverClause.createMany({
+        data: CA_BOAT_WAIVER_CLAUSES.map((cl) => ({
+          operator_id: operator.id,
+          waiver_id: waiver.id,
+          sort_order: cl.sort_order,
+          title: cl.title,
+          body_html: cl.body_html,
+          requires_initials: cl.requires_initials,
+          is_required: cl.is_required,
+        })),
       });
 
       // Checkout config (tip presets) stored as an integration record (config pattern)

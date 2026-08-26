@@ -29,6 +29,11 @@ import {
   StripeNotConfiguredError,
   StripePaymentError,
 } from '../services/stripe.js';
+import {
+  evaluateApproval,
+  loadApprovalPolicy,
+  recordApprovalEvent,
+} from '../services/approvals.js';
 
 export const payments = new Hono<Env>();
 
@@ -219,6 +224,28 @@ payments.post('/:id/refund', requireStaff, async (c) => {
     );
   }
 
+  // Manager-approval gate (Singenuity §2): if the operator requires sign-off for
+  // refunds (always, or above a threshold) and this caller lacks order:approve,
+  // block with a clear 403 so a manager can complete it. A caller WITH order:approve
+  // self-approves and we leave an APPROVAL audit event on the order below.
+  const policy = await loadApprovalPolicy(c.var.db, c.var.operatorId);
+  const approval = evaluateApproval({
+    action: 'refund',
+    amountCents,
+    policy,
+    auth: c.var.auth,
+  });
+  if (approval.blocked) {
+    return c.json(
+      {
+        error: approval.reason ?? 'This refund requires manager approval',
+        code: 'APPROVAL_REQUIRED',
+        requiresPermission: 'order:approve',
+      },
+      403,
+    );
+  }
+
   // Issue the refund with Square OUTSIDE the DB transaction.
   let result;
   try {
@@ -251,6 +278,19 @@ payments.post('/:id/refund', requireStaff, async (c) => {
         data: { amount_paid_cents: newAmountPaid, balance_due_cents: newBalanceDue },
       });
       orderSummary = { amountPaidCents: newAmountPaid, balanceDueCents: newBalanceDue };
+    }
+
+    // If this refund crossed the approval gate, record who signed off (self-approval
+    // by a manager) alongside the refund, in the same transaction.
+    if (approval.required) {
+      await recordApprovalEvent(tx, {
+        operatorId: c.var.operatorId,
+        orderId: payment.order_id,
+        action: 'refund',
+        amountCents,
+        actor: c.var.auth.userId,
+        reason: approval.reason,
+      });
     }
 
     await tx.orderEvent.create({

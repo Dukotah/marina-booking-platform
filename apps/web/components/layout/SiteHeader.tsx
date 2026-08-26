@@ -31,7 +31,7 @@ interface NavItem {
 
 const NAV: NavItem[] = [
   { label: 'Book', href: '/' },
-  { label: 'My Booking', href: '/lookup' },
+  { label: 'My Booking', href: '/account' },
 ];
 
 function BrandMark({ brand }: { brand: Brand }) {

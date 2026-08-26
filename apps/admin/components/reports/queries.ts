@@ -1,8 +1,21 @@
 import 'server-only';
+import {
+  computeDelta,
+  previousPeriod,
+  resolveDateBasis,
+  rollUpByLocation,
+  summarizePayments,
+  type DateBasis,
+  type Delta,
+  type LocationMetricRow,
+  type LocationRollUp,
+  type PaymentsSummary,
+} from '@marina/core';
 import { getOperatorContext, getTenantDb } from '../../lib/session';
 import { type ReportKind, REPORT_KINDS, resolveReportKind } from './kinds';
 
 export { type ReportKind, REPORT_KINDS, resolveReportKind };
+export { resolveDateBasis, type DateBasis };
 
 /**
  * Reports data layer.
@@ -500,6 +513,392 @@ async function buildOccupancyReport(
 }
 
 // ---------------------------------------------------------------------------
+// Sales report (gross / taxes & fees / tips / merch / packages / payments)
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve, for each live order in the operator, the date it attributes to under
+ * the given basis:
+ *   - `order`: Order.created_at (transaction date).
+ *   - `appointment`: the EARLIEST timeslot datetime among the order's items (the
+ *     day the guest is actually scheduled). Orders with no dated items fall back
+ *     to created_at so nothing silently vanishes.
+ *
+ * Returns a map orderId -> attributed local ISO date. Only orders whose
+ * attributed date lands inside `[start, endExclusive)` are included, so callers
+ * can filter a superset of orders down to the in-window set for either basis.
+ */
+async function resolveOrderDates(
+  db: Db,
+  operatorId: string,
+  start: Date,
+  endExclusive: Date,
+  basis: DateBasis,
+): Promise<Map<string, string>> {
+  if (basis === 'order') {
+    const orders = await db.order.findMany({
+      where: {
+        operator_id: operatorId,
+        status: { in: [...REVENUE_STATUSES] },
+        created_at: { gte: start, lt: endExclusive },
+      },
+      select: { id: true, created_at: true },
+    });
+    return new Map(orders.map((o) => [o.id, isoDate(startOfDay(o.created_at))]));
+  }
+
+  // appointment basis: attribute by earliest item timeslot datetime.
+  const items = await db.orderItem.findMany({
+    where: {
+      operator_id: operatorId,
+      order: { status: { in: [...REVENUE_STATUSES] } },
+      timeslot: { datetime: { gte: start, lt: endExclusive } },
+    },
+    select: { order_id: true, timeslot: { select: { datetime: true } } },
+  });
+
+  const earliest = new Map<string, Date>();
+  for (const it of items) {
+    const dt = it.timeslot.datetime;
+    const cur = earliest.get(it.order_id);
+    if (!cur || dt.getTime() < cur.getTime()) earliest.set(it.order_id, dt);
+  }
+  return new Map(Array.from(earliest.entries()).map(([id, dt]) => [id, isoDate(startOfDay(dt))]));
+}
+
+export interface SalesTotals {
+  grossSalesCents: number;
+  subtotalCents: number;
+  discountCents: number;
+  taxCents: number;
+  processingFeeCents: number;
+  /** Tax + processing fees combined ("Taxes & Fees" headline). */
+  taxesAndFeesCents: number;
+  tipCents: number;
+  /** Net taxable goods value (subtotal − discount). */
+  netSalesCents: number;
+  orders: number;
+}
+
+export interface SalesReport {
+  range: DateRange;
+  basis: DateBasis;
+  totals: SalesTotals;
+  /** Payments rolled up by tender method (card / cash / gift card / comp). */
+  payments: PaymentsSummary;
+  /**
+   * Merchandise + packages breakouts. The current data model records merchandise
+   * only as inventory decrements and order subtotal (no per-order merch line),
+   * and there is no packages feature at all — so these are reported as
+   * unavailable rather than shown as a misleading $0. `null` = feature/data not
+   * tracked (render a graceful "not tracked" note); a number = tracked value.
+   */
+  merchandiseCents: number | null;
+  packagesCents: number | null;
+  /** Present only in comparison mode: same totals for the prior window + deltas. */
+  comparison?: {
+    range: DateRange;
+    totals: SalesTotals;
+    deltas: {
+      grossSalesCents: Delta;
+      taxesAndFeesCents: Delta;
+      tipCents: Delta;
+      netSalesCents: Delta;
+      orders: Delta;
+    };
+  };
+}
+
+async function computeSalesTotals(
+  db: Db,
+  operatorId: string,
+  start: Date,
+  endExclusive: Date,
+  basis: DateBasis,
+): Promise<{ totals: SalesTotals; payments: PaymentsSummary }> {
+  const orderDates = await resolveOrderDates(db, operatorId, start, endExclusive, basis);
+  const orderIds = Array.from(orderDates.keys());
+
+  const totals: SalesTotals = {
+    grossSalesCents: 0,
+    subtotalCents: 0,
+    discountCents: 0,
+    taxCents: 0,
+    processingFeeCents: 0,
+    taxesAndFeesCents: 0,
+    tipCents: 0,
+    netSalesCents: 0,
+    orders: 0,
+  };
+
+  if (orderIds.length === 0) {
+    return { totals, payments: summarizePayments([]) };
+  }
+
+  const [orders, payments] = await Promise.all([
+    db.order.findMany({
+      where: { operator_id: operatorId, id: { in: orderIds } },
+      select: {
+        subtotal_cents: true,
+        discount_cents: true,
+        tax_cents: true,
+        processing_fee_cents: true,
+        tip_cents: true,
+        total_cents: true,
+      },
+    }),
+    db.payment.findMany({
+      where: { operator_id: operatorId, order_id: { in: orderIds }, status: { not: 'FAILED' } },
+      select: { method: true, amount_cents: true, refunded_cents: true },
+    }),
+  ]);
+
+  for (const o of orders) {
+    totals.grossSalesCents += o.total_cents;
+    totals.subtotalCents += o.subtotal_cents;
+    totals.discountCents += o.discount_cents;
+    totals.taxCents += o.tax_cents;
+    totals.processingFeeCents += o.processing_fee_cents;
+    totals.tipCents += o.tip_cents;
+    totals.orders += 1;
+  }
+  totals.taxesAndFeesCents = totals.taxCents + totals.processingFeeCents;
+  totals.netSalesCents = totals.subtotalCents - totals.discountCents;
+
+  return { totals, payments: summarizePayments(payments) };
+}
+
+async function buildSalesReport(
+  db: Db,
+  operatorId: string,
+  start: Date,
+  endExclusive: Date,
+  range: DateRange,
+  basis: DateBasis,
+  compare: boolean,
+): Promise<SalesReport> {
+  const current = await computeSalesTotals(db, operatorId, start, endExclusive, basis);
+
+  const report: SalesReport = {
+    range,
+    basis,
+    totals: current.totals,
+    payments: current.payments,
+    // No per-order merchandise line and no packages feature in the data model;
+    // report as untracked rather than a misleading $0 (skip gracefully).
+    merchandiseCents: null,
+    packagesCents: null,
+  };
+
+  if (compare) {
+    const prev = previousPeriod(start, endExclusive);
+    const prevTotals = await computeSalesTotals(db, operatorId, prev.start, prev.endExclusive, basis);
+    report.comparison = {
+      range: { from: isoDate(prev.start), to: isoDate(addDays(prev.endExclusive, -1)) },
+      totals: prevTotals.totals,
+      deltas: {
+        grossSalesCents: computeDelta(current.totals.grossSalesCents, prevTotals.totals.grossSalesCents),
+        taxesAndFeesCents: computeDelta(
+          current.totals.taxesAndFeesCents,
+          prevTotals.totals.taxesAndFeesCents,
+        ),
+        tipCents: computeDelta(current.totals.tipCents, prevTotals.totals.tipCents),
+        netSalesCents: computeDelta(current.totals.netSalesCents, prevTotals.totals.netSalesCents),
+        orders: computeDelta(current.totals.orders, prevTotals.totals.orders),
+      },
+    };
+  }
+
+  return report;
+}
+
+// ---------------------------------------------------------------------------
+// Gift-card report (outstanding liability + issued / redeemed)
+// ---------------------------------------------------------------------------
+
+export interface GiftCardReport {
+  range: DateRange;
+  /** Outstanding liability = sum(balance) of ACTIVE cards, at report time. */
+  liabilityCents: number;
+  /** Cards issued in the window: count + face value (initial balance). */
+  issued: { count: number; amountCents: number };
+  /**
+   * Value redeemed in the window: sum of GIFT_CARD-method payments (amount less
+   * refunds). This is money spent down off cards, matching the liability model.
+   */
+  redeemed: { count: number; amountCents: number };
+  /** Snapshot of the current card book by status. */
+  byStatus: Array<{ status: string; count: number; balanceCents: number }>;
+}
+
+async function buildGiftCardReport(
+  db: Db,
+  operatorId: string,
+  start: Date,
+  endExclusive: Date,
+  range: DateRange,
+): Promise<GiftCardReport> {
+  const [liabilityAgg, issued, redemptionPayments, grouped] = await Promise.all([
+    db.giftCard.aggregate({
+      where: { operator_id: operatorId, status: 'ACTIVE' },
+      _sum: { balance_cents: true },
+    }),
+    db.giftCard.findMany({
+      where: { operator_id: operatorId, created_at: { gte: start, lt: endExclusive } },
+      select: { initial_cents: true },
+    }),
+    db.payment.findMany({
+      where: {
+        operator_id: operatorId,
+        method: 'GIFT_CARD',
+        status: { not: 'FAILED' },
+        processed_at: { gte: start, lt: endExclusive },
+      },
+      select: { amount_cents: true, refunded_cents: true },
+    }),
+    db.giftCard.groupBy({
+      by: ['status'],
+      where: { operator_id: operatorId },
+      _count: { _all: true },
+      _sum: { balance_cents: true },
+    }),
+  ]);
+
+  const issuedAmount = issued.reduce((sum, g) => sum + g.initial_cents, 0);
+  const redeemedAmount = redemptionPayments.reduce(
+    (sum, p) => sum + (p.amount_cents - p.refunded_cents),
+    0,
+  );
+
+  return {
+    range,
+    liabilityCents: liabilityAgg._sum.balance_cents ?? 0,
+    issued: { count: issued.length, amountCents: issuedAmount },
+    redeemed: { count: redemptionPayments.length, amountCents: redeemedAmount },
+    byStatus: grouped
+      .map((g) => ({
+        status: g.status,
+        count: g._count._all,
+        balanceCents: g._sum.balance_cents ?? 0,
+      }))
+      .sort((a, b) => b.balanceCents - a.balanceCents),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Multi-location roll-up (Upmarket §1 #6-B) — read-only cross-location report
+// ---------------------------------------------------------------------------
+
+export interface LocationRollUpReport extends LocationRollUp {
+  range: DateRange;
+}
+
+/**
+ * Combined revenue + occupancy by location across the range. Revenue is attributed
+ * to a location via each order item's activity → location (order-created_at basis,
+ * matching the revenue report). Occupancy is attributed via each timeslot's
+ * activity → location. Activities with no location roll up under an "Unassigned"
+ * bucket. Every read is tenant-scoped (RLS) with an explicit operator_id clause.
+ * The heavy lifting (occupancy / share / totals) is the pure @marina/core
+ * `rollUpByLocation`, so this stays a thin data-loader.
+ */
+async function buildLocationRollUp(
+  db: Db,
+  operatorId: string,
+  start: Date,
+  endExclusive: Date,
+  range: DateRange,
+): Promise<LocationRollUpReport> {
+  const [items, slots] = await Promise.all([
+    db.orderItem.findMany({
+      where: {
+        operator_id: operatorId,
+        order: {
+          status: { in: [...REVENUE_STATUSES] },
+          created_at: { gte: start, lt: endExclusive },
+        },
+      },
+      select: {
+        quantity: true,
+        unit_price_cents: true,
+        order_id: true,
+        activity: { select: { location: { select: { id: true, name: true } } } },
+      },
+    }),
+    db.timeslot.findMany({
+      where: {
+        operator_id: operatorId,
+        status: { not: 'CANCELLED' },
+        datetime: { gte: start, lt: endExclusive },
+      },
+      select: {
+        capacity_total: true,
+        capacity_booked: true,
+        activity: { select: { location: { select: { id: true, name: true } } } },
+      },
+    }),
+  ]);
+
+  // Aggregate raw metrics keyed by location id (null => Unassigned).
+  const byLoc = new Map<string, LocationMetricRow>();
+  const ensure = (loc: { id: string; name: string } | null): LocationMetricRow => {
+    const key = loc?.id ?? '__none__';
+    let row = byLoc.get(key);
+    if (!row) {
+      row = {
+        locationId: loc?.id ?? null,
+        locationName: loc?.name ?? 'Unassigned',
+        grossCents: 0,
+        orders: 0,
+        capacityBooked: 0,
+        capacityTotal: 0,
+      };
+      byLoc.set(key, row);
+    }
+    return row;
+  };
+
+  // Revenue (line value) + distinct order counts per location.
+  const ordersByLoc = new Map<string, Set<string>>();
+  for (const it of items) {
+    const row = ensure(it.activity.location);
+    row.grossCents += it.unit_price_cents * it.quantity;
+    const key = it.activity.location?.id ?? '__none__';
+    const set = ordersByLoc.get(key) ?? new Set<string>();
+    set.add(it.order_id);
+    ordersByLoc.set(key, set);
+  }
+  for (const [key, set] of ordersByLoc) {
+    const row = byLoc.get(key);
+    if (row) row.orders = set.size;
+  }
+
+  // Occupancy per location.
+  for (const s of slots) {
+    const row = ensure(s.activity.location);
+    row.capacityTotal += s.capacity_total;
+    row.capacityBooked += s.capacity_booked;
+  }
+
+  const rollup = rollUpByLocation(Array.from(byLoc.values()));
+  return { ...rollup, range };
+}
+
+/**
+ * Public entry point for the multi-location roll-up page. Resolves the operator
+ * from the session and runs every read through the RLS client.
+ */
+export async function getLocationRollUp(
+  rawFrom?: string,
+  rawTo?: string,
+): Promise<LocationRollUpReport> {
+  const { operatorId } = await getOperatorContext();
+  const db = await getTenantDb();
+  const { range, start, endExclusive } = resolveRange(rawFrom, rawTo);
+  return buildLocationRollUp(db, operatorId, start, endExclusive, range);
+}
+
+// ---------------------------------------------------------------------------
 // Public entry points
 // ---------------------------------------------------------------------------
 
@@ -507,9 +906,15 @@ export interface ReportsBundle {
   /** Operator brand color (hex) — keeps charts white-label. */
   brandColor: string;
   range: DateRange;
+  /** Active date basis (order vs appointment) applied to the Sales report. */
+  basis: DateBasis;
+  /** Whether comparison-vs-prior-period mode is on. */
+  compare: boolean;
   revenue: RevenueReport;
+  sales: SalesReport;
   taxesFees: TaxesFeesReport;
   occupancy: OccupancyReport;
+  giftCards: GiftCardReport;
 }
 
 /**
@@ -519,26 +924,39 @@ export interface ReportsBundle {
  * without a refetch. Resolves the operator from the session, then runs every
  * read through the RLS client.
  */
-export async function getReportsBundle(rawFrom?: string, rawTo?: string): Promise<ReportsBundle> {
+export async function getReportsBundle(
+  rawFrom?: string,
+  rawTo?: string,
+  rawBasis?: string,
+  rawCompare?: string,
+): Promise<ReportsBundle> {
   const { operatorId } = await getOperatorContext();
   const db = await getTenantDb();
   const { range, start, endExclusive } = resolveRange(rawFrom, rawTo);
+  const basis = resolveDateBasis(rawBasis);
+  const compare = rawCompare === '1' || rawCompare === 'true';
 
-  const [operator, revenue, taxesFees, occupancy] = await Promise.all([
+  const [operator, revenue, sales, taxesFees, occupancy, giftCards] = await Promise.all([
     db.operator.findUnique({
       where: { id: operatorId },
       select: { brand_color: true },
     }),
     buildRevenueReport(db, operatorId, start, endExclusive, range),
+    buildSalesReport(db, operatorId, start, endExclusive, range, basis, compare),
     buildTaxesFeesReport(db, operatorId, start, endExclusive, range),
     buildOccupancyReport(db, operatorId, start, endExclusive, range),
+    buildGiftCardReport(db, operatorId, start, endExclusive, range),
   ]);
 
   return {
     brandColor: operator?.brand_color || '#0ea5e9',
     range,
+    basis,
+    compare,
     revenue,
+    sales,
     taxesFees,
     occupancy,
+    giftCards,
   };
 }
