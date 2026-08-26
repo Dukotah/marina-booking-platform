@@ -30,3 +30,6 @@ Thumbs.db
 .vscode/
 .idea/
 .gstack/
+
+# Vercel CLI local project link
+.vercel
