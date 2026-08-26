@@ -5,9 +5,10 @@
  *   - the sweep is idempotent (an order is reminded at most once), and
  *   - a cancelled booking in the window is never reminded.
  *
- * The email send is a no-op without RESEND_API_KEY, so this asserts the ENGINE
- * (selection + dedup + audit), which is the automation that was missing. SKIPS
- * without DATABASE_URL so plain `pnpm test` stays green.
+ * Asserts the ENGINE (selection + dedup + audit), which is the automation that
+ * was missing. Under the local sandbox the send is captured rather than posted to
+ * a provider, so delivery counts are real. SKIPS without DATABASE_URL so plain
+ * `pnpm test` stays green.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { adminPrisma, forOperator } from '@marina/database';
@@ -109,9 +110,11 @@ describe.skipIf(!HAS_DB)('automated reminders (live vs LSRA)', () => {
 
   it('runs the sweep and is idempotent (reminds each order at most once)', async () => {
     const first = await runDueReminders(OP, { withinHours: 24 });
-    // The near order is due; without a Resend key it is processed as a no-op.
+    // The near order is due. With the local sandbox on it is actually delivered
+    // (captured); either way what matters is that every due order is processed.
     expect(first.due).toBeGreaterThanOrEqual(1);
-    expect(first.noop).toBeGreaterThanOrEqual(1);
+    expect(first.delivered + first.noop).toBe(first.due);
+    expect(first.delivered).toBeGreaterThanOrEqual(1);
 
     // A REMINDER_SENT audit event now exists on the near order.
     const events = await adminPrisma.orderEvent.findMany({

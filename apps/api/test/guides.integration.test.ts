@@ -79,7 +79,7 @@ describe.skipIf(!HAS_DB)('guide scheduling (live vs Postgres, LSRA seed)', () =>
     await adminPrisma.$disconnect();
   });
 
-  it('assigns a guide to a timeslot (created, actor recorded, notify no-op)', async () => {
+  it('assigns a guide to a timeslot (created, actor recorded, guide notified)', async () => {
     const result = await assignGuide(OP, {
       timeslotId,
       guideId,
@@ -91,8 +91,14 @@ describe.skipIf(!HAS_DB)('guide scheduling (live vs Postgres, LSRA seed)', () =>
     expect(result.assignment.timeslotId).toBe(timeslotId);
     expect(result.assignment.roleLabel).toBe('Lead');
     expect(result.assignment.guideEmail).toBe(GUIDE_EMAIL);
-    // No Resend key in test → notification is a clean skip, never a throw.
-    expect(result.notification.sent).toBe(false);
+    // Tests run with the local sandbox on, so the guide email is captured rather
+    // than sent to Resend — the flow is exercised end to end and never throws.
+    expect(result.notification.sent).toBe(true);
+    const captured = await adminPrisma.sandboxMessage.findFirst({
+      where: { operator_id: OP, kind: 'guide_assignment', to_address: GUIDE_EMAIL },
+      orderBy: { created_at: 'desc' },
+    });
+    expect(captured).not.toBeNull();
 
     const row = await adminPrisma.guideAssignment.findUnique({
       where: { id: result.assignment.id },

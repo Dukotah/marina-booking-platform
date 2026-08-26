@@ -11,6 +11,17 @@ function roleLabel(role: string): string {
 }
 
 /**
+ * Mirrors services/sandbox.ts: the Local Console link only appears on a sandbox
+ * run, never against real providers.
+ */
+function sandboxEnabled(): boolean {
+  const flag = process.env.SANDBOX?.trim().toLowerCase();
+  if (flag === 'local') return true;
+  if (flag === 'cloud') return false;
+  return process.env.NODE_ENV !== 'production';
+}
+
+/**
  * The admin app frame: a persistent left rail + top bar wrapping page content.
  * It resolves the operator (white-label branding) and the signed-in staff
  * identity server-side, so every page rendered inside it is tenant-correct
@@ -42,7 +53,12 @@ export async function AdminShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="flex h-screen overflow-hidden bg-slate-100">
-      <Sidebar brandName={brandName} logoUrl={logoUrl} showPlatformLink={platformAdmin} />
+      <Sidebar
+        brandName={brandName}
+        logoUrl={logoUrl}
+        showPlatformLink={platformAdmin}
+        showDevConsole={sandboxEnabled()}
+      />
       <div className="flex min-w-0 flex-1 flex-col">
         {impersonating && <ExitImpersonationBanner clientName={brandName} />}
         <Topbar brandName={brandName} userName={userName} roleLabel={roleLabel(auth.role)} />

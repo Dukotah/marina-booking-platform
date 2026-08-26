@@ -42,6 +42,7 @@ import {
 } from './notification-data.js';
 import { sendReminderSms } from './sms.js';
 import { loadTemplateOverride, resolveTemplate } from './message-templates.js';
+import { sandboxEnabled, captureMessage } from './sandbox.js';
 
 export type { NotificationResult };
 
@@ -86,12 +87,18 @@ function fromAddress(brandName: string): string {
 // ---------------------------------------------------------------------------
 
 interface SendArgs {
+  /** Tenant the message belongs to — required so a sandbox capture is scoped. */
+  operatorId: string;
+  /** What this message is (booking_confirmation, reminder, ...) for the console. */
+  kind: string;
   brandName: string;
   to: string | string[];
   subject: string;
   html: string;
   text: string;
   replyTo?: string;
+  orderId?: string | null;
+  orderNumber?: string | null;
 }
 
 /** Single choke point for actually dispatching an email. Never throws. */
@@ -100,6 +107,23 @@ async function dispatch(args: SendArgs): Promise<NotificationResult> {
     (addr): addr is string => Boolean(addr && addr.includes('@')),
   );
   if (recipients.length === 0) return skipped('no valid recipient');
+
+  // Local sandbox: store the fully rendered message instead of sending it, so
+  // the whole flow is testable with no Resend account. See services/sandbox.ts.
+  if (sandboxEnabled()) {
+    return captureMessage({
+      operatorId: args.operatorId,
+      channel: 'EMAIL',
+      kind: args.kind,
+      to: recipients.join(', '),
+      from: fromAddress(args.brandName),
+      subject: args.subject,
+      html: args.html,
+      text: args.text,
+      orderId: args.orderId ?? null,
+      orderNumber: args.orderNumber ?? null,
+    });
+  }
 
   const resend = getResend();
   if (!resend) return skipped('RESEND_API_KEY not configured');
@@ -226,11 +250,15 @@ export async function sendBookingConfirmation(input: {
     });
 
     return dispatch({
+      operatorId: input.operatorId,
+      kind: 'booking_confirmation',
       brandName: brand.brandName,
       to: order.customer.email,
       subject,
       html,
       text,
+      orderId: order.id,
+      orderNumber: order.order_number,
     });
   } catch (err) {
     console.error('[notifications] sendBookingConfirmation failed:', err);
@@ -285,11 +313,15 @@ export async function sendStaffNewBooking(input: {
     const [html, text] = await Promise.all([renderEmail(element), renderEmailText(element)]);
 
     return dispatch({
+      operatorId: input.operatorId,
+      kind: 'staff_new_booking',
       brandName: brand.brandName,
       to: recipients,
       subject: `New booking: ${facts.activityName} — ${order.order_number}`,
       html,
       text,
+      orderId: order.id,
+      orderNumber: order.order_number,
     });
   } catch (err) {
     console.error('[notifications] sendStaffNewBooking failed:', err);
@@ -349,11 +381,15 @@ export async function sendReminder(input: {
     const [html, text] = await Promise.all([renderEmail(element), renderEmailText(element)]);
 
     return dispatch({
+      operatorId: input.operatorId,
+      kind: 'reminder',
       brandName: brand.brandName,
       to: order.customer.email,
       subject: `Reminder: your ${facts.activityName} is coming up`,
       html,
       text,
+      orderId: order.id,
+      orderNumber: order.order_number,
     });
   } catch (err) {
     console.error('[notifications] sendReminder failed:', err);
@@ -418,11 +454,15 @@ export async function sendRefundReceipt(input: {
     const [html, text] = await Promise.all([renderEmail(element), renderEmailText(element)]);
 
     return dispatch({
+      operatorId: input.operatorId,
+      kind: 'refund_receipt',
       brandName: brand.brandName,
       to: order.customer.email,
       subject: `Refund issued for ${order.order_number} — ${formatUSD(refundedCents)}`,
       html,
       text,
+      orderId: order.id,
+      orderNumber: order.order_number,
     });
   } catch (err) {
     console.error('[notifications] sendRefundReceipt failed:', err);
@@ -462,6 +502,8 @@ export async function sendGuideAssignmentEmail(input: {
       `<p style="color:#64748b">— ${input.brandName}</p></div>`;
 
     return dispatch({
+      operatorId: input.operatorId,
+      kind: 'guide_assignment',
       brandName: input.brandName,
       to: input.guideEmail,
       subject: `You're guiding ${input.activityName} — ${input.dateLabel}`,

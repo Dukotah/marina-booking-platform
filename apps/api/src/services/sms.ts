@@ -22,6 +22,7 @@ import {
   bookingFacts,
   loadOrderBundle,
 } from './notification-data.js';
+import { sandboxEnabled, captureMessage } from './sandbox.js';
 
 // ---------------------------------------------------------------------------
 // Twilio config resolution (per-operator Integration → env fallback)
@@ -112,9 +113,23 @@ export async function sendSms(
   operatorId: string,
   to: string | null | undefined,
   body: string,
+  /** What this text is, for the Local Console. */
+  kind = 'sms',
 ): Promise<NotificationResult> {
   const e164 = toE164(to);
   if (!e164) return skipped('no valid phone number');
+
+  // Local sandbox: store the text instead of sending it, so SMS is testable
+  // with no Twilio account. See services/sandbox.ts.
+  if (sandboxEnabled()) {
+    return captureMessage({
+      operatorId,
+      channel: 'SMS',
+      kind,
+      to: e164,
+      text: body,
+    });
+  }
 
   const config = await resolveTwilioConfig(operatorId);
   if (!config) return skipped('Twilio not configured');
@@ -185,7 +200,7 @@ export async function sendBookingConfirmationSms(input: {
       `${facts.partySize > 1 ? `, party of ${facts.partySize}` : ''}. ` +
       `Ref ${order.order_number}.`;
 
-    return sendSms(input.operatorId, order.customer.phone, body);
+    return sendSms(input.operatorId, order.customer.phone, body, 'booking_confirmation');
   } catch (err) {
     console.error('[sms] sendBookingConfirmationSms failed:', err);
     return skipped('unexpected failure');
@@ -217,7 +232,7 @@ export async function sendReminderSms(input: {
       `${brand.brandName} reminder: ${facts.activityName} is coming up — ${when}. ` +
       `Please arrive ~${lead} min early. Ref ${order.order_number}.`;
 
-    return sendSms(input.operatorId, order.customer.phone, body);
+    return sendSms(input.operatorId, order.customer.phone, body, 'reminder');
   } catch (err) {
     console.error('[sms] sendReminderSms failed:', err);
     return skipped('unexpected failure');

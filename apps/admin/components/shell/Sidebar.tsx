@@ -16,6 +16,7 @@ import {
   Settings,
   ShieldCheck,
   Gift,
+  FlaskConical,
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from '../../lib/cn';
@@ -71,9 +72,16 @@ export interface SidebarProps {
   logoUrl?: string | null;
   /** Show the platform (super-admin) entry point. */
   showPlatformLink?: boolean;
+  /** Show the Local Console link (sandbox runs only). */
+  showDevConsole?: boolean;
 }
 
-export function Sidebar({ brandName, logoUrl, showPlatformLink = false }: SidebarProps) {
+export function Sidebar({
+  brandName,
+  logoUrl,
+  showPlatformLink = false,
+  showDevConsole = false,
+}: SidebarProps) {
   const pathname = usePathname();
 
   return (
@@ -109,6 +117,18 @@ export function Sidebar({ brandName, logoUrl, showPlatformLink = false }: Sideba
           );
         })}
       </nav>
+
+      {showDevConsole && (
+        <div className="border-t border-slate-800 p-3">
+          <Link
+            href="/dev"
+            className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-amber-300 transition-colors hover:bg-amber-500/10"
+          >
+            <FlaskConical className="h-5 w-5 shrink-0" aria-hidden />
+            <span>Local Console</span>
+          </Link>
+        </div>
+      )}
 
       {showPlatformLink && (
         <div className="border-t border-slate-800 p-3">

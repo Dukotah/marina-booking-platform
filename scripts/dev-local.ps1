@@ -1,4 +1,4 @@
-# ---------------------------------------------------------------------------
+﻿# ---------------------------------------------------------------------------
 # One command to run the whole product locally, with zero external accounts.
 #
 #   pnpm dev:local        (or:  powershell -File scripts/dev-local.ps1)
@@ -18,7 +18,7 @@ $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 Set-Location $repo
 
-function Step($msg) { Write-Host "`n▸ $msg" -ForegroundColor Cyan }
+function Step($msg) { Write-Host "`n> $msg" -ForegroundColor Cyan }
 function Ok($msg)   { Write-Host "  $msg" -ForegroundColor Green }
 function Warn($msg) { Write-Host "  $msg" -ForegroundColor Yellow }
 
@@ -31,7 +31,7 @@ if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) {
 
 # --- .env ------------------------------------------------------------------
 Step "Loading .env"
-if (-not (Test-Path .env)) { throw "Missing .env — copy .env.local.example to .env first." }
+if (-not (Test-Path .env)) { throw "Missing .env - copy .env.local.example to .env first." }
 Get-Content .env | Where-Object { $_ -match '^\s*[A-Za-z_][A-Za-z0-9_]*\s*=' } | ForEach-Object {
     $k, $v = $_ -split '=', 2
     $v = $v.Trim() -replace '^"', '' -replace '"$', ''
@@ -65,35 +65,51 @@ $generated = Get-ChildItem "node_modules\.pnpm" -Filter "@prisma+client@*" -Erro
     ForEach-Object { Join-Path $_.FullName "node_modules\.prisma\client\index.js" } |
     Where-Object { Test-Path $_ } | Select-Object -First 1
 if (-not $generated) {
-    Warn "not generated — running pnpm db:generate"
+    Warn "not generated - running pnpm db:generate"
     pnpm db:generate | Out-Null
 }
 Ok "prisma client ready"
 
-# --- Schema present? -------------------------------------------------------
+# --- Schema + seed present? ------------------------------------------------
+# Asked through a tiny node helper rather than psql: piping SQL through
+# PowerShell -> WSL -> bash -> psql is a quoting trap and broke here once.
 Step "Checking schema + seed"
-$tables = (wsl -d Ubuntu -- bash -lc "sudo -u postgres psql -d marina -tAc `"select count(*) from information_schema.tables where table_schema='public'`" 2>/dev/null").Trim()
-if (-not $tables -or [int]$tables -eq 0) {
-    Warn "no tables — applying migrations + RLS"
-    pnpm db:migrate; pnpm db:rls; pnpm db:approle; pnpm db:seed
-    Ok "database provisioned and seeded"
-} else {
-    Ok "$tables tables present"
+# pnpm prints its command banner to stderr; with ErrorActionPreference=Stop a
+# piped native stderr write becomes a terminating error, so relax it just here
+# and pull the state word out of the combined output.
+$prevEAP = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+$stateRaw = (& pnpm db:state 2>&1 | Out-String)
+$ErrorActionPreference = $prevEAP
+$state = [regex]::Match($stateRaw, '(READY|NO_SEED|NO_SCHEMA)').Value
+switch ($state) {
+    'NO_SCHEMA' {
+        Warn "no schema - applying migrations, RLS and seeds"
+        pnpm db:migrate:deploy; pnpm db:rls; pnpm db:approle; pnpm db:reset
+        Ok "database provisioned and seeded"
+    }
+    'NO_SEED' {
+        Warn "schema present but empty - seeding"
+        pnpm db:reset
+        Ok "database seeded"
+    }
+    'READY'   { Ok "schema and seed data present" }
+    default   { Warn "could not determine database state ('$state') - continuing" }
 }
 
 if ($NoServers) { Step "Setup complete (-NoServers)"; exit 0 }
 
 # --- Run -------------------------------------------------------------------
 Write-Host ""
-Write-Host "  ┌────────────────────────────────────────────────────────┐" -ForegroundColor DarkGray
-Write-Host "  │  Marina Booking Platform — local sandbox                │" -ForegroundColor DarkGray
-Write-Host "  ├────────────────────────────────────────────────────────┤" -ForegroundColor DarkGray
-Write-Host "  │  Customer site   http://localhost:3000                  │" -ForegroundColor White
-Write-Host "  │  Admin console   http://localhost:3002                  │" -ForegroundColor White
-Write-Host "  │  Local Console   http://localhost:3002/dev              │" -ForegroundColor White
-Write-Host "  │  API             http://localhost:3001                  │" -ForegroundColor DarkGray
-Write-Host "  └────────────────────────────────────────────────────────┘" -ForegroundColor DarkGray
-Write-Host "     no accounts needed — payments, email and SMS are simulated" -ForegroundColor DarkGray
+Write-Host "  +--------------------------------------------------------+" -ForegroundColor DarkGray
+Write-Host "  |  Marina Booking Platform - local sandbox                |" -ForegroundColor DarkGray
+Write-Host "  +--------------------------------------------------------+" -ForegroundColor DarkGray
+Write-Host "  |  Customer site   http://localhost:3000                  |" -ForegroundColor White
+Write-Host "  |  Admin console   http://localhost:3002                  |" -ForegroundColor White
+Write-Host "  |  Local Console   http://localhost:3002/dev              |" -ForegroundColor White
+Write-Host "  |  API             http://localhost:3001                  |" -ForegroundColor DarkGray
+Write-Host "  +--------------------------------------------------------+" -ForegroundColor DarkGray
+Write-Host "     no accounts needed - payments, email and SMS are simulated" -ForegroundColor DarkGray
 Write-Host "     Ctrl-C stops everything`n" -ForegroundColor DarkGray
 
 pnpm dev
