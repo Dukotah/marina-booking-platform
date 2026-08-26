@@ -25,8 +25,22 @@ import {
   rescheduleBooking,
   BookingError,
 } from '../services/booking.js';
+import { sendBookingConfirmation, sendStaffNewBooking } from '../services/notifications.js';
+import { sendBookingConfirmationSms } from '../services/sms.js';
 
 export const orders = new Hono<Env>();
+
+/**
+ * Fire booking notifications after an order is committed. Fire-and-forget: these
+ * never throw and must not delay or block the booking response. Email (Resend) +
+ * SMS (Twilio) go to the customer; staff get an email alert. Each channel no-ops
+ * cleanly when its provider isn't configured.
+ */
+function dispatchBookingNotifications(operatorId: string, orderId: string): void {
+  void sendBookingConfirmation({ operatorId, orderId });
+  void sendBookingConfirmationSms({ operatorId, orderId });
+  void sendStaffNewBooking({ operatorId, orderId });
+}
 
 // Throttle the PUBLIC/unauthenticated order endpoints (create, lookup-by-number,
 // self-reschedule) per client IP + tenant to blunt brute-force / enumeration / DoS.
@@ -99,6 +113,7 @@ orders.post('/', publicRateLimit, async (c) => {
     const order = await createBooking(c.var.operatorId, parsed.data, {
       channel: 'CUSTOMER',
     });
+    dispatchBookingNotifications(c.var.operatorId, order.id);
     return c.json({ order: serializeOrder(order) }, 201);
   } catch (err) {
     if (err instanceof BookingError) {
