@@ -44,14 +44,39 @@ export class AdminApp {
   }
 
   /**
+   * Open a control whose handler only exists after the client bundle has attached.
+   *
+   * The order page is server-rendered, so a button is painted, enabled and clickable a
+   * beat before React hydrates it — and a click landing in that window is swallowed
+   * with no error and no visual change. Nothing already awaited can see the difference:
+   * `openOrder` waits on the H1, which is in the server HTML too. The tell is that this
+   * only bit when the route was already warm, i.e. when the page arrived fast enough to
+   * beat its own bundle.
+   *
+   * So the click is repeated until the thing it reveals is actually on screen. No
+   * assertion is softened by this: a control that is missing, disabled, or wired to
+   * nothing still fails here, and the guard means a retry can never toggle a panel that
+   * the previous click already opened back shut.
+   */
+  private async openControl(control: Locator, reveals: Locator): Promise<void> {
+    await expect(async () => {
+      if (await reveals.isVisible().catch(() => false)) return;
+      await control.click();
+      await expect(reveals).toBeVisible({ timeout: 2_000 });
+    }).toPass({ timeout: 30_000, intervals: [250, 500, 1_000] });
+  }
+
+  /**
    * Refund a payment on the open order detail page.
    *
    * `amountCents` omitted means the full refundable balance (the panel's default);
    * supplying it drives the partial-refund path instead.
    */
   async refund(options: { amountCents?: number; reason?: string } = {}): Promise<void> {
-    await this.page.getByRole('button', { name: 'Refund', exact: true }).click();
-    await expect(this.page.getByText('Issue a refund')).toBeVisible();
+    await this.openControl(
+      this.page.getByRole('button', { name: 'Refund', exact: true }),
+      this.page.getByText('Issue a refund'),
+    );
 
     if (options.amountCents !== undefined) {
       await this.page.getByRole('radio', { name: 'Partial' }).check();

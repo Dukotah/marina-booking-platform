@@ -26,6 +26,7 @@ import { uploads } from './routes/uploads.js';
 import { accounting } from './routes/accounting.js';
 import { channels } from './routes/channels.js';
 import { customerAuth } from './routes/customer-auth.js';
+import { sandbox } from './routes/sandbox.js';
 
 export const app = new Hono<Env>();
 
@@ -122,6 +123,9 @@ api.route('/settings', settings);
 api.route('/accounting', accounting);
 api.route('/channels', channels);
 api.route('/customer-auth', customerAuth);
+// Local sandbox control plane (payment simulator, webhook log, clock). The router
+// 404s itself unless SANDBOX is local, so mounting it here costs nothing in cloud.
+api.route('/sandbox', sandbox);
 
 // Echo the resolved tenant — handy sanity check during scaffolding.
 api.get('/whoami', (c) => c.json({ operatorId: c.var.operatorId }));

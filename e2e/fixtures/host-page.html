@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rocky Point Boat Rentals &mdash; Lake Sonoma</title>
+
+<!--
+  A deliberately HOSTILE mock operator website.
+
+  The embeddable widget's whole job is to survive inside somebody else's page, so
+  the page it is tested in must be somebody else's page — not a blank document with
+  a script tag. Every rule below is something a real marina site actually does; this
+  file is a composite of the worst of them, not an invention:
+
+    * a global reset plus TAG selectors on div / button / iframe, several !important
+    * `html { overflow-x: hidden }` — the near-universal "stop the horizontal scroll"
+      hack, which quietly stops `body { overflow: hidden }` from locking the page
+    * `body > div { transform: translateZ(0) }` — the "GPU acceleration" hack, which
+      turns every top-level div into a containing block for position:fixed
+    * CSS custom properties named exactly like two of ours (--mbw-accent, --mbw-h)
+    * a chat bubble at z-index 2147483647, injected AFTER load by a tag manager
+    * a cookie bar at 2147483000 — the loader's own old z-index, so they tie
+    * an element already using the id our iframe document uses (#marina-embed)
+    * a stale global named MarinaBooking left by an old plugin
+    * a third-party message listener that throws on every message it sees
+    * enough content that the page scrolls
+
+  The widget script is injected from the query string (see the bottom of the file) so
+  one fixture can exercise every data-mode without a file per case. `?widget=off`
+  loads the page with no widget at all, which is how the spec captures a baseline of
+  the host's own computed styles to diff against.
+-->
+
+<style>
+  /* --- the theme's reset ------------------------------------------------- */
+  *, *::before, *::after { box-sizing: border-box; }
+
+  html {
+    /* Kills the propagation of body's overflow to the viewport. This one line is
+       why a naive `body { overflow: hidden }` scroll lock silently does nothing. */
+    overflow-x: hidden;
+  }
+
+  :root {
+    /* Same names the widget uses internally. A page that happens to pick these
+       must not be able to repaint or resize the widget. */
+    --mbw-accent: #ff00ff;
+    --mbw-h: 48px;
+    --brand-color: #ff00ff;
+    --rp-ink: #3a2f1b;
+    --rp-red: #7b1113;
+    --rp-sand: #f5f1e8;
+  }
+
+  body {
+    margin: 0;
+    background: var(--rp-sand);
+    color: var(--rp-ink);
+    font-family: "Comic Sans MS", "Bradley Hand", cursive;
+    font-size: 19px;
+    line-height: 2.1;
+    letter-spacing: 0.06em;
+  }
+
+  /* Tag selectors. These reach our shadow HOST element even though they cannot
+     reach inside the shadow root — and per CSS scoping, an outer-tree normal
+     declaration beats an inner-tree `:host` one. */
+  div {
+    letter-spacing: 0.14em;
+    font-style: italic;
+  }
+
+  /* The "GPU acceleration" hack. Makes every top-level div a containing block,
+     so a position:fixed overlay inside one is clipped to that div's box. */
+  body > div { transform: translateZ(0); }
+
+  button {
+    background: var(--rp-red) !important;
+    color: #ffe9b0 !important;
+    border: 4px double #ffe9b0 !important;
+    border-radius: 0 !important;
+    padding: 26px 34px !important;
+    font: inherit !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.3em !important;
+    cursor: crosshair !important;
+    min-height: 0 !important;
+  }
+
+  iframe {
+    border: 10px ridge var(--rp-red) !important;
+    width: 220px !important;
+    height: 90px !important;
+    display: inline-block !important;
+    background: var(--rp-red) !important;
+  }
+
+  /* --- chrome ------------------------------------------------------------ */
+  #site-header {
+    position: sticky;
+    top: 0;
+    z-index: 99999;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 14px 24px;
+    background: var(--rp-red);
+    color: #ffe9b0;
+    font-weight: 700;
+  }
+  #site-header nav a { color: #ffe9b0; margin-left: 18px; }
+
+  #site-cookie {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    /* Exactly the z-index the loader used to claim. A tie is decided by DOM order,
+       which is a coin flip unless the widget re-asserts its position on open. */
+    z-index: 2147483000;
+    display: flex; align-items: center; gap: 16px;
+    padding: 14px 24px;
+    background: #1f1a12; color: #f5f1e8; font-size: 15px; line-height: 1.4;
+  }
+
+  /* Injected after load by the "tag manager" — see the script at the bottom. */
+  #site-chat {
+    position: fixed;
+    right: 24px; bottom: 96px;
+    width: 168px; height: 62px;
+    z-index: 2147483647;   /* int32 max: nothing can legally outrank it, only tie */
+    display: flex; align-items: center; justify-content: center;
+    background: #0b6b3a; color: #fff; border-radius: 999px;
+    font-size: 15px; letter-spacing: 0.04em;
+  }
+
+  main { max-width: 900px; margin: 0 auto; padding: 32px 24px 200px; }
+  h1 { font-size: 42px; line-height: 1.2; margin: 24px 0 8px; }
+  h2 { font-size: 28px; line-height: 1.3; margin: 48px 0 8px; }
+  section { margin-bottom: 40px; }
+
+  /* The operator already has an element with the id our iframe DOCUMENT uses.
+     Two different documents, so it must never collide — this proves it. */
+  #marina-embed {
+    border: 4px dashed var(--rp-red);
+    padding: 16px;
+    background: #fffaf0;
+  }
+
+  /* Their existing "booking hours" panel, which also owns an obvious id. */
+  #booking {
+    border-left: 6px solid var(--rp-red);
+    padding: 8px 16px;
+    background: #fffaf0;
+  }
+
+  #widget-slot { padding: 8px 0; }
+</style>
+</head>
+<body>
+
+<header id="site-header">
+  <span>Rocky Point Boat Rentals</span>
+  <nav>
+    <a href="#fleet">Fleet</a>
+    <a href="#hours">Hours</a>
+    <a href="#find">Find us</a>
+  </nav>
+</header>
+
+<main>
+  <h1>Pontoons, kayaks and ski boats on Lake Sonoma</h1>
+  <p>
+    Family run since 1987. We are the last dock before the north arm, which means
+    twenty minutes less running time to the good water and a shorter walk from the
+    parking lot when the wind comes up in the afternoon.
+  </p>
+
+  <section id="book">
+    <h2>Reserve online</h2>
+    <p>Pick your boat and your time. You will get a confirmation by email straight away.</p>
+    <!-- Where the widget script gets injected. -->
+    <div id="widget-slot"></div>
+  </section>
+
+  <section id="marina-embed">
+    <h2>Our launch ramp</h2>
+    <p>
+      This block has carried the id <code>marina-embed</code> since the site was
+      built in 2011. Nothing the booking widget does may touch it.
+    </p>
+  </section>
+
+  <section id="hours">
+    <h2>Hours</h2>
+    <div id="booking">
+      <p>Summer: 7am&ndash;7pm daily. Off season: Friday to Sunday, 8am&ndash;5pm.</p>
+      <p>Last boat out is two hours before close, no exceptions, sorry.</p>
+    </div>
+  </section>
+
+  <section id="fleet">
+    <h2>The fleet</h2>
+    <p>
+      Two 22ft pontoons, a 19ft bowrider, six sit-on-top kayaks and a pair of
+      paddleboards that are older than most of the people who rent them. Everything
+      is inspected on the trailer before it goes in the water and again when it
+      comes out.
+    </p>
+    <p>
+      Life jackets are included and are not optional. We carry infant through adult
+      XXL. If you are bringing a dog, tell us when you book so we put the boat with
+      the swim step on your reservation.
+    </p>
+    <p>
+      Fuel is not included on the powerboats. There is a pump at the top of the ramp
+      and the nearest gas station is eleven miles back toward Geyserville, so top up
+      before you drive out.
+    </p>
+  </section>
+
+  <section id="weather">
+    <h2>Wind and water</h2>
+    <p>
+      The lake sits in a canyon, so the afternoon wind funnels down the main body
+      almost every day from about two o'clock. It is not dangerous but it will make
+      a kayak trip home twice as long as the trip out. Plan your paddling for the
+      morning and save the powerboat for the afternoon.
+    </p>
+    <p>
+      Water level is managed by the Corps of Engineers and moves a lot between May
+      and September. When it is low, the courtesy dock on the south side is out of
+      the water and everybody uses the main ramp, which backs up on Saturdays.
+      Booking a morning slot is the whole trick.
+    </p>
+    <p>
+      We close the ramp when the surface wind is over 25 knots sustained. If that
+      happens on your day we move your booking or refund it, your choice, no
+      argument and no fee.
+    </p>
+  </section>
+
+  <section id="find">
+    <h2>Finding us</h2>
+    <p>
+      Take Dry Creek Road past the last vineyard and follow the signs for the public
+      ramp. We are the second driveway on the right after the cattle guard, past the
+      row of eucalyptus. Cell service dies about a mile before you get here, so load
+      your directions before you leave town.
+    </p>
+    <p>
+      Parking is free for renters and $12 for everybody else. Trailer parking is at
+      the top of the hill; leave yourself ten minutes to walk back down.
+    </p>
+    <p>
+      There is no restaurant. There is a vending machine, a hose, a fish cleaning
+      station and a very old dog named Pilot who will follow you to the dock.
+    </p>
+  </section>
+
+  <section id="policies">
+    <h2>The fine print</h2>
+    <p>
+      Cancel more than 48 hours out for a full refund. Inside 48 hours we will move
+      you to another day at no charge. No shows are charged in full, because the
+      boat sat on the dock all day and somebody else wanted it.
+    </p>
+    <p>
+      Whoever is driving needs to be 18 with a photo ID and has to sign the waiver
+      before the boat leaves the dock. California boater cards are checked. If you
+      have never driven a boat, say so and we will run you through it; it takes ten
+      minutes and it is free.
+    </p>
+    <p>
+      We do not rent to anyone who has been drinking. This is not negotiable and it
+      is the one rule we will keep your money over.
+    </p>
+  </section>
+</main>
+
+<div id="site-cookie">
+  <span>We use cookies to remember your boat preferences and to measure our ads.</span>
+  <button type="button" id="cookie-ok">Got it</button>
+</div>
+
+<script>
+  /* ---------------------------------------------------------------------
+     Everything below simulates the JavaScript environment of a real site:
+     stale globals, a broken third-party listener, and a tag manager that
+     injects a chat bubble after the page has already settled.
+     --------------------------------------------------------------------- */
+
+  /* A stale global with exactly our namespace, left behind by a plugin the
+     operator uninstalled two years ago. The loader must take the name over
+     without throwing and without inheriting any of this. */
+  window.MarinaBooking = {
+    legacyPlugin: 'marina-tides-1.4',
+    open: function () { window.__hostLegacyOpenCalled = true; },
+  };
+
+  /* Google Tag Manager's queue, present on nearly every commercial site. */
+  window.dataLayer = window.dataLayer || [];
+
+  /* A third-party script whose message handler throws on anything it does not
+     recognise. Listener exceptions must not stop the loader's own listener. */
+  window.addEventListener('message', function () {
+    throw new Error('rocky-point analytics: unrecognised message');
+  });
+
+  /* The DOM-event half of the widget's public API, recorded for the spec. This
+     is registered before the loader exists on purpose — an operator pasting a
+     tracking snippet above the widget script is the normal case. */
+  window.__marinaEvents = [];
+  ['open', 'ready', 'resize', 'step', 'booking', 'navigate', 'close', 'error'].forEach(
+    function (type) {
+      window.addEventListener('marina:' + type, function (event) {
+        window.__marinaEvents.push({ type: type, detail: event.detail });
+      });
+    }
+  );
+
+  document.getElementById('cookie-ok').addEventListener('click', function () {
+    document.getElementById('site-cookie').style.display = 'none';
+  });
+
+  /* The tag manager, firing after the page is interactive — so the chat bubble
+     lands in the DOM *after* the booking widget has already mounted. */
+  window.addEventListener('DOMContentLoaded', function () {
+    window.setTimeout(function () {
+      var chat = document.createElement('div');
+      chat.id = 'site-chat';
+      chat.textContent = 'Chat with us';
+      document.body.appendChild(chat);
+    }, 0);
+  });
+
+  /* ---------------------------------------------------------------------
+     The install itself. Attributes come from the query string so the spec can
+     drive every data-mode from one fixture; an operator would of course just
+     type them.
+     --------------------------------------------------------------------- */
+  (function () {
+    var q = new URLSearchParams(window.location.search);
+    if (q.get('widget') === 'off') return;
+
+    var script = document.createElement('script');
+    script.src = '__EMBED_BASE__/embed.js';
+    script.setAttribute('data-operator', q.get('operator') || 'lake-sonoma');
+    script.setAttribute('data-mode', q.get('mode') || 'button');
+    if (q.get('activity')) script.setAttribute('data-activity', q.get('activity'));
+    if (q.get('target')) script.setAttribute('data-target', q.get('target'));
+    if (q.get('color')) script.setAttribute('data-color', q.get('color'));
+    if (q.get('label')) script.setAttribute('data-label', q.get('label'));
+    if (q.get('open')) script.setAttribute('data-open', q.get('open'));
+    if (q.get('height')) script.setAttribute('data-height', q.get('height'));
+
+    /* The API half of the event contract, wired the moment the loader has
+       defined its global — which is what an operator's snippet does too. */
+    script.addEventListener('load', function () {
+      window.__marinaApiEvents = [];
+      window.__marinaLoaderVersion = window.MarinaBooking && window.MarinaBooking.version;
+      if (window.MarinaBooking && typeof window.MarinaBooking.on === 'function') {
+        window.MarinaBooking.on('booking', function (payload) {
+          window.__marinaApiEvents.push(payload);
+        });
+      }
+    });
+
+    document.getElementById('widget-slot').appendChild(script);
+  })();
+</script>
+
+</body>
+</html>

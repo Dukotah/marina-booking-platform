@@ -1,7 +1,8 @@
 /**
- * Payments API — charge a booking and refund it (Stripe, test-first).
+ * Payments API — charge a booking, finish a 3-D Secure challenge, and refund.
  *
  *   POST /api/payments/charge        public  — charge a card against an order
+ *   POST /api/payments/confirm       public  — complete/abandon a 3DS challenge
  *   POST /api/payments/:id/refund    staff   — full/partial refund (order:refund)
  *
  * All money is integer cents. Every DB write is tenant-scoped (RLS via c.var.db)
@@ -9,6 +10,16 @@
  * balance and its payment row can never drift. Stripe's network call happens
  * BEFORE the transaction (you don't want to hold a DB tx open across an external
  * HTTP call); the transaction then records the already-settled result.
+ *
+ * 3-D SECURE / SCA. A card that needs the bank's second factor is NOT a decline —
+ * treating it as one (which this route used to do, via a bare 402) is the Phase-1
+ * blocker docs/LOCAL-FIRST-BUILD.md §5 names, and it is a dead end for real cards,
+ * EU guests and high-value bookings. `POST /charge` now answers 200 with
+ * `requiresAction: true` plus whatever the guest's browser needs to continue, and
+ * `POST /confirm` finishes the job. A challenged booking is INDISTINGUISHABLE from
+ * an unchallenged one once complete: same totals, same Payment ledger row, same
+ * OrderEvent — both paths run `recordSettledCharge` below, which is why they cannot
+ * drift apart.
  *
  * If Stripe isn't configured, every endpoint returns a clean 501 instead of
  * crashing — payments are an opt-in integration.
@@ -19,6 +30,7 @@ import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { z } from 'zod';
 import { assertPermission } from '@marina/auth';
 import { withTenant } from '@marina/database';
+import type { TenantClient } from '@marina/database';
 import { createId } from '@marina/core';
 import type { Env } from '../context.js';
 import { requireStaff } from '../middleware/auth.js';
@@ -26,9 +38,17 @@ import {
   createPayment,
   refundPayment,
   arePaymentsEnabled,
+  getStripeClient,
   StripeNotConfiguredError,
   StripePaymentError,
+  type StripePaymentResult,
 } from '../services/stripe.js';
+import {
+  confirmChallenge as sandboxConfirmChallenge,
+  sandboxPaymentsEnabled,
+  type SandboxChallengeRequired,
+} from '../services/payments-sandbox.js';
+import { cancelBooking, BookingError } from '../services/booking.js';
 import {
   evaluateApproval,
   loadApprovalPolicy,
@@ -45,6 +65,22 @@ const chargeSchema = z.object({
   amountCents: z.number().int().positive().optional(),
   /** Client-supplied key to make retries safe; generated if absent. */
   idempotencyKey: z.string().min(1).max(45).optional(),
+});
+
+const confirmSchema = z.object({
+  orderId: z.string().min(1),
+  /**
+   * The PaymentIntent the challenge belongs to. Optional because the checkout's
+   * server action narrows the charge response before the browser sees it; when it
+   * is absent we look the outstanding challenge up from the order instead of
+   * failing, so the guest is never stranded by a plumbing detail.
+   */
+  intentId: z.string().min(1).optional(),
+  /**
+   * `complete` — the guest finished at their bank. `cancel` — they backed out, and
+   * the order created for this attempt must not be left holding capacity.
+   */
+  action: z.enum(['complete', 'cancel']).default('complete'),
 });
 
 const refundSchema = z.object({
@@ -65,6 +101,233 @@ function stripeErrorResponse(c: Context<Env>, err: unknown) {
     );
   }
   throw err; // unexpected — let the central error handler 500 it
+}
+
+// ===========================================================================
+// 3-D Secure / SCA
+// ===========================================================================
+
+/** Everything the browser needs to get the guest through their bank's challenge. */
+interface ChallengeAffordance {
+  /** Which driver raised it — the client authenticates differently for each. */
+  provider: 'sandbox' | 'stripe';
+  intentId: string | null;
+  /** Stripe.js needs this to run the challenge; the simulator does not. */
+  clientSecret: string | null;
+  returnUrl: string | null;
+}
+
+/**
+ * Recognise a challenge hiding inside a payment error.
+ *
+ * The local simulator throws `SandboxChallengeRequired`, which carries the intent,
+ * the client secret and a return URL. The Stripe driver currently throws a plain
+ * `StripePaymentError` whose `code` is the intent status, so the code is the only
+ * thing both drivers are guaranteed to share and the rest is read defensively.
+ *
+ * KNOWN GAP: `services/stripe.ts` discards the PaymentIntent when it refuses a
+ * non-succeeded status, so in cloud mode `intentId`/`clientSecret` come back null
+ * and the browser has nothing to hand Stripe.js. Closing it is a change to that
+ * file (throw a challenge error carrying `intent.id` + `intent.client_secret`);
+ * this route already reads those fields, so nothing here changes when it lands.
+ */
+function challengeFrom(err: unknown): ChallengeAffordance | null {
+  if (!(err instanceof StripePaymentError) || err.code !== 'requires_action') return null;
+  const carrier = err as StripePaymentError & Partial<SandboxChallengeRequired>;
+  return {
+    provider: sandboxPaymentsEnabled() ? 'sandbox' : 'stripe',
+    intentId: carrier.intentId ?? null,
+    clientSecret: carrier.clientSecret ?? null,
+    returnUrl: carrier.challengeUrl ?? null,
+  };
+}
+
+/**
+ * The intent of the challenge still outstanding against this order, if any.
+ *
+ * Sandbox-only: the simulator keeps its own attempt ledger, which is exactly the
+ * lookup Stripe would answer from its side. In cloud mode there is nothing local
+ * to read, so the client must send the intent id it was given.
+ */
+async function pendingIntentForOrder(db: TenantClient, orderId: string): Promise<string | null> {
+  if (!sandboxPaymentsEnabled()) return null;
+  const attempt = await db.sandboxPaymentAttempt.findFirst({
+    where: { order_id: orderId, status: 'REQUIRES_ACTION' },
+    orderBy: { created_at: 'desc' },
+    select: { intent_id: true },
+  });
+  return attempt?.intent_id ?? null;
+}
+
+/**
+ * Settle a challenge the guest just completed.
+ *
+ * In cloud mode the browser has already run the bank's challenge through
+ * Stripe.js, so the intent is settled on Stripe's side by the time we get here —
+ * we re-read it rather than trusting the client's word that it worked, because
+ * "the customer said the payment succeeded" is not a payment.
+ */
+async function completeChallenge(
+  operatorId: string,
+  intentId: string,
+): Promise<StripePaymentResult> {
+  if (sandboxPaymentsEnabled()) {
+    return sandboxConfirmChallenge({ operatorId, intentId, succeed: true });
+  }
+
+  const stripe = getStripeClient();
+  const intent = await stripe.paymentIntents.retrieve(intentId, { expand: ['latest_charge'] });
+  if (intent.status !== 'succeeded') {
+    throw new StripePaymentError(
+      intent.status === 'requires_action'
+        ? 'Your bank has not confirmed this payment yet. Please complete the check and try again.'
+        : 'We could not authenticate this payment. Please try a different card.',
+      402,
+      intent.status,
+    );
+  }
+
+  const charge =
+    intent.latest_charge && typeof intent.latest_charge !== 'string' ? intent.latest_charge : null;
+  const card = charge?.payment_method_details?.card ?? null;
+  return {
+    paymentId: intent.id,
+    status: intent.status,
+    amountCents:
+      typeof intent.amount_received === 'number' ? intent.amount_received : intent.amount,
+    cardBrand: card?.brand ?? null,
+    cardLastFour: card?.last4 ?? null,
+    cardholderName: charge?.billing_details?.name ?? null,
+    receiptUrl: charge?.receipt_url ?? null,
+  };
+}
+
+/**
+ * Abandon a challenge the guest backed out of.
+ *
+ * The simulator signals a failed authentication by THROWING after it has recorded
+ * the attempt as FAILED — that is its contract, so the one expected error is
+ * swallowed and anything else (a missing intent, an illegal transition) still
+ * surfaces. A cloud cancel is best-effort: Stripe expires an unconfirmed intent on
+ * its own, and failing to cancel it must not stop us releasing the guest's seats.
+ */
+async function abandonChallenge(operatorId: string, intentId: string): Promise<void> {
+  if (sandboxPaymentsEnabled()) {
+    try {
+      await sandboxConfirmChallenge({ operatorId, intentId, succeed: false });
+    } catch (err) {
+      const expected =
+        err instanceof StripePaymentError &&
+        err.code === 'payment_intent_authentication_failure';
+      if (!expected) throw err;
+    }
+    return;
+  }
+
+  try {
+    await getStripeClient().paymentIntents.cancel(intentId);
+  } catch (err) {
+    console.warn(`[payments] could not cancel intent ${intentId}:`, err);
+  }
+}
+
+// ===========================================================================
+// Shared settlement — the single place a successful charge is written down
+// ===========================================================================
+
+/** The order fields settlement needs; kept structural so both routes can pass theirs. */
+interface SettleableOrder {
+  id: string;
+  total_cents: number;
+  amount_paid_cents: number;
+  balance_due_cents: number;
+}
+
+interface SettledCharge {
+  payment: {
+    id: string;
+    status: string;
+    amountCents: number;
+    cardBrand: string | null;
+    cardLastFour: string | null;
+    processorTransactionId: string | null;
+  };
+  amountPaidCents: number;
+  balanceDueCents: number;
+}
+
+/**
+ * Record an already-settled charge against the order, atomically.
+ *
+ * Both the straight-success path and the 3DS-completed path call this and nothing
+ * else, which is what makes a challenged booking indistinguishable from an
+ * unchallenged one: identical Payment row, identical balance arithmetic, identical
+ * audit event. Anything that differed between the two would be a bug the ledger
+ * eventually has to answer for.
+ */
+async function recordSettledCharge(
+  operatorId: string,
+  order: SettleableOrder,
+  amountCents: number,
+  result: StripePaymentResult,
+): Promise<SettledCharge> {
+  const amountPaidCents = order.amount_paid_cents + amountCents;
+  const balanceDueCents = order.total_cents - amountPaidCents;
+
+  const payment = await withTenant(operatorId, async (tx) => {
+    const created = await tx.payment.create({
+      data: {
+        id: createId(),
+        operator_id: operatorId,
+        order_id: order.id,
+        method: 'CARD',
+        status: 'PAID',
+        amount_cents: amountCents,
+        card_brand: result.cardBrand,
+        card_last_four: result.cardLastFour,
+        cardholder_name: result.cardholderName,
+        processor: 'STRIPE',
+        processor_transaction_id: result.paymentId,
+      },
+    });
+
+    await tx.order.update({
+      where: { id: order.id },
+      data: { amount_paid_cents: amountPaidCents, balance_due_cents: balanceDueCents },
+    });
+
+    await tx.orderEvent.create({
+      data: {
+        id: createId(),
+        operator_id: operatorId,
+        order_id: order.id,
+        type: 'PAYMENT',
+        description: `Charged card ending ${result.cardLastFour ?? '????'}`,
+        actor: 'customer',
+        metadata: {
+          paymentId: created.id,
+          processorTransactionId: result.paymentId,
+          amountCents,
+          receiptUrl: result.receiptUrl,
+        },
+      },
+    });
+
+    return created;
+  });
+
+  return {
+    payment: {
+      id: payment.id,
+      status: payment.status,
+      amountCents: payment.amount_cents,
+      cardBrand: payment.card_brand,
+      cardLastFour: payment.card_last_four,
+      processorTransactionId: payment.processor_transaction_id,
+    },
+    amountPaidCents,
+    balanceDueCents,
+  };
 }
 
 /**
@@ -113,73 +376,169 @@ payments.post('/charge', async (c) => {
       operatorId: c.var.operatorId,
     });
   } catch (err) {
+    // A 3DS/SCA challenge is not a failure — it is the bank asking the guest a
+    // question. Answer 200 with everything the browser needs to ask it, and leave
+    // the order's money untouched until POST /confirm says the guest answered.
+    const challenge = challengeFrom(err);
+    if (challenge) {
+      return c.json({
+        requiresAction: true,
+        payment: {
+          // No Payment row exists yet, so the intent IS the client's handle on
+          // this attempt — it is what /confirm expects back.
+          id: challenge.intentId ?? '',
+          status: 'REQUIRES_ACTION',
+          amountCents,
+          cardBrand: null,
+          cardLastFour: null,
+          processorTransactionId: challenge.intentId,
+          receiptUrl: null,
+        },
+        order: {
+          id: order.id,
+          amountPaidCents: order.amount_paid_cents,
+          balanceDueCents: order.balance_due_cents,
+        },
+        authentication: challenge,
+      });
+    }
     return stripeErrorResponse(c, err);
   }
 
-  // Record the settled charge atomically against the order.
-  const newAmountPaid = order.amount_paid_cents + amountCents;
-  const newBalanceDue = order.total_cents - newAmountPaid;
-
-  const payment = await withTenant(c.var.operatorId, async (tx) => {
-    const created = await tx.payment.create({
-      data: {
-        id: createId(),
-        operator_id: c.var.operatorId,
-        order_id: order.id,
-        method: 'CARD',
-        status: 'PAID',
-        amount_cents: amountCents,
-        card_brand: result.cardBrand,
-        card_last_four: result.cardLastFour,
-        cardholder_name: result.cardholderName,
-        processor: 'STRIPE',
-        processor_transaction_id: result.paymentId,
-      },
-    });
-
-    await tx.order.update({
-      where: { id: order.id },
-      data: {
-        amount_paid_cents: newAmountPaid,
-        balance_due_cents: newBalanceDue,
-      },
-    });
-
-    await tx.orderEvent.create({
-      data: {
-        id: createId(),
-        operator_id: c.var.operatorId,
-        order_id: order.id,
-        type: 'PAYMENT',
-        description: `Charged card ending ${result.cardLastFour ?? '????'}`,
-        actor: 'customer',
-        metadata: {
-          paymentId: created.id,
-          processorTransactionId: result.paymentId,
-          amountCents,
-          receiptUrl: result.receiptUrl,
-        },
-      },
-    });
-
-    return created;
-  });
+  const settled = await recordSettledCharge(c.var.operatorId, order, amountCents, result);
 
   return c.json(
     {
+      payment: { ...settled.payment, receiptUrl: result.receiptUrl },
+      order: {
+        id: order.id,
+        amountPaidCents: settled.amountPaidCents,
+        balanceDueCents: settled.balanceDueCents,
+      },
+    },
+    201,
+  );
+});
+
+/**
+ * POST /api/payments/confirm — public. Finishes the 3-D Secure round trip the
+ * charge above started.
+ *
+ *   action=complete — the guest authenticated at their bank. The intent is settled
+ *     with whichever driver owns it and then recorded exactly as a straight success
+ *     would be, so the booking is confirmed and the ledger balances.
+ *   action=cancel — the guest backed out. The intent is abandoned AND the order
+ *     created for this attempt is cancelled, releasing its capacity. Leaving it
+ *     behind is the "half-created order" LOCAL-FIRST-BUILD §5 forbids: seats held
+ *     for a booking nobody paid for and nobody will show up to.
+ *
+ * Public for the same reason /charge is: the guest is mid-checkout with no session.
+ */
+payments.post('/confirm', async (c) => {
+  if (!arePaymentsEnabled()) {
+    return c.json({ error: 'payments not configured' }, 501);
+  }
+
+  const body = await c.req.json().catch(() => null);
+  const parsed = confirmSchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ error: 'Invalid request', issues: parsed.error.flatten() }, 400);
+  }
+  const { orderId, action } = parsed.data;
+
+  const order = await c.var.db.order.findUnique({ where: { id: orderId } });
+  if (!order) {
+    return c.json({ error: 'Order not found' }, 404);
+  }
+
+  const intentId = parsed.data.intentId ?? (await pendingIntentForOrder(c.var.db, order.id));
+  if (!intentId) {
+    return c.json(
+      {
+        error: 'There is no payment awaiting authentication for this booking.',
+        code: 'no_pending_authentication',
+      },
+      409,
+    );
+  }
+
+  if (action === 'cancel') {
+    try {
+      await abandonChallenge(c.var.operatorId, intentId);
+    } catch (err) {
+      return stripeErrorResponse(c, err);
+    }
+
+    try {
+      await cancelBooking(c.var.operatorId, order.id, {
+        actor: 'customer',
+        reason: 'Card authentication was cancelled before payment',
+      });
+    } catch (err) {
+      // Already cancelled is the desired end state, not a failure to report.
+      if (!(err instanceof BookingError) || err.code !== 'ALREADY_CANCELLED') throw err;
+    }
+
+    return c.json({
+      cancelled: true,
+      order: { id: order.id, orderNumber: order.order_number, status: 'CANCELLED' },
+    });
+  }
+
+  // A guest who double-taps "Authenticate" must not be charged twice. The intent
+  // is the durable key: if it is already on a Payment row, that attempt is done and
+  // this call replays its answer rather than settling a second time.
+  const existing = await c.var.db.payment.findFirst({
+    where: { processor_transaction_id: intentId, order_id: order.id },
+  });
+  if (existing) {
+    return c.json({
       payment: {
-        id: payment.id,
-        status: payment.status,
-        amountCents: payment.amount_cents,
-        cardBrand: payment.card_brand,
-        cardLastFour: payment.card_last_four,
-        processorTransactionId: payment.processor_transaction_id,
-        receiptUrl: result.receiptUrl,
+        id: existing.id,
+        status: existing.status,
+        amountCents: existing.amount_cents,
+        cardBrand: existing.card_brand,
+        cardLastFour: existing.card_last_four,
+        processorTransactionId: existing.processor_transaction_id,
+        receiptUrl: null,
       },
       order: {
         id: order.id,
-        amountPaidCents: newAmountPaid,
-        balanceDueCents: newBalanceDue,
+        orderNumber: order.order_number,
+        amountPaidCents: order.amount_paid_cents,
+        balanceDueCents: order.balance_due_cents,
+      },
+    });
+  }
+
+  let result: StripePaymentResult;
+  try {
+    result = await completeChallenge(c.var.operatorId, intentId);
+  } catch (err) {
+    return stripeErrorResponse(c, err);
+  }
+
+  // The processor is the authority on how much actually moved (a partial capture
+  // settles for less than it authorized), but it can never be allowed to push the
+  // order past paid-in-full — that would invent money the guest does not owe.
+  const amountCents = Math.min(result.amountCents, order.balance_due_cents);
+  if (amountCents <= 0) {
+    return c.json(
+      { error: 'Nothing to settle — order has no outstanding balance', code: 'nothing_to_settle' },
+      409,
+    );
+  }
+
+  const settled = await recordSettledCharge(c.var.operatorId, order, amountCents, result);
+
+  return c.json(
+    {
+      payment: { ...settled.payment, receiptUrl: result.receiptUrl },
+      order: {
+        id: order.id,
+        orderNumber: order.order_number,
+        amountPaidCents: settled.amountPaidCents,
+        balanceDueCents: settled.balanceDueCents,
       },
     },
     201,

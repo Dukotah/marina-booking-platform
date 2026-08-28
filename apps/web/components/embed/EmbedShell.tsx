@@ -11,7 +11,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { isFramed, postToHost } from './protocol';
+import { isFramed } from './protocol';
 import type { EmbedSessionParams, EmbedStep } from './params';
 
 interface EmbedShellProps {
@@ -40,16 +40,31 @@ export function EmbedShell({
   backLabel,
   children,
 }: EmbedShellProps) {
-  // Only a real host page can act on "close". Opening /embed directly in a tab —
-  // which is how you test an install — would otherwise show a dead button.
+  /**
+   * In a modal the LOADER draws the close button, as a 40px circle pinned to the
+   * top-right of the dialog and painted over this frame. Rendering our own there as
+   * well put two controls with the same accessible name in the same 40px square —
+   * invisible on screen, because ours sat underneath, and duplicated for anyone
+   * using a screen reader or tabbing. The loader's is the one to keep: it is above
+   * the frame, it works when the frame never loads, and it can close the overlay
+   * without a round trip.
+   *
+   * So the frame's job in modal mode is only to leave that corner clear. Opening
+   * /embed directly in a tab (how you sanity-check an install) has no loader and no
+   * overlay, so nothing needs reserving there.
+   */
   const [standalone, setStandalone] = useState(false);
   useEffect(() => setStandalone(!isFramed()), []);
 
-  const showClose = session.mode === 'modal' && !standalone;
+  const reserveCloseSpace = session.mode === 'modal' && !standalone;
 
   return (
     <div className="flex min-h-0 flex-col">
-      <div className="sticky top-0 z-40 flex items-center gap-3 border-b border-slate-200 bg-white/95 px-3 py-2 backdrop-blur">
+      <div
+        className={`sticky top-0 z-40 flex items-center gap-3 border-b border-slate-200 bg-white/95 py-2 pl-3 backdrop-blur ${
+          reserveCloseSpace ? 'pr-14' : 'pr-3'
+        }`}
+      >
         {backHref ? (
           <Link
             href={backHref}
@@ -68,19 +83,6 @@ export function EmbedShell({
           {STEP_TITLES[step]}
         </span>
 
-        {showClose && (
-          <button
-            type="button"
-            onClick={() => postToHost('close', { reason: 'button' })}
-            aria-label="Close booking"
-            className="-mr-1 flex h-10 w-10 items-center justify-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-color)]"
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
-        )}
       </div>
 
       {children}

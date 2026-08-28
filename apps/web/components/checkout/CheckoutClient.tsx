@@ -46,6 +46,7 @@ import { TipSelector } from './TipSelector';
 import { PriceBreakdown } from './PriceBreakdown';
 import { WalletExpress } from './WalletExpress';
 import { PaymentSection, type PaymentSectionHandle } from './PaymentSection';
+import { ChallengeDialog, type ChallengeHandoff } from './ChallengeDialog';
 import type {
   AppliedPromo,
   CheckoutFormValues,
@@ -60,6 +61,28 @@ interface CheckoutClientProps {
   wallet: WalletConfig;
   /** Operator (white-label) name for the waiver copy. */
   operatorName: string;
+}
+
+/**
+ * A booking whose card needs the bank's second factor (3-D Secure / SCA).
+ *
+ * The order exists and the seats are held, but no money has moved and no Payment
+ * row has been written — that happens when the guest answers the challenge. If
+ * they back out instead, the dialog releases the order so nothing is left holding
+ * capacity (docs/LOCAL-FIRST-BUILD.md §5).
+ */
+interface PendingChallenge {
+  orderId: string;
+  orderNumber: string;
+  amountCents: number;
+  handoff: ChallengeHandoff;
+  /**
+   * The details this checkout was submitted with, kept so "book again" still
+   * remembers the guest once they come back from their bank. Deliberately the
+   * shape `saveRememberedGuest` accepts, not a full `RememberedGuest` — the
+   * timestamp on that record belongs to the moment the booking succeeds.
+   */
+  guest: Parameters<typeof saveRememberedGuest>[0];
 }
 
 function emptyParticipant(): ParticipantFormValue {
@@ -187,8 +210,12 @@ export function CheckoutClient({
   const [invalidCount, setInvalidCount] = useState(0);
   // Returning-guest ("book again") prefill, read from this device only.
   const [rememberedGuest, setRememberedGuest] = useState<RememberedGuest | null>(null);
+  // Set when the bank asks for a second factor; drives the modal below.
+  const [challenge, setChallenge] = useState<PendingChallenge | null>(null);
 
   const paymentRef = useRef<PaymentSectionHandle>(null);
+  // See the submit handler: the de-duplication key for this checkout attempt.
+  const attemptKey = useRef<string | null>(null);
   const errorSummaryRef = useRef<HTMLDivElement>(null);
 
   const summaryHeadingId = useId();
@@ -217,6 +244,36 @@ export function CheckoutClient({
 
   const fail = (message: string) =>
     setSubmitError((prev) => ({ message, nonce: (prev?.nonce ?? 0) + 1 }));
+
+  // --- 3-D Secure outcomes -------------------------------------------------
+  // The dialog owns the round trip to the API; these three handlers are what the
+  // page does with each of its three possible endings.
+
+  /**
+   * Authenticated. The API settled the intent, wrote the Payment row and zeroed
+   * the balance, so from here this is the ordinary success path — a challenged
+   * booking must be indistinguishable from an unchallenged one.
+   */
+  const onChallengeAuthenticated = () => {
+    if (!challenge) return;
+    saveRememberedGuest(challenge.guest);
+    setChallenge(null);
+    router.push(`/confirmation?order=${encodeURIComponent(challenge.orderNumber)}`);
+  };
+
+  /** Backed out. The API released the order, so the guest can retry cleanly. */
+  const onChallengeCancelled = () => {
+    setChallenge(null);
+    fail(
+      'Your bank did not confirm the payment, so nothing was charged and your reservation was released. You can try again, or use another card.',
+    );
+  };
+
+  /** The dialog could not complete at all — surface its own message verbatim. */
+  const onChallengeFailed = (message: string) => {
+    setChallenge(null);
+    fail(message);
+  };
 
   // Keep the participant field array sized to the chosen quantity, preserving any
   // already-entered values.
@@ -298,7 +355,15 @@ export function CheckoutClient({
         return;
       }
 
+      // One key per checkout attempt, created lazily and held for the life of this
+      // component. A retry of the SAME attempt (the guest pressing again after a
+      // timeout, or a transport-level retry) reuses it and resolves to the order
+      // already created; a genuinely new attempt gets a new key.
+      attemptKey.current ??=
+        globalThis.crypto?.randomUUID?.() ?? `att-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
       const result = await placeOrder({
+        idempotencyKey: attemptKey.current,
         activityId: selection.activityId,
         rateId: selection.rate.id,
         timeslotId: selection.timeslotId,
@@ -326,13 +391,41 @@ export function CheckoutClient({
         return;
       }
 
-      // Remember this guest (this device only) so their next booking is one-tap.
-      saveRememberedGuest({
+      const guest: PendingChallenge['guest'] = {
         firstName: values.firstName,
         lastName: values.lastName,
         email: values.email,
         phone: values.phone,
-      });
+      };
+
+      // The bank wants a second factor. This is NOT a decline: the order is real,
+      // the seats are held, and the guest is one confirmation away from booked.
+      // Show the challenge instead of the confirmation page and let the dialog
+      // finish (or release) the payment.
+      if (result.payment.status === 'REQUIRES_ACTION') {
+        setChallenge({
+          orderId: result.order.id,
+          orderNumber: result.order.orderNumber,
+          amountCents: result.payment.amountCents,
+          handoff: {
+            // The charge response names its own driver, but the checkout action
+            // narrows that response to `PaymentResult` before we see it, so the
+            // provider is inferred from whether a real Stripe key is configured.
+            // Widening `submitPayment` in lib/orders.ts to pass `authentication`
+            // through would make this exact — and would also supply the client
+            // secret Stripe.js needs in cloud mode.
+            provider: stripe.configured ? 'stripe' : 'sandbox',
+            intentId: result.payment.paymentId || null,
+            clientSecret: null,
+            publishableKey: stripe.publishableKey,
+          },
+          guest,
+        });
+        return;
+      }
+
+      // Remember this guest (this device only) so their next booking is one-tap.
+      saveRememberedGuest(guest);
 
       router.push(`/confirmation?order=${encodeURIComponent(result.order.orderNumber)}`);
     } catch {
@@ -497,6 +590,11 @@ export function CheckoutClient({
               {submitError && (
                 <div
                   role="alert"
+                  // Named so it is addressable on its own. Without a name this is
+                  // just one of several alerts on the page (every invalid field
+                  // renders one), and "the payment failed" becomes indistinguishable
+                  // from "the form is incomplete" to a screen reader and to a test.
+                  aria-label="Payment problem"
                   className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700"
                 >
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
@@ -531,6 +629,23 @@ export function CheckoutClient({
             </div>
           </div>
         </div>
+
+        {/*
+          Rendered inside the form (its controls are `type="button"`, so nothing
+          here can submit it) and mounted only while a challenge is outstanding —
+          keying off `challenge` means every open starts with fresh state and the
+          focus-restore effect runs at the right moments.
+        */}
+        {challenge && (
+          <ChallengeDialog
+            orderId={challenge.orderId}
+            amountCents={challenge.amountCents}
+            handoff={challenge.handoff}
+            onAuthenticated={onChallengeAuthenticated}
+            onCancelled={onChallengeCancelled}
+            onFailed={onChallengeFailed}
+          />
+        )}
       </form>
     </FormProvider>
   );

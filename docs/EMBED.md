@@ -122,8 +122,16 @@ your site.
    easy to tap.
 4. Press `Esc`. The window should close and put you back on the button you
    clicked.
+5. Scroll-test it: open the booking window and try to scroll. **Your page behind
+   should not move.** Then close it and scroll again — it should scroll normally,
+   from exactly where you left it.
+6. Look at the corners. If you have a chat bubble, a cookie bar or a "back to
+   top" button, none of them should sit on top of the booking window.
 
-If nothing appears, see Troubleshooting at the bottom.
+Steps 5 and 6 are there because they are the two things that used to break on
+real sites. See Troubleshooting if either one does.
+
+If nothing appears at all, see Troubleshooting at the bottom.
 
 ---
 
@@ -197,11 +205,16 @@ MarinaBooking.close();                             // close it
 MarinaBooking.mount('#booking');                   // render the flow inline, from code
 MarinaBooking.on(event, fn) / .off(event, fn);     // subscribe / unsubscribe
 MarinaBooking.destroy();                           // remove every widget on the page
-MarinaBooking.version;                             // e.g. "1.0.0"
+MarinaBooking.version;                             // e.g. "1.1.0"
 ```
 
-`MarinaBooking` is the only thing the script adds to your page. It does not
-touch your cookies, your storage, your URL, or your styles.
+`MarinaBooking` is the only thing the script adds to your page. It does not touch
+your cookies, your storage or your URL, and it adds no stylesheet to your site.
+
+The one thing it does change, and only while the booking window is open, is that
+it holds your page still (it sets `overflow: hidden` on `<html>` and `<body>`, and
+puts back exactly what was there when the window closes, scroll position and all).
+That is what stops the page sliding around behind the window on a trackpad.
 
 ---
 
@@ -212,10 +225,14 @@ box that a customer cannot operate is a booking you do not get:
 
 - The button announces itself as opening a dialog.
 - The window is a real `dialog` with `aria-modal`, and keyboard focus is trapped
-  inside it while it is open.
+  inside it while it is open — in **both** directions. Tab past the end wraps to
+  the close button; Shift+Tab off the start wraps back into the booking flow.
+  (Because the flow runs in a frame, wrapping backwards lands at the top of the
+  flow rather than on its last field. That is a limitation of frames, not a bug.)
 - `Esc` closes it, from inside the flow as well as from your page.
 - Closing returns focus to the button that opened it.
-- Tap targets are at least 44px on phones.
+- Tap targets are at least 44px on phones, and the **Book now** button goes full
+  width below 640px so it is easy to hit.
 - Animations are cut when the visitor has "reduce motion" turned on.
 
 ---
@@ -240,11 +257,48 @@ element you targeted (`height: 400px; overflow: hidden`). Use `min-height`
 instead, or nothing at all.
 
 **The button looks wrong.**
-It shouldn't — the widget renders in a shadow root, so your site's CSS cannot
-reach it and its CSS cannot reach your site. If your site is one of the rare ones
-where that is unavailable, the widget falls back to its own `mbw-`-prefixed class
-names, and a very aggressive global stylesheet (`button { ... !important }`) could
-show through. Set `data-color` to at least keep the brand right.
+It shouldn't. The widget renders in a shadow root, so your site's CSS cannot reach
+inside it and its CSS cannot reach your site — a global `button { ... !important }`
+rule, a font, a text-transform, none of it crosses. This is tested against a mock
+site whose stylesheet is deliberately as aggressive as we could make it.
+
+Two real exceptions:
+
+- If your browser is old enough to have no shadow DOM, the widget falls back to
+  its own `mbw-`-prefixed class names, and a very aggressive global stylesheet
+  could show through. Set `data-color` to at least keep the brand right.
+- CSS variables are the one thing that does cross the boundary. If your site
+  happens to define custom properties called `--mbw-accent` or `--mbw-h`, rename
+  them; the widget defends against both, but nothing good comes of the collision.
+
+**The booking window appears at the bottom of the page instead of over it, and
+the page jumps.**
+Fixed in loader **1.1.0**. Some themes apply `transform: translateZ(0)` to every
+top-level element as a speed trick; under CSS rules that makes the theme's element
+— not the screen — the reference box for anything positioned over the page, so the
+booking window was laid out inside it and the page grew by the window's height.
+The loader now pins its own container against that. Check
+`MarinaBooking.version` in your browser console; if it is not at least `1.1.0`,
+hard-refresh the page (Ctrl+Shift+R / Cmd+Shift+R) to clear the cached script.
+
+**Your chat bubble or cookie bar sits on top of the booking window.**
+Also fixed in 1.1.0. The window now sits at the highest layer a browser allows,
+and re-claims the top of the stack every time it opens — which matters because
+chat widgets are usually injected after the page has loaded, i.e. after us. If
+something still covers it, that thing is inside a container of its own that the
+browser is treating as a separate layer; tell us what it is and we will look.
+
+**The page behind scrolls while the booking window is open.**
+Also fixed in 1.1.0. If your theme uses `html { overflow-x: hidden }` — a very
+common fix for an accidental sideways scrollbar — then locking the page body has
+no effect, so the loader now locks both. Your scroll position is restored exactly
+when the window closes.
+
+**The booking window is cut off at the bottom and I cannot scroll it.**
+Fixed in 1.1.0. On a tall booking (a long checkout, or a phone) the window is
+capped at the height of the screen, and the flow inside now scrolls. Before 1.1.0
+the inside scrollbar was suppressed, so anything past the bottom edge was
+unreachable.
 
 **It works on desktop but not on an old iPad.**
 The loader is deliberately plain JavaScript with no dependencies, so it runs on
@@ -286,3 +340,55 @@ old browsers. The booking flow itself needs a browser from roughly 2019 onward.
 - **The `booking-completed` payload is money.** It is integer cents, and it is
   emitted once per order (guarded by `sessionStorage`). Operators will build
   ad-spend decisions on it.
+
+### Surviving a hostile host page
+
+`e2e/specs/embed.spec.ts` loads the loader onto `e2e/fixtures/host-page.html` — a
+mock marina site with a global reset, tag selectors on `div`/`button`/`iframe`,
+`html { overflow-x: hidden }`, `body > div { transform: translateZ(0) }`, colliding
+CSS custom properties, a stale `window.MarinaBooking`, a `message` listener that
+throws, and a chat bubble at int32-max z-index injected after load. The fixture is
+served from a real `node:http` server on `127.0.0.1`, which is a genuinely
+different origin from `localhost:3000`, so postMessage and origin pinning are
+exercised for real rather than simulated.
+
+The first time it ran, six of ten checks failed. What it found, and the rules that
+came out of it — none of these are obvious from reading the loader on its own:
+
+- **A shadow root protects the inside, not the host element.** The host `<div>` is
+  in the operator's light DOM, so their `div { … }` rules match it — and CSS
+  scoping gives an outer-tree *normal* declaration the win over an inner-tree
+  `:host` one, so `:host { all: initial }` is not the shield it looks like. The
+  only declaration the page cannot outrank is a `!important` **style attribute** on
+  that element, which is what `HOST_GUARDS` / `harden()` writes. Losing this is not
+  cosmetic: with `body > div { transform: translateZ(0) }` on the page, the fixed
+  overlay took that div as its containing block, rendered as a 3400px box at the
+  bottom of the document, and scrolled the page 2100px to reach it.
+- **z-index 2147483647 or nothing.** int32 max is where browsers clamp, so it can
+  only be tied, never beaten — and a tie is settled by document order. Chat
+  widgets and consent gates are injected by tag managers *after* we mount, so
+  `open()` re-appends the modal's host element to `<body>` every time.
+- **Locking `<body>` is not a scroll lock.** Body overflow only propagates to the
+  viewport while `<html>`'s own overflow is `visible`, and `html { overflow-x:
+  hidden }` removes that. Both elements are locked, and both inline values are
+  restored verbatim.
+- **`scrolling="no"` belongs to inline mode only.** Inline grows to the reported
+  height so it never needs a scrollbar. A modal is capped at 92vh, so suppressing
+  its scrollbar made everything past the cap unreachable — on the seeded tenant the
+  catalog alone reports 3884px into an 828px dialog.
+- **A focus trap needs a sentinel at *both* ends.** The start sentinel sat after
+  the close button, so Shift+Tab off the close button walked onto the host page.
+- **`all: initial` does not reset custom properties.** A host `--mbw-accent` or
+  `--mbw-h` inherits straight through the boundary; `.mbw-root` re-declares both,
+  using `--mbw-h: initial` (the guaranteed-invalid value) so `var(--mbw-h, 560px)`
+  falls back to ours.
+- **`width: 100%` on a shrink-to-fit host is a no-op.** The button launcher's host
+  is `inline-block` to stay in the operator's text flow, which silently made the
+  stylesheet's phone rule do nothing. The host's display now tracks the same
+  breakpoint through `matchMedia`, because a style attribute cannot carry a media
+  query.
+
+Things that held up unchanged on first contact: shadow-root style isolation in
+both directions for everything except custom properties, taking over a stale
+`window.MarinaBooking`, the origin-pinned handshake, `Esc` and focus restoration,
+inline mode's grow-to-fit, and the `data-activity` deep link.

@@ -13,16 +13,29 @@
   --brand-color: #0ea5e9;
 }
 
-/* Make the page a column so footers can stick to the bottom on short pages. */
 html,
 body {
   min-height: 100%;
 }
 
-body {
-  display: flex;
-  flex-direction: column;
-}
+/*
+ * `body` is deliberately a plain block box.
+ *
+ * It used to be `display: flex; flex-direction: column` to push footers to the bottom,
+ * which bought nothing — every route already builds its own full-height column
+ * (`flex min-h-screen flex-col`, see app/page.tsx and friends) — and cost the mobile
+ * funnel outright.
+ *
+ * A flex item with `margin-inline: auto` is NOT stretched to the container's cross
+ * size; auto cross-axis margins suppress `align-self: stretch` and the item becomes
+ * shrink-to-fit instead. The activity page's `<main class="mx-auto max-w-6xl">` is
+ * exactly that, so it sized itself to its max-content width — clamped only by
+ * `max-w-6xl`, i.e. 1152px — inside a 412px phone. The whole booking route then had
+ * ~740px of horizontal overflow, the rate cards sat off-screen, and a tap on one
+ * landed on whatever the browser had scrolled over the top of it. The page still
+ * *looked* right in a screenshot, which is why it survived until a phone-sized
+ * browser test drove it.
+ */
 
 @layer base {
   /*
@@ -69,6 +82,19 @@ body {
     scroll-snap-type: x proximity;
     overscroll-behavior-x: contain;
     -webkit-overflow-scrolling: touch;
+
+    /*
+     * A horizontal scroller must never bill its scroll width to the layout.
+     *
+     * The strip is 14 fixed-width day chips — 1064px of content that is *meant* to be
+     * flicked through. Without these two declarations that 1064px became the strip's
+     * min-content contribution, which propagated up through the booking widget into the
+     * activity page's grid track and pushed the whole booking route to 1140px wide
+     * inside a 412px phone. `overflow-x: auto` alone does not stop that: it makes the
+     * box scrollable, it does not make it shrinkable.
+     */
+    min-width: 0;
+    max-width: 100%;
   }
 
   .day-strip > * {

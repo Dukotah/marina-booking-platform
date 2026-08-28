@@ -315,6 +315,13 @@ export interface BookingParticipant {
  * straight through.
  */
 export interface CreateBookingPayload {
+  /**
+   * Stable per-attempt de-duplication key. The API resolves a replayed submit to the
+   * order the first attempt created instead of booking twice — which matters most on
+   * exactly the weak rural connection this product is built for, where a request can
+   * succeed on the server and still time out on the phone.
+   */
+  idempotencyKey?: string;
   activityId: string;
   rateId: string;
   timeslotId: string;

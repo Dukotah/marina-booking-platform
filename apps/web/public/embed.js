@@ -29,13 +29,16 @@
   if (!window || !document) return;
 
   var NAMESPACE = 'MarinaBooking';
-  var VERSION = '1.0.0';
+  var VERSION = '1.1.0';
   var PROTOCOL = 'marina-embed';
   var PROTOCOL_VERSION = 1;
 
-  /* The overlay must clear sticky headers and cookie banners without using
-     Number.MAX_SAFE_INTEGER, which some host stacking contexts fight over. */
-  var Z_INDEX = 2147483000;
+  /* 2147483647 is int32 max, which is where every browser clamps z-index. Nothing on
+     the host page can legally outrank it — a cookie banner or a chat bubble can only
+     TIE, and a tie is decided by document order, which is why `open()` re-appends the
+     overlay's host element to <body> every time. A smaller "polite" value is not
+     politeness, it is losing: sites really do ship chat widgets at int32 max. */
+  var Z_INDEX = 2147483647;
   var MOBILE_BREAKPOINT = 640;
   var READY_TIMEOUT_MS = 15000;
   var DEFAULT_INLINE_HEIGHT = 720;
@@ -136,14 +139,25 @@
 
   function styleText(accent) {
     return [
-      /* `all: initial` is the point of the shadow root: no host font-size, color,
-         line-height, or reset leaks in. It also resets display, so restore it. */
+      /* Stops host font-size, color and line-height inheriting in — but only where
+         the host page has no rule of its own for that property. A `:host` rule lives
+         in the inner tree, and CSS scoping gives an outer-tree NORMAL declaration the
+         win, so a bare `div { … }` on the page beats this. The RESET_GUARDS and
+         LAYOUT_GUARDS below are the declarations that actually hold; this rule is the
+         floor beneath them, and the only protection the no-shadow-DOM fallback has. */
       ':host { all: initial; display: block; }',
       '.mbw-root, .mbw-root * { box-sizing: border-box; }',
       '.mbw-root {',
       '  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;',
       '  line-height: 1.4;',
+      '  font-style: normal; letter-spacing: normal; text-transform: none;',
+      /* Custom properties are the one thing `all: initial` does NOT reset, so a host
+         page that happens to define `--mbw-accent` or `--mbw-h` inherits straight
+         through the shadow boundary. Re-declaring both here takes that back: `initial`
+         on a custom property makes it guaranteed-invalid, so `var(--mbw-h, 560px)`
+         uses our fallback until a real resize message arrives. */
       '  --mbw-accent: ' + (accent || '#0ea5e9') + ';',
+      '  --mbw-h: initial;',
       '}',
 
       /* Launcher button ---------------------------------------------------- */
@@ -161,7 +175,7 @@
       '.mbw-launch svg { flex: none; }',
 
       '.mbw-launch--floating {',
-      '  position: fixed; bottom: 20px; z-index: ' + (Z_INDEX - 10) + ';',
+      '  position: fixed; bottom: 20px; z-index: ' + (Z_INDEX - 1) + ';',
       '  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.28);',
       '  border-radius: 999px; padding: 14px 24px;',
       '}',
@@ -242,14 +256,94 @@
   var fallbackStylesInjected = false;
 
   /**
+   * Declarations forced onto our shadow HOST element.
+   *
+   * The shadow root protects everything inside it, but the host element itself lives
+   * in the operator's light DOM, so their `div { … }` and `body > div { … }` rules
+   * match it. Worse, CSS scoping says a NORMAL declaration in the outer tree beats a
+   * normal declaration in the inner tree — so `:host { all: initial }` loses to a
+   * plain `div { … }` rule on the page. A style attribute marked `!important` is the
+   * only declaration on that element the host page cannot outrank.
+   *
+   * `all: initial` does the real work; in particular it clears any `transform` /
+   * `filter` / `contain`, which are what turn a top-level div into the containing
+   * block for our `position: fixed` overlay (the "GPU acceleration" hack, `body > div
+   * { transform: translateZ(0) }`, is on a startling number of themes). The rest are
+   * restated because `all` is a shorthand an old engine may reject outright, and a
+   * silent failure here reads as a layout bug rather than a missing feature.
+   */
+  /* Structural properties that break OUR layout if the page imposes them on an
+     element of ours: a containing block for `position: fixed`, a clip, a collapsed
+     or invisible box. Every element the loader creates gets these. */
+  var LAYOUT_GUARDS = [
+    ['position', 'static'],
+    ['transform', 'none'],
+    ['filter', 'none'],
+    ['perspective', 'none'],
+    ['contain', 'none'],
+    ['clip-path', 'none'],
+    ['overflow', 'visible'],
+    ['float', 'none'],
+    ['width', 'auto'],
+    ['height', 'auto'],
+    ['min-width', '0'],
+    ['min-height', '0'],
+    ['max-width', 'none'],
+    ['max-height', 'none'],
+    ['opacity', '1'],
+    ['visibility', 'visible'],
+    ['pointer-events', 'auto'],
+    ['isolation', 'auto'],
+    ['z-index', 'auto'],
+  ];
+
+  /* The full reset, for a shadow HOST only. `all: initial` has to come first — it
+     is the shorthand the rest of the guards then refine — and it is what stops the
+     operator's typography inheriting across the shadow boundary.
+
+     The mount anchor deliberately does NOT get these: it sits in the operator's own
+     text flow, and resetting it would throw away their `text-align: center` and
+     left-align a button they had centred. */
+  var RESET_GUARDS = [
+    ['all', 'initial'],
+    ['margin', '0'],
+    ['padding', '0'],
+    ['border', '0'],
+    ['font-style', 'normal'],
+    ['letter-spacing', 'normal'],
+    ['text-transform', 'none'],
+  ];
+
+  /**
+   * Pin an element of ours against the host page's stylesheet.
+   *
+   * @param full true for a shadow host (structure + typography reset), false for a
+   *             wrapper that should still inherit the operator's page context
+   */
+  function harden(el, display, full) {
+    var lists = full ? [RESET_GUARDS, LAYOUT_GUARDS] : [LAYOUT_GUARDS];
+    for (var l = 0; l < lists.length; l += 1) {
+      for (var i = 0; i < lists[l].length; i += 1) {
+        try {
+          el.style.setProperty(lists[l][i][0], lists[l][i][1], 'important');
+        } catch (err) {
+          /* An engine that rejects one property must still get the rest. */
+        }
+      }
+    }
+    if (display) el.style.setProperty('display', display, 'important');
+  }
+
+  /**
    * Create an isolated render surface. Shadow DOM where available (real style
    * isolation in both directions); otherwise a prefixed-class container with the
    * same stylesheet appended to <head> once.
    */
-  function createSurface(accent) {
+  function createSurface(accent, display) {
     var host = document.createElement('div');
     host.className = 'mbw-host';
     host.setAttribute('data-marina-embed', '');
+    harden(host, display, true);
 
     var root;
     if (typeof host.attachShadow === 'function') {
@@ -413,7 +507,10 @@
     this.isOpen = false;
     this.lastFocused = null;
     this.readyTimer = null;
-    this.previousBodyOverflow = null;
+    /** Inline `overflow` the host had on <html> and <body> before we locked them. */
+    this.previousOverflow = null;
+    /** The phone-breakpoint listener a button launcher installs, for teardown. */
+    this.launcherQuery = null;
     this.destroyed = false;
 
     widgetsById[this.id] = this;
@@ -444,11 +541,21 @@
       : c.base + '/';
   };
 
-  Widget.prototype.buildIframe = function (overrides) {
+  /**
+   * @param overrides  per-open config overrides for the frame URL
+   * @param growsToFit true when the frame's height tracks its content (inline mode),
+   *                   which is the only case where suppressing its scrollbar is safe
+   */
+  Widget.prototype.buildIframe = function (overrides, growsToFit) {
     var iframe = document.createElement('iframe');
     iframe.src = this.frameUrl(overrides);
     iframe.title = this.config.title;
-    iframe.setAttribute('scrolling', 'no');
+    /* Inline grows to whatever height the frame reports, so it never needs a
+       scrollbar and `scrolling="no"` stops a transient one flashing mid-measure.
+       A MODAL is capped at 92vh, so anything taller than that has to scroll inside
+       the frame — `scrolling="no"` there does not tidy a scrollbar away, it makes
+       the bottom of the checkout permanently unreachable. */
+    if (growsToFit) iframe.setAttribute('scrolling', 'no');
     iframe.setAttribute('frameborder', '0');
     iframe.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin');
     // Wallet payments and Stripe's 3DS challenge both need these grants.
@@ -520,14 +627,14 @@
   Widget.prototype.mountInline = function (mountPoint) {
     if (this.surface) return this;
 
-    var surface = createSurface(this.config.color);
+    var surface = createSurface(this.config.color, 'block');
     this.surface = surface;
 
     var wrap = document.createElement('div');
     wrap.className = 'mbw-inline';
     wrap.style.minHeight = this.config.height + 'px';
 
-    var iframe = this.buildIframe();
+    var iframe = this.buildIframe(null, true);
     iframe.style.height = this.config.height + 'px';
     this.iframe = iframe;
 
@@ -542,14 +649,37 @@
 
   // --- launcher -------------------------------------------------------------
 
+  /**
+   * Keep the launcher's host box in step with the stylesheet's phone breakpoint.
+   *
+   * A button-mode launcher sits in the operator's text flow, so its host element is
+   * inline-block — and that silently makes the stylesheet's `.mbw-launch { width:
+   * 100% }` phone rule a no-op, because 100% of a shrink-to-fit box is the button's
+   * own width. The host has to become a block box at the same breakpoint, and the
+   * only place we can say so is the style attribute (see harden), which cannot
+   * carry a media query. So: watch the query, restate the display.
+   */
+  Widget.prototype.trackLauncherBox = function (host) {
+    if (!window.matchMedia) {
+      host.style.setProperty('display', 'inline-block', 'important');
+      return;
+    }
+    var query = window.matchMedia('(max-width: ' + MOBILE_BREAKPOINT + 'px)');
+    var apply = function () {
+      host.style.setProperty('display', query.matches ? 'block' : 'inline-block', 'important');
+    };
+    apply();
+    if (query.addEventListener) query.addEventListener('change', apply);
+    else if (query.addListener) query.addListener(apply); // Safari < 14
+    this.launcherQuery = { query: query, apply: apply };
+  };
+
   Widget.prototype.mountLauncher = function (mountPoint, floating) {
     if (this.launcher) return this;
 
-    var surface = createSurface(this.config.color);
+    var surface = createSurface(this.config.color, 'block');
     this.surface = surface;
-    // An inline-block host keeps a launcher sitting in the operator's text flow
-    // instead of claiming a whole row. Inline styles beat the `:host` rule.
-    if (!floating) surface.host.style.display = 'inline-block';
+    if (!floating) this.trackLauncherBox(surface.host);
 
     var button = document.createElement('button');
     button.type = 'button';
@@ -608,11 +738,16 @@
 
     /* The overlay gets its OWN surface attached to <body>, never the launcher's.
        A host ancestor with `transform` or `filter` would otherwise become the
-       containing block for our position:fixed overlay and clip it to that box. */
-    if (!this.modalSurface) {
-      this.modalSurface = createSurface(this.config.color);
-      document.body.appendChild(this.modalSurface.host);
-    }
+       containing block for our position:fixed overlay and clip it to that box.
+
+       Re-appended on EVERY open, not just the first. Our z-index is already int32
+       max, so the only thing that can cover us is something that ties — and a tie is
+       resolved by document order. Chat widgets, consent gates and "back to top"
+       buttons are all injected by tag managers after the page has settled, i.e.
+       after we mounted. Moving our host back to the end of <body> costs nothing (the
+       shadow root travels with it) and settles the tie in our favour. */
+    if (!this.modalSurface) this.modalSurface = createSurface(this.config.color, 'block');
+    document.body.appendChild(this.modalSurface.host);
 
     var self = this;
     var overlay = document.createElement('div');
@@ -647,13 +782,18 @@
       self.close('button');
     });
 
-    var iframe = this.buildIframe(overrides);
+    var iframe = this.buildIframe(overrides, false);
     iframe.style.height = '100%';
     this.iframe = iframe;
 
-    /* Focus trap: the sentinels are the first and last tab stops inside the
-       dialog, so tabbing off either end wraps back into it. Focus moves into the
-       iframe's own document naturally in between — the browser handles that. */
+    /* Focus trap. The sentinels have to be the FIRST and LAST tab stops in the
+       dialog, which means the start sentinel goes before the close button — with it
+       after, Shift+Tab off the close button walked straight out of the dialog and
+       onto the host page, which is the whole failure mode a trap exists to prevent.
+       Tabbing forwards off the end wraps to the close button; backwards off the
+       start wraps to the frame. Focus moves through the frame's own document
+       naturally in between; a cross-origin frame is a single stop from out here, so
+       backwards-wrapping lands at its top rather than its last field. */
     on(startSentinel, 'focus', function () {
       iframe.focus();
     });
@@ -661,8 +801,8 @@
       close.focus();
     });
 
-    dialog.appendChild(close);
     dialog.appendChild(startSentinel);
+    dialog.appendChild(close);
     dialog.appendChild(iframe);
     dialog.appendChild(this.buildStatus());
     dialog.appendChild(endSentinel);
@@ -673,10 +813,20 @@
     this.overlay = overlay;
     this.closeButton = close;
 
-    // Lock host scrolling while the overlay owns the screen, remembering whatever
-    // the host had set so we restore it exactly.
-    this.previousBodyOverflow = document.body.style.overflow;
+    /* Lock host scrolling while the overlay owns the screen, remembering whatever the
+       host had set so we restore it exactly.
+
+       BOTH elements, not just <body>. The body's overflow only propagates to the
+       viewport while <html>'s own overflow is `visible`, and `html { overflow-x:
+       hidden }` — the standard fix for an accidental horizontal scrollbar, and on a
+       large share of real themes — takes that away. On those pages locking the body
+       alone does literally nothing and the page scrolls behind the modal. */
+    this.previousOverflow = {
+      body: document.body.style.overflow,
+      root: document.documentElement.style.overflow,
+    };
     document.body.style.overflow = 'hidden';
+    document.documentElement.style.overflow = 'hidden';
 
     this.onKeydown = function (event) {
       if (event.key === 'Escape' || event.keyCode === 27) {
@@ -717,8 +867,11 @@
     this.iframe = null;
     this.statusEl = null;
 
-    document.body.style.overflow = this.previousBodyOverflow || '';
-    this.previousBodyOverflow = null;
+    if (this.previousOverflow) {
+      document.body.style.overflow = this.previousOverflow.body;
+      document.documentElement.style.overflow = this.previousOverflow.root;
+      this.previousOverflow = null;
+    }
 
     if (this.launcher) this.launcher.setAttribute('aria-expanded', 'false');
 
@@ -742,6 +895,15 @@
   Widget.prototype.destroy = function () {
     this.close('destroy');
     this.clearReadyTimeout();
+
+    // A media-query listener left behind would keep a reference to a detached host.
+    if (this.launcherQuery) {
+      var q = this.launcherQuery;
+      if (q.query.removeEventListener) q.query.removeEventListener('change', q.apply);
+      else if (q.query.removeListener) q.query.removeListener(q.apply);
+      this.launcherQuery = null;
+    }
+
     var surfaces = [this.surface, this.modalSurface];
     for (var i = 0; i < surfaces.length; i += 1) {
       var s = surfaces[i];
@@ -880,7 +1042,11 @@
       warn('data-target "' + config.target + '" matched nothing; mounting inline instead.');
     }
 
+    // Ours, not theirs — so it gets the same guards as a surface host. Without them
+    // a `body > div { transform: … }` rule on the page turns this wrapper into the
+    // containing block for anything fixed inside it.
     var anchor = document.createElement('div');
+    harden(anchor, 'block', false);
     if (script && script.parentNode) {
       script.parentNode.insertBefore(anchor, script.nextSibling);
     } else {

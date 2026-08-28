@@ -148,34 +148,106 @@ export class CheckoutPage {
     });
     await this.page.goto(`/checkout?${params.toString()}`, { waitUntil: 'domcontentloaded' });
     await expect(this.submitButton()).toBeVisible();
+    // Visible is not the same as usable — see waitForFormReady.
+    await this.waitForFormReady();
   }
 
   submitButton(): Locator {
     return this.page.getByRole('button', { name: /Complete booking|Processing/ });
   }
 
-  /** The live region the submit pipeline writes recoverable failures into. */
+  /**
+   * The live region the submit pipeline writes recoverable payment failures into.
+   *
+   * Deliberately NOT a bare `getByRole('alert')`. The checkout page renders an alert per
+   * invalid field (`<p role="alert">First name is required</p>`) and Next mounts a route
+   * announcer with the same role, so an unscoped alert locator means "whatever the page
+   * is currently complaining about" — which is how a form that failed to fill can be
+   * mistaken for a declined card. Narrowing to the alert inside the checkout form that
+   * is an element in its own right, rather than a field's message, resolves to exactly
+   * one thing: the submit-pipeline banner in CheckoutClient.
+   *
+   * This is structural because the product gives that banner no accessible name. Once it
+   * carries one (`aria-label="Payment problem"`, requested in this run's report) the body
+   * of this method becomes `getByRole('alert', { name: 'Payment problem' })` and no spec
+   * has to change.
+   */
   alert(): Locator {
-    return this.page.getByRole('alert');
+    return this.page.locator('form div[role="alert"]');
+  }
+
+  /**
+   * Wait until React has actually claimed the checkout form.
+   *
+   * This is not ceremony, it is the difference between a real test and a false one. The
+   * form is uncontrolled `react-hook-form`: the server paints the inputs immediately, and
+   * when `register()` finally attaches during hydration it writes the form's
+   * `defaultValues` (empty strings) straight back into every DOM node it has just taken
+   * over. A `fill()` that lands in that window is silently erased — the field is typed,
+   * then blank a frame later — and the test goes on to submit an empty form. That
+   * surfaces as "First name is required" on a page the spec believes it filled, which
+   * reads like a product bug and is not one.
+   *
+   * The signal is React's own: it stamps a `__reactProps$…` key onto a host element when
+   * it claims it, so its presence on the first input means that element's ref callback —
+   * and with it react-hook-form's registration — has run. There is no product-visible
+   * marker for this yet; a `data-hydrated` attribute on the checkout <form> would be a
+   * cleaner hook and is in the report.
+   */
+  private async waitForFormReady(): Promise<void> {
+    await this.page.waitForFunction(
+      () => {
+        const input = document.getElementById('firstName');
+        if (!input) return false;
+        return Object.keys(input).some((key) => key.startsWith('__reactProps$'));
+      },
+      undefined,
+      { timeout: 30_000 },
+    );
   }
 
   async fillGuestDetails(guest: Guest): Promise<void> {
+    await this.waitForFormReady();
+
     // A remembered guest (localStorage "book again") would prefill these. A fresh
     // context has none, but a spec that reuses one would, and the banner's values must
     // never quietly outrank the spec's.
     const notYou = this.page.getByRole('button', { name: 'Not you?' });
     if (await notYou.isVisible().catch(() => false)) await notYou.click();
-    await this.page.getByLabel('First name', { exact: false }).fill(guest.firstName);
-    await this.page.getByLabel('Last name', { exact: false }).fill(guest.lastName);
-    await this.page.getByLabel('Email', { exact: false }).first().fill(guest.email);
-    await this.page.getByLabel('Phone', { exact: false }).fill(guest.phone);
+
+    const fields: Array<[Locator, string]> = [
+      [this.page.getByLabel('First name', { exact: false }), guest.firstName],
+      [this.page.getByLabel('Last name', { exact: false }), guest.lastName],
+      [this.page.getByLabel('Email', { exact: false }).first(), guest.email],
+      [this.page.getByLabel('Phone', { exact: false }), guest.phone],
+    ];
+
+    for (const [field, value] of fields) await field.fill(value);
+
+    // Read every field back after the LAST one is typed, not as each one is typed.
+    // Hydration can still be finishing when the first fill lands (waitForFormReady
+    // gates on the input's ref, which React attaches at the end of the render pass, so
+    // a sliver of the commit remains), and a value checked the instant it is written
+    // would pass and then be wiped. By the time the fourth field is typed, the wipe has
+    // either happened or it never will — so this is the read that means something.
+    for (const [field, value] of fields) {
+      await expect(
+        field,
+        'a value typed into checkout did not stick — the form was still hydrating, so the spec would have submitted an empty form',
+      ).toHaveValue(value);
+    }
   }
 
   /** Driver rows are `participant-<i>-name`, one per guest. */
   async fillDrivers(guest: Guest, quantity: number): Promise<void> {
+    await this.waitForFormReady();
     for (let i = 0; i < quantity; i++) {
       const name = i === 0 ? guest.fullName : `${guest.firstName} Guest${i + 1}`;
-      await this.page.locator(`#participant-${i}-name`).fill(name);
+      const field = this.page.locator(`#participant-${i}-name`);
+      await field.fill(name);
+      await expect(field, 'the driver name did not stick — the form was still hydrating').toHaveValue(
+        name,
+      );
     }
   }
 
@@ -185,12 +257,23 @@ export class CheckoutPage {
       name: /I have read and agree to the liability waiver/,
     });
     if (!(await checkbox.isVisible().catch(() => false))) return;
+    await this.waitForFormReady();
     await checkbox.check();
-    await this.page.getByLabel(/Signature/).fill(guest.fullName);
+    // `waiverAccepted` defaults to false, so an un-hydrated tick is reverted the same
+    // way a typed name is. Asserting it keeps that failure at this line.
+    await expect(checkbox, 'the waiver tick did not stick — the form was still hydrating').toBeChecked();
+    const signature = this.page.getByLabel(/Signature/);
+    await signature.fill(guest.fullName);
+    await expect(signature, 'the signature did not stick — the form was still hydrating').toHaveValue(
+      guest.fullName,
+    );
   }
 
   /** Enter a promo code and wait for it to be accepted (or report why it was not). */
   async applyPromo(code: string): Promise<void> {
+    // The promo input is React state, so a pre-hydration fill is discarded the same way
+    // an uncontrolled one is — and the Apply button would do nothing at all.
+    await this.waitForFormReady();
     await this.page.getByLabel('Promo code').fill(code);
     await this.page.getByRole('button', { name: 'Apply', exact: true }).click();
     // The applied state replaces the input with a confirmation chip; waiting on that is

@@ -21,6 +21,8 @@ import { requireStaff } from '../middleware/auth.js';
 import { rateLimit } from '../middleware/rate-limit.js';
 import {
   createBooking,
+  createBookingIdempotent,
+  normalizeIdempotencyKey,
   cancelBooking,
   rescheduleBooking,
   collectBalance,
@@ -112,11 +114,21 @@ orders.post('/', publicRateLimit, async (c) => {
   }
 
   try {
-    const order = await createBooking(c.var.operatorId, parsed.data, {
+    // Read the key straight off the RAW body: bookingInputSchema is a plain z.object
+    // and zod strips unknown keys, so it never survives into parsed.data. A replayed
+    // submit — a double-click, or a transport-level retry on flaky rural service —
+    // must resolve to the order the first attempt created, not a second booking.
+    const idempotencyKey = normalizeIdempotencyKey(
+      (body as { idempotencyKey?: unknown } | null)?.idempotencyKey,
+    );
+    const { order, replayed } = await createBookingIdempotent(c.var.operatorId, parsed.data, {
       channel: 'CUSTOMER',
+      idempotencyKey,
     });
-    dispatchBookingNotifications(c.var.operatorId, order.id);
-    return c.json({ order: serializeOrder(order) }, 201);
+    // Only the attempt that actually created the order sends mail. A replay must not
+    // text the guest a second confirmation for one booking.
+    if (!replayed) dispatchBookingNotifications(c.var.operatorId, order.id);
+    return c.json({ order: serializeOrder(order) }, replayed ? 200 : 201);
   } catch (err) {
     if (err instanceof BookingError) {
       return c.json({ error: err.message, code: err.code }, err.status as 400);

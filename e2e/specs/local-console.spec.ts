@@ -11,6 +11,15 @@
  * The waits here poll a reloaded page rather than sleeping, because the booking route
  * dispatches notifications without awaiting them (`void sendBookingConfirmation(...)`),
  * so a confirmed booking and a written message are two different moments.
+ *
+ * Every `waitForMessage` below names the channel twice: once as the inbox filter, and
+ * again at the head of the kind pattern. That is not redundancy. One booking writes an
+ * email AND a text carrying the same order number and the same "Booking confirmation"
+ * kind, so those two arguments alone match two rows and `.first()` picks whichever the
+ * console happened to list first. The channel badge is the only thing in the row that
+ * tells them apart, and unlike the filter (client state that a reload resets) it is in
+ * the server-rendered markup — so matching on it is what makes "the SMS for this
+ * booking" actually mean the SMS.
  */
 import { expect, test } from '../fixtures/test';
 import { adminUrl } from '../config';
@@ -22,7 +31,11 @@ test.describe('local console', () => {
   }) => {
     const { orderNumber, guest, selection } = await seed.booking({ guestLabel: 'email' });
 
-    const row = await localConsole.waitForMessage(orderNumber, 'EMAIL', /Booking confirmation/i);
+    const row = await localConsole.waitForMessage(
+      orderNumber,
+      'EMAIL',
+      /EMAIL\s*Booking confirmation/i,
+    );
     await expect(row, 'the confirmation must be addressed to the guest who booked').toContainText(
       guest.email.toLowerCase(),
     );
@@ -41,9 +54,17 @@ test.describe('local console', () => {
     // The text only fires when the customer left a phone number, and only when it is a
     // real 10/11-digit number (`toE164` in apps/api/src/services/sms.ts). The fixture's
     // guest always has one, which is what makes this assertable at all.
+    //
+    // Note where the row's order number comes from: `sendSms` captures without an
+    // order_id/order_number, so unlike an email row this one carries no "· LSRA…"
+    // caption. It matches only because the reference is inside the message body.
     const { orderNumber, selection } = await seed.booking({ guestLabel: 'sms' });
 
-    const row = await localConsole.waitForMessage(orderNumber, 'SMS', /Booking confirmation/i);
+    const row = await localConsole.waitForMessage(
+      orderNumber,
+      'SMS',
+      /SMS\s*Booking confirmation/i,
+    );
     const bubble = await localConsole.openSms(row);
     await expect(bubble).toContainText(`Ref ${orderNumber}`);
     await expect(bubble).toContainText(selection.activity.name);
@@ -57,7 +78,11 @@ test.describe('local console', () => {
     // sends a guest the operator's internal copy, so the recipients are checked apart.
     const { orderNumber, guest } = await seed.booking({ guestLabel: 'staffmail' });
 
-    const staffRow = await localConsole.waitForMessage(orderNumber, 'EMAIL', /Staff new booking/i);
+    const staffRow = await localConsole.waitForMessage(
+      orderNumber,
+      'EMAIL',
+      /EMAIL\s*Staff new booking/i,
+    );
     await expect(staffRow).not.toContainText(guest.email.toLowerCase());
   });
 
@@ -66,7 +91,7 @@ test.describe('local console', () => {
     // throwing in a background dispatch is the failure mode this catches — the guest
     // sees a confirmation and the operator never gets the alert.
     const { orderNumber } = await seed.booking({ guestLabel: 'errors' });
-    await localConsole.waitForMessage(orderNumber, 'EMAIL', /Booking confirmation/i);
+    await localConsole.waitForMessage(orderNumber, 'EMAIL', /EMAIL\s*Booking confirmation/i);
 
     const errors = await localConsole.errorSummaries();
     const recent = errors.filter((line) => !/favicon|ECONNRESET/i.test(line));

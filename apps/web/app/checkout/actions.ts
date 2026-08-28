@@ -62,6 +62,13 @@ export type CheckoutActionResult =
 
 /** Shape the client sends to the action (mirrors the shared booking schema). */
 export interface PlaceOrderInput {
+  /**
+   * Stable per-attempt de-duplication key. The API resolves a replayed submit to the
+   * order the first attempt created instead of booking twice — which matters most on
+   * exactly the weak rural connection this product is built for, where a request can
+   * succeed on the server and still time out on the phone.
+   */
+  idempotencyKey?: string;
   activityId: string;
   rateId: string;
   timeslotId: string;
@@ -136,6 +143,7 @@ export async function placeOrder(
     participants: data.participants,
     promoCode: data.promoCode,
     tipCents: data.tipCents,
+    idempotencyKey: input.idempotencyKey,
   };
 
   let order: OrderSummary;

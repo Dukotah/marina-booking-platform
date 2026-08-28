@@ -21,6 +21,18 @@
  * **one request covers every day it needs**, results are cached by day key for the
  * session, and a later month only fetches the days it is actually missing.
  *
+ * CORRECTNESS. The one state this component may never rest in is "this day is
+ * unknown and nothing is going to find out" — a day with no answer renders
+ * disabled and unbookable, which is lost revenue that looks like a slow network.
+ * Two rules keep that unreachable, and every change here has to preserve both:
+ *
+ *   1. `requested` is a reservation, not a receipt. A request that does not deliver
+ *      its days (abort, network failure) gives them back, and asks the reconcile
+ *      effect to run again.
+ *   2. Requests are additive. Nothing aborts a sibling range to make room for
+ *      itself; the only aborts are unmount and an activity swap, both of which
+ *      throw the whole cache away anyway.
+ *
  * All times are interpreted in the operator's local calendar (the API returns UTC
  * datetimes; days are keyed by their YYYY-MM-DD param).
  */
@@ -207,9 +219,19 @@ function dotColor(status: DayAvailability): string {
 }
 
 /** Spoken/label description of a day, identical in both views. */
-function dayLabel(date: Date, state: DayState | undefined, unavailable: boolean): string {
+function dayLabel(
+  date: Date,
+  state: DayState | undefined,
+  unavailable: boolean,
+  failed: boolean,
+): string {
   const when = format(date, 'EEEE, MMMM d');
-  if (!state) return `${when} — checking availability`;
+  // A day with no answer only says "checking" while something is actually going to
+  // answer it. Once the load has failed, say so — the promise of a result that is
+  // never coming is worse than the bad news, and the retry sits right below.
+  if (!state) {
+    return failed ? `${when} — availability unavailable` : `${when} — checking availability`;
+  }
   if (unavailable) {
     return `${when} — ${state.status === 'FULL' ? 'fully booked' : 'unavailable'}`;
   }
@@ -246,52 +268,82 @@ export function AvailabilityCalendar({
   });
   const [viewMonth, setViewMonth] = useState<Date>(() => startOfMonth(selectedDate ?? today));
   const [days, setDays] = useState<Record<string, DayState>>({});
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // How many range requests are out. A count, not a boolean: the strip and the month
+  // grid load independently, and whichever lands first must not clear the other's
+  // spinner.
+  const [pending, setPending] = useState(0);
+  // Bumped whenever a request hands its days back without having delivered them, so
+  // the reconcile effect below asks for them again. See ensureRange's catch.
+  const [reconcileTick, setReconcileTick] = useState(0);
 
-  // Day keys already requested this session. Mutated synchronously so two effects
-  // in the same tick (strip + month) can never fire overlapping requests, and so
-  // paging back to a month is free.
+  // Day keys already loaded or in flight. Mutated synchronously so two ensureRange
+  // calls in the same tick (strip + month) ask for disjoint sets instead of
+  // duplicating each other, and so paging back to a month already seen is free.
   const requested = useRef<Set<string>>(new Set());
-  const abort = useRef<AbortController | null>(null);
+  // Every live request, so unmount can cancel them. Nothing else aborts.
+  const inFlight = useRef<Set<AbortController>>(new Set());
+  // Incremented whenever the cache is thrown away. A response from an older epoch is
+  // the answer to a question about an activity this calendar no longer shows, and its
+  // reservations died with the cache, so it must touch neither.
+  const epoch = useRef(0);
   const autoPicked = useRef(false);
+
+  // Swapping the activity (the reschedule dialog does, when the order has more than
+  // one item) invalidates everything. This is React's supported "adjust state when a
+  // prop changes" pattern — done during render so the previous activity's colours
+  // never paint, instead of flashing for a frame before an effect clears them.
+  const [activityKey, setActivityKey] = useState(activityId);
+  if (activityKey !== activityId) {
+    setActivityKey(activityId);
+    epoch.current += 1;
+    requested.current = new Set();
+    autoPicked.current = false;
+    for (const controller of inFlight.current) controller.abort();
+    inFlight.current.clear();
+    setDays({});
+    setError(null);
+    // `pending` is deliberately left alone: the requests just aborted still run their
+    // own finally and decrement it themselves.
+  }
 
   /**
    * Fetch every not-yet-requested day in [from, to] with a single range call.
    * Days already in flight or cached are skipped; the request spans the missing
    * days' outer bounds, which is still one round trip.
+   *
+   * Safe to call at any time with any range — that is the property the reconcile
+   * effect relies on to recover from an abort.
    */
   const ensureRange = useCallback(
     async (from: Date, to: Date) => {
       const start = isBefore(from, today) ? today : from;
       const end = isBefore(horizon, to) ? horizon : to;
-      if (isBefore(end, start)) {
-        setLoading(false);
-        return;
-      }
+      if (isBefore(end, start)) return;
 
       const missing = eachDayOfInterval({ start, end })
         .map((d) => format(d, 'yyyy-MM-dd'))
         .filter((iso) => !requested.current.has(iso));
+      if (missing.length === 0) return;
 
-      if (missing.length === 0) {
-        setLoading(false);
-        return;
-      }
+      // Reserve before the first await, so a sibling call in this same tick sees them.
       for (const iso of missing) requested.current.add(iso);
 
       const fromIso = missing[0] as string;
       const toIso = missing[missing.length - 1] as string;
 
-      abort.current?.abort();
+      const generation = epoch.current;
       const controller = new AbortController();
-      abort.current = controller;
+      inFlight.current.add(controller);
 
-      setLoading(true);
+      setPending((n) => n + 1);
       setError(null);
       try {
         const results = await loadRange(activityId, fromIso, toIso, controller.signal);
-        if (controller.signal.aborted) return;
+        // Only a cache invalidation can make this response worthless. A response that
+        // merely arrived after an abort is still true, and a StrictMode remount is
+        // still the same mounted component, so it is applied rather than discarded.
+        if (epoch.current !== generation) return;
         setDays((prev) => {
           const next = { ...prev };
           // Seed every requested day so a day the API omits reads as "closed"
@@ -301,55 +353,97 @@ export function AvailabilityCalendar({
           return next;
         });
       } catch (err) {
-        // Release the reservation FIRST, whatever went wrong — including an abort.
-        // `requested` exists to stop duplicate in-flight requests, so a request that
-        // did not deliver must give its days back. Leaving them marked means nothing
-        // ever asks again and they sit on "checking availability" forever: the day
-        // stays disabled and the guest cannot book at all.
-        //
-        // React StrictMode makes this reproducible in dev (mount -> abort on the
-        // immediate unmount -> remount finds nothing missing), but it is not a dev-only
-        // bug: switching month quickly, or the reschedule dialog swapping activity,
-        // aborts a live request the same way.
-        for (const iso of missing) requested.current.delete(iso);
-        if (controller.signal.aborted) return;
+        if (epoch.current !== generation) return;
+
         if (isApiError(err) && err.status === 404) {
+          // A 404 is an answer, not a failure: nothing is published across this range.
+          // The days keep their reservation because they are now resolved.
           setDays((prev) => {
             const next = { ...prev };
             for (const iso of missing) next[iso] = { status: 'NONE', spotsRemaining: 0 };
             return next;
           });
-        } else {
-          setError('Could not load availability. Check your connection and try again.');
+          return;
         }
+
+        // Nothing was delivered, so the reservation goes back. `requested` exists only
+        // to stop duplicate in-flight requests; holding days a failed request never
+        // filled means nothing ever asks again and they sit on "checking availability"
+        // forever — disabled, unbookable, indistinguishable from a sold-out day.
+        for (const iso of missing) requested.current.delete(iso);
+
+        if (controller.signal.aborted) {
+          // WE cancelled this (unmount), so it is not a customer-visible error. But
+          // releasing the days is not enough on its own: React StrictMode tears down
+          // and re-mounts synchronously, so the remount's reconcile has ALREADY run and
+          // found nothing missing by the time this rejection lands a microtask later.
+          // That is the race — the days were freed with nobody left to ask for them.
+          // Bumping the tick re-runs the reconcile now that they are free. If this was
+          // a real unmount, the update is dropped and none of it matters.
+          setReconcileTick((t) => t + 1);
+          return;
+        }
+
+        setError('Could not load availability. Check your connection and try again.');
       } finally {
-        if (!controller.signal.aborted) setLoading(false);
+        inFlight.current.delete(controller);
+        setPending((n) => Math.max(0, n - 1));
       }
     },
     [activityId, today, horizon],
   );
 
-  // Reset the cache when the activity changes (the reschedule dialog swaps it).
-  const activityRef = useRef(activityId);
-  if (activityRef.current !== activityId) {
-    activityRef.current = activityId;
-    requested.current = new Set();
-    autoPicked.current = false;
-  }
+  const monthGrid = useMemo(() => {
+    const monthStart = startOfMonth(viewMonth);
+    const monthEnd = endOfMonth(viewMonth);
+    return {
+      allDays: eachDayOfInterval({ start: monthStart, end: monthEnd }),
+      // Leading blanks so day 1 lands on the right weekday column.
+      leading: monthStart.getDay(),
+      monthStart,
+    };
+  }, [viewMonth]);
 
-  // The strip is what the customer sees first, so it loads first and alone.
+  /**
+   * Is any day the customer can currently see still without an answer?
+   *
+   * Days outside [today, horizon] are excluded: they are never fetched and never
+   * bookable, so waiting on them would spin forever.
+   */
+  const unknownVisible = useMemo(() => {
+    const visible = showGrid ? [...stripDays, ...monthGrid.allDays] : stripDays;
+    return visible.some((d) => {
+      if (isBefore(d, today) || isBefore(horizon, d)) return false;
+      return days[format(d, 'yyyy-MM-dd')] === undefined;
+    });
+  }, [showGrid, stripDays, monthGrid.allDays, today, horizon, days]);
+
+  // Loading is derived, never a latch that someone has to remember to clear. It holds
+  // the invariant this component exists to keep: a visible day is either answered, or
+  // being fetched, or covered by an error the customer can retry — never simply
+  // unknown and idle.
+  const loading = pending > 0 || (error === null && unknownVisible);
+  const loadFailed = error !== null;
+
+  // One effect decides what has to be on screen: the strip always, plus the open
+  // month. Re-running it is always safe — ensureRange only asks for days that are
+  // neither cached nor in flight — and that is exactly what makes recovery from an
+  // abort or a retry a matter of running it again.
   useEffect(() => {
-    setDays({});
     void ensureRange(stripDays[0] as Date, stripDays[stripDays.length - 1] as Date);
-  }, [ensureRange, stripDays]);
+    if (showGrid) void ensureRange(startOfMonth(viewMonth), endOfMonth(viewMonth));
+  }, [ensureRange, stripDays, showGrid, viewMonth, reconcileTick]);
 
-  // The month grid only costs a request once the customer asks for it.
+  // Abort only on the way out. A live request is never cancelled to make room for
+  // another range: the two ranges are additive, and cancelling one used to throw its
+  // days away — the strip lost its whole fortnight whenever the grid opened first.
   useEffect(() => {
-    if (!showGrid) return;
-    void ensureRange(startOfMonth(viewMonth), endOfMonth(viewMonth));
-  }, [showGrid, viewMonth, ensureRange]);
-
-  useEffect(() => () => abort.current?.abort(), []);
+    const live = inFlight.current;
+    return () => {
+      for (const controller of live) controller.abort();
+      live.clear();
+    };
+  }, []);
 
   // Zero-tap date: once the strip's availability lands, land on the soonest day
   // that can actually be booked. Guarded so it happens at most once and never
@@ -366,22 +460,13 @@ export function AvailabilityCalendar({
     }
   }, [autoSelect, selectedDate, loading, days, stripDays, onSelectDate]);
 
+  // Clearing the error is enough to make the days askable again — the failed request
+  // already gave its reservation back — so the tick just re-runs the reconcile, which
+  // covers the strip and the open month in one place.
   const retry = () => {
     setError(null);
-    void ensureRange(stripDays[0] as Date, stripDays[stripDays.length - 1] as Date);
-    if (showGrid) void ensureRange(startOfMonth(viewMonth), endOfMonth(viewMonth));
+    setReconcileTick((t) => t + 1);
   };
-
-  const monthGrid = useMemo(() => {
-    const monthStart = startOfMonth(viewMonth);
-    const monthEnd = endOfMonth(viewMonth);
-    return {
-      allDays: eachDayOfInterval({ start: monthStart, end: monthEnd }),
-      // Leading blanks so day 1 lands on the right weekday column.
-      leading: monthStart.getDay(),
-      monthStart,
-    };
-  }, [viewMonth]);
 
   const canGoPrev = useMemo(
     () => !isSameMonth(monthGrid.monthStart, today) && !isBefore(monthGrid.monthStart, today),
@@ -423,7 +508,7 @@ export function AvailabilityCalendar({
               type="button"
               role="radio"
               aria-checked={selected}
-              aria-label={dayLabel(date, state, disabled)}
+              aria-label={dayLabel(date, state, disabled, loadFailed)}
               disabled={disabled}
               onClick={() => pick(date, disabled)}
               className={[
@@ -553,7 +638,7 @@ export function AvailabilityCalendar({
                   role="radio"
                   aria-checked={selected}
                   disabled={disabled}
-                  aria-label={dayLabel(date, state, disabled)}
+                  aria-label={dayLabel(date, state, disabled, loadFailed)}
                   onClick={() => pick(date, disabled)}
                   className={cellClasses(status, selected, disabled)}
                 >

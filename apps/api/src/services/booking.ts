@@ -43,6 +43,13 @@ export interface CreateBookingOptions {
   channel?: BookingChannel;
   /** Audit actor for the OrderEvent (e.g. a staff member's id/email). */
   actor?: string;
+  /**
+   * Client-supplied de-duplication key for this checkout attempt. When present it
+   * is persisted on the Order and the unique index `(operator_id, idempotency_key)`
+   * makes a replayed submit resolve to the order that already exists instead of
+   * building a second one. Omit (or pass null) for non-retryable staff/POS paths.
+   */
+  idempotencyKey?: string | null;
 }
 
 /** A typed, user-facing failure that route handlers map to a clean HTTP status. */
@@ -57,15 +64,209 @@ export class BookingError extends Error {
   }
 }
 
+// --- Idempotent create: the replay decision -------------------------------
+//
+// A double-submit (impatient tap, retried request on flaky rural service) must
+// never produce two orders or two charges. The durable guard is the unique index
+// `Order(operator_id, idempotency_key)`: BOTH submits try to insert, one loses the
+// race, and the loser's WHOLE transaction rolls back — so it consumes no capacity,
+// writes no Payment, and never reaches the notification dispatch. The loser then
+// reads back the winner's order and returns it as the answer.
+//
+// This is deliberately NOT a check-then-insert. A pre-read exists below purely as
+// an optimisation for the *sequential* replay (see `createBookingIdempotent`), but
+// it is never the guard: two concurrent submits can both pass any pre-read, and the
+// index is what makes that harmless.
+
+/** Longest key we will persist. Long enough for a UUID/ULID plus a prefix. */
+export const MAX_IDEMPOTENCY_KEY_LENGTH = 255;
+
+/**
+ * Normalize a client-supplied idempotency key.
+ *
+ * Blank/absent becomes `null` rather than `''`, because an empty string is a real
+ * value to the unique index — every keyless order would then collide with every
+ * other one. Over-length keys are rejected instead of truncated: truncation would
+ * silently merge two distinct submits into one order.
+ */
+export function normalizeIdempotencyKey(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return null;
+  if (trimmed.length > MAX_IDEMPOTENCY_KEY_LENGTH) {
+    throw new BookingError(
+      'INVALID_IDEMPOTENCY_KEY',
+      `Idempotency key must be at most ${MAX_IDEMPOTENCY_KEY_LENGTH} characters`,
+    );
+  }
+  return trimmed;
+}
+
+/**
+ * True when `err` is Prisma's unique-constraint violation (P2002).
+ *
+ * Duck-typed on the code rather than `instanceof PrismaClientKnownRequestError`:
+ * the error crosses a package boundary (`@marina/database` -> here), and an
+ * `instanceof` against a second copy of the generated client silently returns
+ * false — which would turn a recoverable replay into a 500.
+ */
+export function isUniqueViolation(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    (err as { code?: unknown }).code === 'P2002'
+  );
+}
+
+/**
+ * The columns/constraint a P2002 names, normalized to a string array. Prisma
+ * reports `meta.target` as a field-name array on Postgres but as the raw
+ * constraint name on some drivers/versions, and omits it entirely for a few
+ * error paths — so all three shapes are handled.
+ */
+export function uniqueViolationTargets(err: unknown): string[] {
+  if (!isUniqueViolation(err)) return [];
+  const target = (err as { meta?: { target?: unknown } }).meta?.target;
+  if (typeof target === 'string') return [target];
+  if (Array.isArray(target)) return target.filter((t): t is string => typeof t === 'string');
+  return [];
+}
+
+/** True when a P2002's target is (or includes) the idempotency-key index. */
+export function isIdempotencyViolation(err: unknown): boolean {
+  return uniqueViolationTargets(err).some((t) => t.includes('idempotency_key'));
+}
+
+/**
+ * Whether a failed create should be resolved by reading back an existing order.
+ *
+ * Any unique violation on a keyed create is worth a lookup: `meta.target` is not
+ * always populated, and even a collision reported against another index (e.g. the
+ * per-day `order_number` sequence, which two simultaneous submits can compute
+ * identically) means a concurrent writer got there first. The lookup itself is the
+ * decider — it returns the order or it doesn't — so a needless one is only a wasted
+ * read, whereas a skipped one is a spurious 500 on a retry.
+ */
+export function shouldResolveAsReplay(err: unknown, idempotencyKey: string | null): boolean {
+  return idempotencyKey !== null && isUniqueViolation(err);
+}
+
+/** The relations every booking response needs; shared by create and replay reads. */
+const BOOKING_ORDER_INCLUDE = {
+  items: { include: { activity: true, rate: true, timeslot: true } },
+  customer: true,
+} satisfies Prisma.OrderInclude;
+
+/** A persisted Order hydrated with everything the API response serializes. */
+export type BookingOrder = Prisma.OrderGetPayload<{ include: typeof BOOKING_ORDER_INCLUDE }>;
+
+/** Outcome of an idempotent create. */
+export interface CreateBookingResult {
+  /** The order this submit resolves to — freshly created, or the replayed original. */
+  order: BookingOrder;
+  /**
+   * True when this call did NOT create anything: an order with the same key already
+   * existed. Callers must skip every side effect they own for a replay — notably
+   * confirmation email/SMS, which the customer already received.
+   */
+  replayed: boolean;
+}
+
+/** Read back the order a key already resolved to, or null if there isn't one. */
+async function findOrderByIdempotencyKey(
+  operatorId: string,
+  idempotencyKey: string,
+): Promise<BookingOrder | null> {
+  return withTenant(operatorId, (tx) =>
+    tx.order.findFirst({
+      where: { idempotency_key: idempotencyKey },
+      include: BOOKING_ORDER_INCLUDE,
+    }),
+  );
+}
+
+/**
+ * Create a booking, resolving a replayed submit to the order that already exists.
+ *
+ * Two submits carrying one key produce exactly one order, one capacity draw, one
+ * Payment, and one notification — whether they arrive concurrently (the loser hits
+ * the unique index and rolls back) or sequentially (the pre-read short-circuits
+ * before any work is done). Without a key this is a plain create.
+ */
+export async function createBookingIdempotent(
+  operatorId: string,
+  input: BookingInput,
+  options: CreateBookingOptions = {},
+): Promise<CreateBookingResult> {
+  const idempotencyKey = normalizeIdempotencyKey(options.idempotencyKey);
+
+  // Fast path for a sequential replay. This is an optimisation, not the guard —
+  // but it is also a correctness fix for the retry that arrives after the first
+  // one committed: re-running the full create would fail the capacity/promo checks
+  // against the state the FIRST submit produced (a slot the customer just filled
+  // reads as INSUFFICIENT_CAPACITY), turning a duplicate into a bogus 409.
+  if (idempotencyKey) {
+    const existing = await findOrderByIdempotencyKey(operatorId, idempotencyKey);
+    if (existing) return { order: existing, replayed: true };
+  }
+
+  try {
+    const order = await createBookingAttempt(operatorId, input, options, idempotencyKey);
+    return { order, replayed: false };
+  } catch (err) {
+    // `shouldResolveAsReplay` already demands a key; repeating the null check here
+    // keeps the narrowing local so the lookup needs no assertion.
+    if (idempotencyKey === null || !shouldResolveAsReplay(err, idempotencyKey)) throw err;
+
+    // We lost the insert race. The winner has committed (Postgres blocks the
+    // duplicate insert until it does), so its order is readable now — and our own
+    // transaction rolled back whole, so no capacity, payment, or promo redemption
+    // was consumed by this attempt.
+    const winner = await findOrderByIdempotencyKey(operatorId, idempotencyKey);
+    if (winner) return { order: winner, replayed: true };
+
+    // The key's index rejected us but no order carries it: the winner was rolled
+    // back or deleted after we blocked on it. That is retryable, so surface a 409
+    // rather than letting a duplicate-key error escape as a 500.
+    if (isIdempotencyViolation(err)) {
+      throw new BookingError(
+        'BOOKING_IN_FLIGHT',
+        'An identical booking is already being processed. Please try again.',
+        409,
+      );
+    }
+    throw err;
+  }
+}
+
 /**
  * Create a booking for the given operator. Returns the persisted Order with its
  * items, customer, and timeslot/activity context needed by the API response.
+ *
+ * Honours `options.idempotencyKey` — a replay resolves to the existing order. Use
+ * {@link createBookingIdempotent} when the caller has side effects of its own to
+ * suppress (notifications), since it reports whether the order was replayed.
  */
 export async function createBooking(
   operatorId: string,
   input: BookingInput,
   options: CreateBookingOptions = {},
-) {
+): Promise<BookingOrder> {
+  const { order } = await createBookingIdempotent(operatorId, input, options);
+  return order;
+}
+
+/**
+ * One attempt at building the whole order in a single tenant transaction. Either
+ * every write lands or none does — which is what makes losing the idempotency race
+ * safe: the loser leaves nothing behind to clean up.
+ */
+async function createBookingAttempt(
+  operatorId: string,
+  input: BookingInput,
+  options: CreateBookingOptions,
+  idempotencyKey: string | null,
+): Promise<BookingOrder> {
   const channel: BookingChannel = options.channel ?? 'CUSTOMER';
 
   return withTenant(operatorId, async (tx) => {
@@ -394,6 +595,10 @@ export async function createBooking(
         balance_due_cents: takeDeposit ? pricing.totalCents - depositCents : pricing.totalCents,
         promo_code_id: promoCodeId,
         is_returning_guest: isReturningGuest,
+        // The de-duplication guard. Writing it as part of the SAME insert that
+        // builds the order is what makes the unique index authoritative: there is
+        // no window in which an order exists without its key.
+        idempotency_key: idempotencyKey,
         items: {
           // operator_id is derived from the parent order via the tenant-composite
           // relation ([operator_id, order_id]); passing it explicitly is now rejected
@@ -416,10 +621,7 @@ export async function createBooking(
           ],
         },
       },
-      include: {
-        items: { include: { activity: true, rate: true, timeslot: true } },
-        customer: true,
-      },
+      include: BOOKING_ORDER_INCLUDE,
     });
 
     // --- Increment timeslot capacity + recompute its display status. ---
@@ -489,11 +691,16 @@ export async function createBooking(
     //     mode this never touches Stripe; when payments aren't configured at all we
     //     still split the ledger but skip the Payment row (no processor to charge). ---
     if (takeDeposit && arePaymentsEnabled()) {
+      // Derived from the order id, so it is stable across a retry of this order and
+      // distinct from every other order's deposit. A replayed submit never reaches
+      // here at all (the order insert above loses the race first), so this guards
+      // the narrower case of a crash between "processor accepted" and "row written".
+      const depositKey = `deposit-${order.id}`;
       const charge = await createPayment({
         orderId: order.id,
         sourceId: 'deposit',
         amountCents: depositCents,
-        idempotencyKey: `deposit-${order.id}`,
+        idempotencyKey: depositKey,
         // We are inside the transaction that created this order, so the simulator
         // cannot look the tenant up yet — hand it over.
         operatorId,
@@ -510,6 +717,7 @@ export async function createBooking(
           cardholder_name: charge.cardholderName,
           processor: 'STRIPE',
           processor_transaction_id: charge.paymentId,
+          idempotency_key: depositKey,
         },
       });
       await tx.orderEvent.create({
