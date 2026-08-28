@@ -2,7 +2,13 @@ import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import { notFound } from 'next/navigation';
 import type { Metadata } from 'next';
-import { getActivity, isApiError, type ActivityDetail } from '@/lib/api';
+import {
+  getActivity,
+  getAvailabilityRange,
+  isApiError,
+  type ActivityDetail,
+  type AvailabilityRangeDay,
+} from '@/lib/api';
 import { getBrand, brandStyle } from '@/lib/brand';
 import { formatUSD } from '@/lib/format';
 import { BookingWidget } from '@/components/activity/BookingWidget';
@@ -150,9 +156,31 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   }
 }
 
+/** Days the date strip shows first; mirrors STRIP_DAYS in AvailabilityCalendar. */
+const STRIP_DAYS = 14;
+
+/**
+ * Availability for the strip window, fetched here so the page ships with its dates
+ * already selectable. Never fatal: if it fails the calendar just loads them itself,
+ * exactly as it did before.
+ */
+async function loadStripRange(activityId: string): Promise<AvailabilityRangeDay[] | undefined> {
+  const today = new Date();
+  const end = new Date(today);
+  end.setDate(today.getDate() + STRIP_DAYS - 1);
+  const iso = (d: Date) => d.toISOString().slice(0, 10);
+  try {
+    return await getAvailabilityRange(activityId, iso(today), iso(end));
+  } catch {
+    return undefined;
+  }
+}
+
 export default async function ActivityDetailPage({ params }: PageProps) {
   const activity = await loadActivity(params.id);
   if (!activity) notFound();
+
+  const initialRange = await loadStripRange(activity.id);
 
   const brand = getBrand();
   const accent = activity.color;
@@ -231,7 +259,7 @@ export default async function ActivityDetailPage({ params }: PageProps) {
         {/* The booking widget: second on a phone, so the first control is reachable
             without scrolling past a full-bleed hero. Sticky alongside on desktop. */}
         <div className="min-w-0 lg:col-start-2 lg:row-start-1 lg:row-span-3 lg:sticky lg:top-20 lg:self-start">
-          <BookingWidget activity={activity} />
+          <BookingWidget activity={activity} initialRange={initialRange} />
         </div>
 
         {/* Media. Below the fold on a phone, and its client chunk is loaded lazily for

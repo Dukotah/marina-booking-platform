@@ -117,6 +117,27 @@ export interface BookingRequest {
 }
 
 /** An error carrying the status and body, so a failing fixture says what the API said. */
+/**
+ * Wait out a 429 and try again.
+ *
+ * The public endpoints are rate-limited per IP (30/min) on purpose — that is a real
+ * protection and the suite must not ask for it to be relaxed. Against a production
+ * build the suite runs fast enough to trip it, so the harness behaves like a
+ * well-mannered client instead: honour the `retryAfterSeconds` the API hands back.
+ */
+async function withRateLimitRetry<T>(
+  attempt: () => Promise<{ status: number; retryAfterSeconds?: number; value?: T }>,
+  tries = 4,
+): Promise<T> {
+  for (let i = 0; i < tries; i++) {
+    const res = await attempt();
+    if (res.status !== 429) return res.value as T;
+    const waitMs = Math.max(1000, (res.retryAfterSeconds ?? 1) * 1000) * (i + 1);
+    await new Promise((r) => setTimeout(r, waitMs));
+  }
+  throw new Error('Still rate-limited after retries');
+}
+
 export class ApiCallError extends Error {
   constructor(
     readonly method: string,
@@ -270,11 +291,17 @@ export class MarinaApi {
   }
 
   private async get<T>(path: string, staff = false): Promise<T> {
-    const res = await this.request.get(`${API_URL}${path}`, {
-      headers: this.headers(staff),
-      failOnStatusCode: false,
+    return withRateLimitRetry<T>(async () => {
+      const res = await this.request.get(`${API_URL}${path}`, {
+        headers: this.headers(staff),
+        failOnStatusCode: false,
+      });
+      if (res.status() === 429) {
+        const body = (await res.json().catch(() => ({}))) as { retryAfterSeconds?: number };
+        return { status: 429, retryAfterSeconds: body.retryAfterSeconds };
+      }
+      return { status: res.status(), value: await this.unwrap<T>(res, 'GET', path) };
     });
-    return this.unwrap<T>(res, 'GET', path);
   }
 
   private async post<T>(path: string, body: unknown, staff = false): Promise<T> {

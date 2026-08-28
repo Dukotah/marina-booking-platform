@@ -18,6 +18,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import dynamic from 'next/dynamic';
 import { formatUSD, formatISODate, formatLongDate, formatTime } from '@/lib/format';
 import type {
   ActivityDetail,
@@ -25,11 +26,35 @@ import type {
   CatalogRate,
 } from '@/lib/api';
 import { RateCards } from './RateCards';
-import { TimeSlotPicker } from './TimeSlotPicker';
-import { AvailabilityCalendar } from '../booking/AvailabilityCalendar';
+import type { RangeDay } from '../booking/AvailabilityCalendar';
+
+/*
+ * The calendar and the time picker load as separate chunks.
+ *
+ * This whole widget is one client boundary, so React hydrates all of it before ANY
+ * of it responds — and the calendar is by far the heaviest part of it. On Slow 4G
+ * with a slow phone CPU that meant the very first control, the rate picker, sat
+ * rendered but inert for seconds: a guest could see it, tap it, and nothing
+ * happened. Splitting the two steps the guest has not reached yet out of the
+ * initial chunk lets step 1 become interactive first, which is the whole point of
+ * the sub-30s mobile target in docs/LOCAL-FIRST-BUILD.md section 6.
+ *
+ * ssr stays ON: the markup must still be in the server response for a guest who is
+ * further down the page, and for anyone without JavaScript.
+ */
+const AvailabilityCalendar = dynamic(
+  () => import('../booking/AvailabilityCalendar').then((m) => m.AvailabilityCalendar),
+  { ssr: true },
+);
+const TimeSlotPicker = dynamic(
+  () => import('./TimeSlotPicker').then((m) => m.TimeSlotPicker),
+  { ssr: true },
+);
 
 interface BookingWidgetProps {
   activity: ActivityDetail;
+  /** Strip-window availability rendered on the server; see AvailabilityCalendar. */
+  initialRange?: RangeDay[];
 }
 
 /** A labeled step wrapper with a numbered badge. */
@@ -131,7 +156,7 @@ function PreHydrationRadioGroup({
   );
 }
 
-export function BookingWidget({ activity }: BookingWidgetProps) {
+export function BookingWidget({ activity, initialRange }: BookingWidgetProps) {
   const router = useRouter();
   const accent = activity.color;
 
@@ -216,6 +241,7 @@ export function BookingWidget({ activity }: BookingWidgetProps) {
             activityId={activity.id}
             selectedDate={date}
             onSelectDate={handleSelectDate}
+            initialRange={initialRange}
           />
         </Step>
 

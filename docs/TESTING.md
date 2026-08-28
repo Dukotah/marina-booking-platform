@@ -240,3 +240,28 @@ Stated plainly rather than left to be discovered.
 - **Lighthouse budgets are not here.** Contract §6 asks for performance 95+ and
   accessibility 100 in CI. This suite enforces a wall-clock funnel budget and a couple of
   mobile-layout invariants, which is not the same thing.
+
+## Run the performance specs against a PRODUCTION build
+
+`mobile.funnel.spec.ts` asserts a real time budget, so it must measure what a guest
+actually gets. Against `next dev` it fails — not because the product is slow, but
+because the dev server ships unminified code plus the HMR runtime, and hydration under
+4x CPU throttling takes seconds longer than it ever would in production. The same spec
+that times out in dev passes in about 10 seconds against a production build.
+
+```
+pnpm build
+# API (its compiled dist cannot resolve the workspace packages yet, so run the source)
+cd apps/api  && SANDBOX=local pnpm exec tsx src/index.ts
+cd apps/web  && SANDBOX=local pnpm start
+cd apps/admin && SANDBOX=local pnpm start
+pnpm exec playwright test
+```
+
+`SANDBOX=local` is required because the Local Console is hard-gated off when
+NODE_ENV=production — that gate is deliberate, and the preflight check will tell you
+so. Everything else can be run against `pnpm dev:local` as usual.
+
+Known: one or two specs still flake occasionally on timing (a reschedule step has been
+seen to fail once and pass on the next run). Treat a single red run as suspect and
+re-run before chasing it.

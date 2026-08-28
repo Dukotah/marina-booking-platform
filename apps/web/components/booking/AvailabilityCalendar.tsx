@@ -85,6 +85,14 @@ interface AvailabilityCalendarProps {
    * callers that already have a date in mind (reschedule) must not be hijacked.
    */
   autoSelect?: boolean;
+  /**
+   * Availability for the strip window, fetched on the SERVER and rendered with the
+   * page. Without it the first thing a guest sees is a row of disabled days reading
+   * "checking availability" while the browser makes its own round trip — which on the
+   * weak rural connection this product targets is several seconds of a screen that
+   * cannot be used. Seeding it means the dates arrive already tappable.
+   */
+  initialRange?: RangeDay[];
 }
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
@@ -103,7 +111,7 @@ const STATUS_RANK: Record<SlotStatus, number> = {
 // ---------------------------------------------------------------------------
 
 /** The per-day rollup shape returned by GET /api/availability/range. */
-interface RangeDay {
+export interface RangeDay {
   date: string;
   slotCount: number;
   capacityRemaining: number;
@@ -246,6 +254,7 @@ export function AvailabilityCalendar({
   maxAdvanceDays = 365,
   accentColor = 'var(--brand-color)',
   autoSelect = false,
+  initialRange,
 }: AvailabilityCalendarProps) {
   const today = useMemo(() => startOfDay(new Date()), []);
   // Bookable horizon (inclusive upper bound).
@@ -267,7 +276,11 @@ export function AvailabilityCalendar({
     return isBefore(last, startOfDay(selectedDate)) || isBefore(startOfDay(selectedDate), today);
   });
   const [viewMonth, setViewMonth] = useState<Date>(() => startOfMonth(selectedDate ?? today));
-  const [days, setDays] = useState<Record<string, DayState>>({});
+  // Seeded from the server render when available, so the strip is interactive on
+  // first paint instead of after a client round trip.
+  const [days, setDays] = useState<Record<string, DayState>>(() =>
+    Object.fromEntries((initialRange ?? []).map((d) => [d.date, fromRangeDay(d)])),
+  );
   const [error, setError] = useState<string | null>(null);
   // How many range requests are out. A count, not a boolean: the strip and the month
   // grid load independently, and whichever lands first must not clear the other's
@@ -280,7 +293,9 @@ export function AvailabilityCalendar({
   // Day keys already loaded or in flight. Mutated synchronously so two ensureRange
   // calls in the same tick (strip + month) ask for disjoint sets instead of
   // duplicating each other, and so paging back to a month already seen is free.
-  const requested = useRef<Set<string>>(new Set());
+  // Server-seeded days count as already requested, so the reconcile effect does not
+  // immediately re-fetch what the page already delivered.
+  const requested = useRef<Set<string>>(new Set((initialRange ?? []).map((d) => d.date)));
   // Every live request, so unmount can cancel them. Nothing else aborts.
   const inFlight = useRef<Set<AbortController>>(new Set());
   // Incremented whenever the cache is thrown away. A response from an older epoch is

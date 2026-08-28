@@ -470,6 +470,36 @@ export async function getAvailability(
   );
 }
 
+/** One day's rolled-up availability, as the range endpoint returns it. */
+export interface AvailabilityRangeDay {
+  date: string;
+  slotCount: number;
+  capacityTotal: number;
+  capacityBooked: number;
+  capacityRemaining: number;
+  signal: 'green' | 'yellow' | 'red';
+  resourceLimited?: boolean;
+}
+
+/**
+ * Availability for a span of days in ONE request.
+ *
+ * Called from the server so the activity page can ship the date strip already
+ * populated; the calendar falls back to fetching client-side for anything outside
+ * the seeded window.
+ */
+export async function getAvailabilityRange(
+  activityId: string,
+  fromIso: string,
+  toIso: string,
+): Promise<AvailabilityRangeDay[]> {
+  const qs = new URLSearchParams({ activityId, from: fromIso, to: toIso });
+  const data = await request<{ days: AvailabilityRangeDay[] }>(
+    `/api/availability/range?${qs.toString()}`,
+  );
+  return data.days;
+}
+
 /** Validate a promo code for a given activity before applying it at checkout. */
 export async function validatePromo(
   code: string,
