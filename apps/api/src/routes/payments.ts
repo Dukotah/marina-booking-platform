@@ -34,6 +34,14 @@ import type { TenantClient } from '@marina/database';
 import { createId } from '@marina/core';
 import type { Env } from '../context.js';
 import { requireStaff } from '../middleware/auth.js';
+import { getClientIp } from '../middleware/rate-limit.js';
+import {
+  AUDIT_ACTIONS,
+  customerActor,
+  recordAudit,
+  staffActor,
+  type AuditActor,
+} from '../services/audit.js';
 import {
   createPayment,
   refundPayment,
@@ -238,6 +246,8 @@ async function abandonChallenge(operatorId: string, intentId: string): Promise<v
 /** The order fields settlement needs; kept structural so both routes can pass theirs. */
 interface SettleableOrder {
   id: string;
+  order_number: string;
+  customer_id: string;
   total_cents: number;
   amount_paid_cents: number;
   balance_due_cents: number;
@@ -263,13 +273,15 @@ interface SettledCharge {
  * else, which is what makes a challenged booking indistinguishable from an
  * unchallenged one: identical Payment row, identical balance arithmetic, identical
  * audit event. Anything that differed between the two would be a bug the ledger
- * eventually has to answer for.
+ * eventually has to answer for. The `payment.capture` audit row is written here for
+ * that same reason — recording it in each route would let the two drift.
  */
 async function recordSettledCharge(
   operatorId: string,
   order: SettleableOrder,
   amountCents: number,
   result: StripePaymentResult,
+  audit: { actor: AuditActor; authenticated3ds: boolean },
 ): Promise<SettledCharge> {
   const amountPaidCents = order.amount_paid_cents + amountCents;
   const balanceDueCents = order.total_cents - amountPaidCents;
@@ -314,6 +326,33 @@ async function recordSettledCharge(
     });
 
     return created;
+  });
+
+  // After the transaction, never inside it: a failed audit insert would abort the
+  // whole tx and take the guest's settled payment with it (services/audit.ts).
+  await recordAudit({
+    operatorId,
+    actor: audit.actor,
+    action: AUDIT_ACTIONS.PAYMENT_CAPTURE,
+    entityType: 'Payment',
+    entityId: payment.id,
+    before: {
+      amount_paid_cents: order.amount_paid_cents,
+      balance_due_cents: order.balance_due_cents,
+    },
+    after: { amount_paid_cents: amountPaidCents, balance_due_cents: balanceDueCents },
+    context: {
+      order_id: order.id,
+      order_number: order.order_number,
+      captured_cents: amountCents,
+      order_total_cents: order.total_cents,
+      method: 'CARD',
+      processor: 'STRIPE',
+      processor_transaction_id: result.paymentId,
+      card_brand: result.cardBrand,
+      card_last_four: result.cardLastFour,
+      authenticated_3ds: audit.authenticated3ds,
+    },
   });
 
   return {
@@ -440,7 +479,12 @@ payments.post('/charge', async (c) => {
     return stripeErrorResponse(c, err);
   }
 
-  const settled = await recordSettledCharge(c.var.operatorId, order, amountCents, result);
+  const settled = await recordSettledCharge(c.var.operatorId, order, amountCents, result, {
+    // Checkout is unauthenticated by design, so the strongest attribution we can
+    // honestly make is the order's own customer; the IP is what corroborates it.
+    actor: customerActor(order.customer_id, getClientIp((h) => c.req.header(h))),
+    authenticated3ds: false,
+  });
 
   return c.json(
     {
@@ -564,7 +608,10 @@ payments.post('/confirm', async (c) => {
     );
   }
 
-  const settled = await recordSettledCharge(c.var.operatorId, order, amountCents, result);
+  const settled = await recordSettledCharge(c.var.operatorId, order, amountCents, result, {
+    actor: customerActor(order.customer_id, getClientIp((h) => c.req.header(h))),
+    authenticated3ds: true,
+  });
 
   return c.json(
     {
@@ -666,6 +713,17 @@ payments.post('/:id/refund', requireStaff, async (c) => {
     });
 
     const order = await tx.order.findUnique({ where: { id: payment.order_id } });
+    // The balance the refund moved FROM, captured in the same transaction that
+    // moves it — a refund's audit row is worthless without what the balance was
+    // and what it became.
+    const orderBefore = order
+      ? {
+          amountPaidCents: order.amount_paid_cents,
+          balanceDueCents: order.balance_due_cents,
+          orderNumber: order.order_number,
+        }
+      : null;
+
     let orderSummary: { amountPaidCents: number; balanceDueCents: number } | null = null;
     if (order) {
       const newAmountPaid = Math.max(0, order.amount_paid_cents - amountCents);
@@ -709,7 +767,42 @@ payments.post('/:id/refund', requireStaff, async (c) => {
       },
     });
 
-    return { updatedPayment, orderSummary };
+    return { updatedPayment, orderSummary, orderBefore };
+  });
+
+  await recordAudit({
+    operatorId: c.var.operatorId,
+    actor: staffActor(c.var.auth, getClientIp((h) => c.req.header(h))),
+    action: AUDIT_ACTIONS.PAYMENT_REFUND,
+    entityType: 'Payment',
+    entityId: payment.id,
+    before: {
+      status: payment.status,
+      refunded_cents: payment.refunded_cents,
+      order_amount_paid_cents: updated.orderBefore?.amountPaidCents ?? null,
+      order_balance_due_cents: updated.orderBefore?.balanceDueCents ?? null,
+    },
+    after: {
+      status: updated.updatedPayment.status,
+      refunded_cents: updated.updatedPayment.refunded_cents,
+      order_amount_paid_cents: updated.orderSummary?.amountPaidCents ?? null,
+      order_balance_due_cents: updated.orderSummary?.balanceDueCents ?? null,
+    },
+    context: {
+      refunded_now_cents: amountCents,
+      // A partial refund and a final one are different events to a reconciler,
+      // and the amounts alone do not say which this was.
+      partial: newStatus === 'PARTIAL_REFUND',
+      payment_amount_cents: payment.amount_cents,
+      order_id: payment.order_id,
+      order_number: updated.orderBefore?.orderNumber ?? null,
+      reason: parsed.data.reason ?? null,
+      processor: payment.processor,
+      processor_refund_id: result.refundId,
+      processor_refund_status: result.status,
+      approval_required: approval.required,
+      ...(approval.required ? { self_approved_by: c.var.auth.userId } : {}),
+    },
   });
 
   return c.json({

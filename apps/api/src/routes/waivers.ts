@@ -6,6 +6,12 @@ import type { Env } from '../context.js';
 import { requireStaff } from '../middleware/auth.js';
 import { rateLimit } from '../middleware/rate-limit.js';
 import {
+  AUDIT_ACTIONS,
+  SYSTEM_ACTOR,
+  customerActor,
+  recordAudit,
+} from '../services/audit.js';
+import {
   getActiveWaiverWithClauses,
   signWaiver,
   getWaiverPacket,
@@ -133,6 +139,43 @@ waivers.post('/sign', publicRateLimit, async (c) => {
       guardianName,
       acknowledgments,
       ipAddress: clientIp(c),
+    });
+
+    // A waiver is the one record here that a court may eventually read, so the
+    // audit row carries who signed, for whom, and against which template version.
+    // The signature image itself never goes in: it is the evidence, and the audit
+    // log is not where a second copy of it belongs.
+    const item = await c.var.db.orderItem.findFirst({
+      where: { id: orderItemId },
+      select: {
+        order_id: true,
+        order: { select: { order_number: true, customer_id: true } },
+      },
+    });
+
+    await recordAudit({
+      operatorId: c.var.operatorId,
+      actor: item
+        ? customerActor(item.order.customer_id, clientIp(c))
+        : { ...SYSTEM_ACTOR, ip: clientIp(c) },
+      action: AUDIT_ACTIONS.WAIVER_SIGN,
+      entityType: 'WaiverSignature',
+      entityId: signature.id,
+      after: {
+        signer_name: signature.signerName,
+        signed_at: signature.signedAt,
+        waiver_id: signature.waiverId,
+        waiver_version: signature.waiverVersion,
+        is_minor: signature.isMinor,
+        guardian_name: signature.guardianName,
+      },
+      context: {
+        order_item_id: signature.orderItemId,
+        order_id: item?.order_id ?? null,
+        order_number: item?.order.order_number ?? null,
+        customer_id: item?.order.customer_id ?? null,
+        clauses_acknowledged: signature.acknowledgments.length,
+      },
     });
 
     return c.json(

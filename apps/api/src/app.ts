@@ -3,6 +3,7 @@ import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
 import { AuthorizationError } from '@marina/auth';
 import type { Env } from './context.js';
+import { captureHonoError } from './services/errors.js';
 import { tenantMiddleware } from './middleware/tenant.js';
 import { activities } from './routes/activities.js';
 import { availability } from './routes/availability.js';
@@ -133,12 +134,24 @@ api.get('/whoami', (c) => c.json({ operatorId: c.var.operatorId }));
 
 app.route('/api', api);
 
-// Central error handling: turn auth errors into clean status codes.
-app.onError((err, c) => {
+// Central error handling: turn auth errors into clean status codes, and report
+// everything else to the error sink (services/errors.ts) so the Local Console's
+// Errors tab is the record of what broke rather than a tab that is always empty.
+app.onError(async (err, c) => {
   if (err instanceof AuthorizationError) {
+    // A refused permission is an answer, not a fault — the product behaving as
+    // designed. Recording it would bury real bugs under routine 403s and destroy
+    // the only signal the Errors tab exists to give.
     return c.json({ error: err.message, permission: err.permission }, 403);
   }
-  console.error(err);
+
+  // Awaited rather than fired and forgotten: by the time the caller sees the 500
+  // the row is already queryable, so "reproduce it, then go look" is one round
+  // trip. captureHonoError pulls operator, route, method, actor and request id off
+  // the context, echoes to stderr regardless of whether the row lands, and can
+  // neither throw nor outlast ERROR_CAPTURE_TIMEOUT_MS.
+  await captureHonoError(err, c);
+
   return c.json({ error: 'Internal server error' }, 500);
 });
 

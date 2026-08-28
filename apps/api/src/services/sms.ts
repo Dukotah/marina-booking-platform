@@ -8,6 +8,9 @@
  *  - Sends go straight to Twilio's REST API via `fetch` (no SDK dependency).
  *  - Functions NEVER throw. A failed or unconfigured SMS must never break a
  *    booking, payment, or reminder flow — callers get a NotificationResult.
+ *    That resilience is the reason every swallowed failure below is also handed
+ *    to the error sink: not throwing must not mean not telling anyone, or a dead
+ *    SMS path looks exactly like a working one.
  *
  * Tenant-scoped: callers pass the operator id; the order + integration config are
  * loaded through the operator-scoped Prisma client (RLS) so nothing leaks across
@@ -23,6 +26,7 @@ import {
   loadOrderBundle,
 } from './notification-data.js';
 import { sandboxEnabled, captureMessage } from './sandbox.js';
+import { captureError } from './errors.js';
 
 // ---------------------------------------------------------------------------
 // Twilio config resolution (per-operator Integration → env fallback)
@@ -68,10 +72,19 @@ async function resolveTwilioConfig(operatorId: string): Promise<TwilioConfig | n
     const fromNumber = configString(row?.config, 'from_number');
     if (accountSid && authToken && fromNumber) return { accountSid, authToken, fromNumber };
   } catch (err) {
-    console.error('[sms] failed to load Twilio integration config:', err);
+    // Falling through to the env config here means an operator who configured
+    // their own Twilio silently sends from the platform's number instead. That
+    // is a misconfiguration worth seeing, not a log line.
+    await captureError(err, {
+      operatorId,
+      route: 'sms.resolveTwilioConfig',
+      extra: { integration: 'twilio' },
+    });
   }
   const env = envTwilioConfig();
   if (!env && !warnedMissingConfig) {
+    // Not an error: an unconfigured provider is a supported state (§0 — the
+    // product runs with no Twilio account at all), so it warns once and no-ops.
     warnedMissingConfig = true;
     console.warn('[sms] Twilio is not configured (no operator integration or TWILIO_* env) — SMS disabled (no-op).');
   }
@@ -148,14 +161,26 @@ export async function sendSms(
 
     if (!res.ok) {
       const detail = await res.text().catch(() => '');
-      console.error(`[sms] Twilio error ${res.status}:`, detail.slice(0, 300));
+      // Twilio reports a rejection in the response, not by throwing, so there is
+      // no stack to group on. A named Error built here gives the sink a real top
+      // frame — otherwise every provider rejection collapses into one anonymous
+      // entry with no route back to this call site.
+      const providerError = new Error(`Twilio rejected the message (HTTP ${res.status})`);
+      providerError.name = 'TwilioError';
+      await captureError(providerError, {
+        operatorId,
+        route: 'sms.sendSms',
+        // The recipient number stays out of it; the provider's own diagnostic is
+        // truncated and scrubbed on the way in.
+        extra: { kind, status: res.status, provider_detail: detail.slice(0, 300) },
+      });
       return skipped(`provider error ${res.status}`);
     }
     const data = (await res.json().catch(() => null)) as { sid?: string } | null;
     return { sent: true, id: data?.sid };
   } catch (err) {
     // Network / unexpected failures must never bubble into the caller's flow.
-    console.error('[sms] unexpected send failure:', err);
+    await captureError(err, { operatorId, route: 'sms.sendSms', extra: { kind } });
     return skipped('unexpected send failure');
   }
 }
@@ -202,7 +227,11 @@ export async function sendBookingConfirmationSms(input: {
 
     return sendSms(input.operatorId, order.customer.phone, body, 'booking_confirmation');
   } catch (err) {
-    console.error('[sms] sendBookingConfirmationSms failed:', err);
+    await captureError(err, {
+      operatorId: input.operatorId,
+      route: 'sms.sendBookingConfirmationSms',
+      extra: { order_id: input.orderId },
+    });
     return skipped('unexpected failure');
   }
 }
@@ -234,7 +263,11 @@ export async function sendReminderSms(input: {
 
     return sendSms(input.operatorId, order.customer.phone, body, 'reminder');
   } catch (err) {
-    console.error('[sms] sendReminderSms failed:', err);
+    await captureError(err, {
+      operatorId: input.operatorId,
+      route: 'sms.sendReminderSms',
+      extra: { order_id: input.orderId },
+    });
     return skipped('unexpected failure');
   }
 }

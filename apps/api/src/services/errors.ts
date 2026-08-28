@@ -118,6 +118,25 @@ function burstLimit(): number {
   return Number.isFinite(raw) && raw >= 0 ? raw : DEFAULT_BURST_LIMIT;
 }
 
+/**
+ * Ceiling on how long one capture may hold its caller.
+ *
+ * `app.onError` awaits the capture before it answers, so that a reproduction and
+ * a look at the Errors tab are the same round trip. That is only safe if the sink
+ * cannot wedge: a Postgres that accepts the connection and then never replies
+ * would otherwise hold the 500 open for as long as the client waits. On timeout
+ * we hand the caller back a console-only result and leave the write running — if
+ * it does land a moment later, the row is still there to find.
+ *
+ * `ERROR_CAPTURE_TIMEOUT_MS=0` waits indefinitely.
+ */
+const DEFAULT_CAPTURE_TIMEOUT_MS = 5_000;
+
+function captureTimeoutMs(): number {
+  const raw = Number.parseInt(process.env.ERROR_CAPTURE_TIMEOUT_MS ?? '', 10);
+  return Number.isFinite(raw) && raw >= 0 ? raw : DEFAULT_CAPTURE_TIMEOUT_MS;
+}
+
 interface BurstEntry {
   windowStart: number;
   count: number;
@@ -618,16 +637,52 @@ export function errorSink(): ErrorSink {
   return sandboxEnabled() ? localErrorSink : cloudErrorSink;
 }
 
+/** Race marker. A unique symbol so it can never collide with a CapturedError. */
+const TIMED_OUT = Symbol('errors.timeout');
+
 /**
- * Record one error. Never throws, never rejects — call it without a try/catch
- * and without awaiting if the caller is on a hot path.
+ * Await `pending`, but give up after `ms`. The loser of the race keeps running and
+ * gets a no-op rejection handler so a late failure cannot surface as an
+ * unhandledRejection and take the process down — which would be this module
+ * causing exactly the class of outage it exists to explain.
+ */
+async function within(pending: Promise<CapturedError>, ms: number): Promise<CapturedError | typeof TIMED_OUT> {
+  pending.catch(() => {});
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expiry = new Promise<typeof TIMED_OUT>((resolve) => {
+    timer = setTimeout(() => resolve(TIMED_OUT), ms);
+    // Never hold the event loop open for a pending error report.
+    timer.unref?.();
+  });
+
+  try {
+    return await Promise.race([pending, expiry]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Record one error. Never throws, never rejects, and never blocks longer than
+ * `ERROR_CAPTURE_TIMEOUT_MS` — call it without a try/catch, and without awaiting
+ * if the caller is on a hot path.
  */
 export async function captureError(
   err: unknown,
   context: ErrorContext = {},
 ): Promise<CapturedError> {
   try {
-    return await errorSink().capture(err, context);
+    const pending = errorSink().capture(err, context);
+    const budget = captureTimeoutMs();
+    if (budget === 0) return await pending;
+
+    const settled = await within(pending, budget);
+    if (settled === TIMED_OUT) {
+      reportLost(normalizeError(err, context.level ?? 'error'), `sink did not respond within ${budget}ms`);
+      return { id: null, fingerprint: 'unknown', driver: 'console' };
+    }
+    return settled;
   } catch (sinkErr) {
     // The sink itself failing is the one case its own handler cannot cover.
     // eslint-disable-next-line no-console

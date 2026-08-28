@@ -1,8 +1,23 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "rootDir": "src",
-    "outDir": "dist",
+    // tsc type-checks this package; it does NOT produce the deploy artifact.
+    //
+    // The shared @marina/* packages ship TypeScript source with NodeNext-style
+    // `.js` import specifiers (D-009) because the Next apps consume them through
+    // a webpack `resolve.extensionAlias`. tsc emits those specifiers verbatim, so
+    // per-file tsc output could never be started by plain Node: `@marina/core`
+    // resolves to `packages/core/src/index.ts`, whose `./money.js` import has no
+    // file behind it. `apps/api` is therefore bundled with esbuild instead, which
+    // applies the TypeScript `.js` -> `.ts` resolution rule and inlines the
+    // workspace packages. See docs/DEPLOY.md.
+    //
+    // `isolatedModules` (inherited from the base config) is load-bearing here:
+    // esbuild transpiles file-by-file and cannot do whole-program type erasure.
+    //
+    // This config only makes sense paired with the esbuild `build` script in
+    // package.json — with `"build": "tsc"` it would emit nothing at all.
+    "noEmit": true,
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "types": ["node"]

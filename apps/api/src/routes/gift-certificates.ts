@@ -14,7 +14,14 @@ import { z } from 'zod';
 import { assertPermission } from '@marina/auth';
 import type { Env } from '../context.js';
 import { requireStaff } from '../middleware/auth.js';
-import { rateLimit } from '../middleware/rate-limit.js';
+import { getClientIp, rateLimit } from '../middleware/rate-limit.js';
+import {
+  AUDIT_ACTIONS,
+  SYSTEM_ACTOR,
+  customerActor,
+  recordAudit,
+  staffActor,
+} from '../services/audit.js';
 import {
   issueGiftCertificate,
   checkGiftCertificate,
@@ -52,6 +59,42 @@ giftCertificates.post('/redeem', publicRateLimit, async (c) => {
       orderId: parsed.data.orderId,
       actor: 'customer',
     });
+
+    // Redemption is the moment a certificate stops being a liability and becomes
+    // collected revenue, so the row carries the order balance on both sides of it.
+    // redeemGiftCertificate applies exactly `appliedCents` inside one transaction,
+    // so the pre-state is the post-state minus that — exact, and it spares a read.
+    const order = await c.var.db.order.findUnique({
+      where: { id: parsed.data.orderId },
+      select: { order_number: true, customer_id: true },
+    });
+
+    await recordAudit({
+      operatorId: c.var.operatorId,
+      actor: order
+        ? customerActor(order.customer_id, getClientIp((h) => c.req.header(h)))
+        : { ...SYSTEM_ACTOR, ip: getClientIp((h) => c.req.header(h)) },
+      action: AUDIT_ACTIONS.GIFT_CARD_REDEEM,
+      entityType: 'GiftCertificate',
+      entityId: result.giftCertificateId,
+      before: {
+        status: 'ACTIVE',
+        order_amount_paid_cents: result.orderAmountPaidCents - result.appliedCents,
+        order_balance_due_cents: result.orderBalanceDueCents + result.appliedCents,
+      },
+      after: {
+        status: 'REDEEMED',
+        order_amount_paid_cents: result.orderAmountPaidCents,
+        order_balance_due_cents: result.orderBalanceDueCents,
+      },
+      context: {
+        code: result.code,
+        applied_cents: result.appliedCents,
+        order_id: parsed.data.orderId,
+        order_number: order?.order_number ?? null,
+      },
+    });
+
     return c.json(result);
   } catch (err) {
     if (err instanceof GiftCertificateError) {
@@ -99,6 +142,30 @@ giftCertificates.post('/', requireStaff, async (c) => {
       message: parsed.data.message,
       expiresAt: parsed.data.expiresAt ? new Date(parsed.data.expiresAt) : undefined,
     });
+
+    // Issuing a certificate creates an outstanding liability out of nothing, so
+    // who authorized it and for how much is the point of the row. The code is
+    // recorded because it is how an operator identifies a certificate, and this
+    // page is gated on the same `operator:manage` that already lists every code.
+    await recordAudit({
+      operatorId: c.var.operatorId,
+      actor: staffActor(c.var.auth, getClientIp((h) => c.req.header(h))),
+      action: AUDIT_ACTIONS.GIFT_CARD_ISSUE,
+      entityType: 'GiftCertificate',
+      entityId: cert.id,
+      after: {
+        code: cert.code,
+        value_cents: cert.value_cents,
+        status: cert.status,
+        activity_id: cert.activity_id,
+        recipient_name: cert.recipient_name,
+        recipient_email: cert.recipient_email,
+        purchaser_email: cert.purchaser_email,
+        expires_at: cert.expires_at,
+      },
+      context: { has_gift_message: Boolean(cert.message) },
+    });
+
     return c.json({ giftCertificate: cert }, 201);
   } catch (err) {
     if (err instanceof GiftCertificateError) {

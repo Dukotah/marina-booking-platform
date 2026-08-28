@@ -8,26 +8,73 @@
  * The bookings these tests need are created through the API rather than by walking
  * checkout: the subject is the lookup and the reschedule, and a booking made in three
  * seconds instead of thirty is three seconds of surface area that cannot break them.
+ *
+ * WHAT THIS FILE GUARANTEES ABOUT ITS OWN DATA (docs/TESTING.md spells out the rule):
+ * every slot it books into is a slot it reserved for itself — created if absent, reused
+ * if a previous run left it empty, and rejected unless the slot's own capacity is the
+ * only thing limiting it. It books on fixed day offsets rather than "at least N hours
+ * out", so the same slots are chosen at 9am and at 11:59pm. It clears the payment
+ * simulator's queue before each test, because that queue is per-operator global. And
+ * the seed fixture cancels every booking it made when the test ends, so the run leaves
+ * the tenant's capacity exactly as it found it.
  */
-import { expect, test, type BookingSelection } from '../fixtures/test';
+import { expect, test, type BookingSelection, type Seed } from '../fixtures/test';
 import type { MarinaApi } from '../fixtures/api';
-import { addDays, hoursFromNow, isoDate, longDateLabel, timeLabel, today } from '../helpers/datetime';
+import { longDateLabel, timeLabel } from '../helpers/datetime';
 
 /**
- * How far out a booking must sit for a guest to be allowed to move it themselves. The
- * activity's `self_reschedule_hours` (48 by default) is enforced server-side; asking
- * for a slot comfortably beyond it keeps these tests about the flow rather than about
- * the window.
+ * Where this file puts its own inventory.
+ *
+ * The booking to be moved sits a day LATER than the slot it moves to, and both sit
+ * whole days out. Two reasons, both of which were sources of flake:
+ *
+ *  - Whole days, not "at least 72 hours". `self_reschedule_hours` (48 by default) is
+ *    enforced server-side, and a search for "the first slot beyond 72 hours" picks a
+ *    different slot depending on the time of day it runs — right at a boundary it can
+ *    pick one that is barely eligible. Day+5 and day+6 are never less than ~92 hours
+ *    out whatever the clock says, and both are inside the reschedule dialog's 14-day
+ *    day strip, so nothing has to open the month grid.
+ *  - Moving BACKWARDS in time. Availability reports a slot's capacity net of the shared
+ *    resource pools it draws on (D-014), measured over a window that starts at the slot
+ *    and runs for the activity's LONGEST rate — up to 24 hours for a boat. A booking
+ *    moved to a later slot on the same day is still inside that window, so the seats
+ *    it vacates do not come back in the published number and "the freed slot goes back
+ *    into inventory" fails while the product is behaving perfectly. Landing the move
+ *    before the slot it left keeps the two windows disjoint, and the test measures the
+ *    slot instead of the fleet.
  */
-const BEYOND_RESCHEDULE_WINDOW_HOURS = 72;
+const BOOKING_DAYS_AHEAD = 6;
+const TARGET_DAYS_AHEAD = 5;
+
+/** Late hours, so the spec's slots never collide with the seed's 8/10/12/14/16. */
+const OWNED_HOURS = [23, 22, 21];
 
 test.describe('customer self-service', () => {
+  test.beforeEach(async ({ api }) => {
+    // The payment simulator's outcome queue is per-OPERATOR global state: whichever
+    // charge arrives first pops it. A spec that queued "decline" and did not consume it
+    // hands this file a booking that never settles, which surfaces three assertions
+    // later as "a reschedule changed the price". Start from a known state, and say so
+    // when the previous file left something behind rather than swallowing it.
+    const queue = await api.paymentQueue();
+    if (queue.scripted) {
+      const cleared = await api.clearPaymentQueue();
+      console.warn(
+        `[e2e] self-service found ${cleared} scripted payment outcome(s) left over ` +
+          `(next charge would have been ${queue.nextOutcome}) and cleared them.`,
+      );
+    }
+  });
+
   test('a guest looks up their booking with the number and email', async ({
     page,
     seed,
     lookupPage,
   }) => {
-    const { orderNumber, guest, selection } = await seed.booking({ guestLabel: 'lookup' });
+    const { orderNumber, guest, selection } = await seed.booking({
+      guestLabel: 'lookup',
+      on: await seed.slot({ daysAhead: TARGET_DAYS_AHEAD, hours: OWNED_HOURS }),
+    });
 
     await lookupPage.open();
     await lookupPage.lookup(orderNumber, guest.email);
@@ -41,7 +88,10 @@ test.describe('customer self-service', () => {
     // The lookup is the identity gate for every self-service change, so the failure has
     // to be indistinguishable from "no such booking" — otherwise the form is an oracle
     // for guessing valid order numbers.
-    const { orderNumber } = await seed.booking({ guestLabel: 'wrongmail' });
+    const { orderNumber } = await seed.booking({
+      guestLabel: 'wrongmail',
+      on: await seed.slot({ daysAhead: TARGET_DAYS_AHEAD, hours: OWNED_HOURS }),
+    });
 
     await lookupPage.open();
     await page.getByLabel('Confirmation number').fill(orderNumber);
@@ -60,27 +110,21 @@ test.describe('customer self-service', () => {
     lookupPage,
     reschedulePanel,
   }) => {
-    const { order, orderNumber, guest, selection } = await seed.booking({
-      guestLabel: 'resched',
-      minHoursAhead: BEYOND_RESCHEDULE_WINDOW_HOURS,
-    });
-
-    // A second slot on the same activity to move to. Derived, not assumed: the seed's
-    // schedule shape is not this test's business.
-    const target = await findOtherSlot(api, selection);
+    const { from, to } = await reserveMove(seed);
+    const { order, orderNumber, guest } = await seed.booking({ guestLabel: 'resched', on: from });
 
     await lookupPage.openBooking(orderNumber, guest.email);
     await reschedulePanel.open();
-    await reschedulePanel.chooseItemIfAsked(selection.activity.name);
-    await reschedulePanel.chooseDate(target.datetime);
-    await reschedulePanel.chooseTime(target.datetime);
+    await reschedulePanel.chooseItemIfAsked(from.activity.name);
+    await reschedulePanel.chooseDate(to.slot.datetime);
+    await reschedulePanel.chooseTime(to.slot.datetime);
     await reschedulePanel.confirm();
 
     // The dialog says it moved. What matters is that the ORDER moved.
     const moved = await api.order(orderNumber);
-    expect(moved.items[0]!.datetime).not.toBe(selection.slot.datetime);
+    expect(moved.items[0]!.datetime).not.toBe(from.slot.datetime);
     expect(new Date(moved.items[0]!.datetime).toISOString()).toBe(
-      new Date(target.datetime).toISOString(),
+      new Date(to.slot.datetime).toISOString(),
     );
 
     // No rebooking, no re-payment: the money is untouched by a reschedule.
@@ -88,78 +132,93 @@ test.describe('customer self-service', () => {
     expect(moved.amountPaidCents).toBe(order.amountPaidCents);
     expect(moved.balanceDueCents).toBe(0);
 
-    // And the page a guest reloads has to show the new time, not the old one.
+    // And the page a guest reloads has to show the new time, not the old one. The two
+    // slots are on different days AND at different times precisely so that this is a
+    // real assertion rather than one a failed move could still satisfy.
     await page.reload({ waitUntil: 'domcontentloaded' });
-    await expect(page.getByText(longDateLabel(target.datetime)).first()).toBeVisible();
-    await expect(page.getByText(timeLabel(target.datetime)).first()).toBeVisible();
+    await expect(page.getByText(longDateLabel(to.slot.datetime)).first()).toBeVisible();
+    await expect(page.getByText(timeLabel(to.slot.datetime)).first()).toBeVisible();
+    await expect(
+      page.getByText(longDateLabel(from.slot.datetime)),
+      'the booking it was moved away from must not still be on the page',
+    ).toHaveCount(0);
   });
 
   test('the freed slot goes back into inventory', async ({ api, seed, lookupPage, reschedulePanel }) => {
     // Availability that lies is the thing operators get burned by. Moving a booking has
     // to give the old slot's seats back, not just take new ones.
-    const { orderNumber, guest, selection } = await seed.booking({
-      guestLabel: 'inventory',
-      minHoursAhead: BEYOND_RESCHEDULE_WINDOW_HOURS,
-    });
-    const target = await findOtherSlot(api, selection);
+    const { from, to } = await reserveMove(seed);
+    const { orderNumber, guest } = await seed.booking({ guestLabel: 'inventory', on: from });
 
-    const before = await slotState(api, selection.activity.id, selection.date, selection.slot.timeslotId);
+    const before = await slotState(api, from);
+    expect(before.capacityBooked, 'the spec owns this slot, so its booking is the only one').toBe(
+      from.quantity,
+    );
 
     await lookupPage.openBooking(orderNumber, guest.email);
     await reschedulePanel.open();
-    await reschedulePanel.chooseItemIfAsked(selection.activity.name);
-    await reschedulePanel.chooseDate(target.datetime);
-    await reschedulePanel.chooseTime(target.datetime);
+    await reschedulePanel.chooseItemIfAsked(from.activity.name);
+    await reschedulePanel.chooseDate(to.slot.datetime);
+    await reschedulePanel.chooseTime(to.slot.datetime);
     await reschedulePanel.confirm();
 
-    const after = await slotState(api, selection.activity.id, selection.date, selection.slot.timeslotId);
+    const after = await slotState(api, from);
     expect(after.capacityBooked, 'the vacated slot must release its seats').toBe(
-      before.capacityBooked - selection.quantity,
+      before.capacityBooked - from.quantity,
     );
+    expect(after.capacityRemaining, 'and offer them for sale again').toBe(from.slot.capacityTotal);
   });
 });
 
 /**
- * Another open slot for the same activity that a guest could actually pick.
+ * The pair of slots a move needs: one to book, one to move to, on the same activity.
  *
- * Searched from TODAY, not from the booking's own date: the reschedule dialog's day
- * strip is anchored on today and shows fourteen days, so a slot outside that window is
- * one the test could only reach by opening the month grid — extra steps that would be
- * testing the calendar rather than the reschedule.
+ * Both are reserved BEFORE anything is booked, so each is verified empty and
+ * unconstrained on its own terms. Reserving them the other way round would measure the
+ * second slot with the first slot's booking already weighing on the shared pool.
  */
-async function findOtherSlot(
-  api: MarinaApi,
-  selection: BookingSelection,
-): Promise<{ datetime: string; timeslotId: string }> {
-  const start = today();
+async function reserveMove(seed: Seed): Promise<{ from: BookingSelection; to: BookingSelection }> {
+  const from = await seed.slot({ daysAhead: BOOKING_DAYS_AHEAD, hours: OWNED_HOURS });
+  const to = await seed.slot({
+    daysAhead: TARGET_DAYS_AHEAD,
+    hours: OWNED_HOURS,
+    activityId: from.activity.id,
+  });
 
-  for (let offset = 0; offset < 14; offset++) {
-    const date = offset === 0 ? start : isoDate(addDays(`${start}T12:00:00`, offset));
-    const day = await api.availability(selection.activity.id, date);
-    const slot = day.slots.find(
-      (s) =>
-        s.timeslotId !== selection.slot.timeslotId &&
-        s.status !== 'FULL' &&
-        s.capacityRemaining >= selection.quantity &&
-        hoursFromNow(s.datetime) >= BEYOND_RESCHEDULE_WINDOW_HOURS,
-    );
-    if (slot) return { datetime: slot.datetime, timeslotId: slot.timeslotId };
-  }
+  // State the guarantee the "freed slot" assertion rests on instead of assuming it:
+  // the booking's new window must end no later than the old slot begins, or the old
+  // slot's published capacity is still answering for the seats this booking holds.
+  const gapMs = new Date(from.slot.datetime).getTime() - new Date(to.slot.datetime).getTime();
+  expect(
+    gapMs,
+    'the slot moved to must finish before the slot moved from begins, or the shared-resource ' +
+      'window makes the release invisible',
+  ).toBeGreaterThanOrEqual(to.rate.durationMinutes * 60_000);
 
-  throw new Error(
-    `No second open slot for "${selection.activity.name}" in the next 14 days that is at least ` +
-      `${BEYOND_RESCHEDULE_WINDOW_HOURS}h out. Reseed with \`pnpm db:reset\` (see docs/TESTING.md).`,
-  );
+  return { from, to };
 }
 
+/**
+ * One slot's capacity as the API publishes it, with a check that the number means what
+ * the caller thinks it means.
+ *
+ * `limitedBy` is the API saying "this figure is about a boat, not about this slot". A
+ * capacity assertion made against a resource-limited slot is measuring the fleet, and
+ * would pass or fail depending on what the rest of the marina is doing.
+ */
 async function slotState(
   api: MarinaApi,
-  activityId: string,
-  date: string,
-  timeslotId: string,
+  selection: BookingSelection,
 ): Promise<{ capacityBooked: number; capacityRemaining: number }> {
-  const day = await api.availability(activityId, date);
-  const slot = day.slots.find((s) => s.timeslotId === timeslotId);
-  if (!slot) throw new Error(`Timeslot ${timeslotId} is no longer listed on ${date}`);
+  const day = await api.timeslots(selection.activity.id, selection.date);
+  const slot = day.find((s) => s.id === selection.slot.timeslotId);
+  if (!slot) {
+    throw new Error(`Timeslot ${selection.slot.timeslotId} is no longer listed on ${selection.date}`);
+  }
+  expect(
+    slot.limitedBy,
+    `${selection.activity.name} at ${selection.slot.datetime} is limited by a shared resource ` +
+      `(${slot.limitedBy?.reason}), so its published capacity is not this slot's own`,
+  ).toBeNull();
   return { capacityBooked: slot.capacityBooked, capacityRemaining: slot.capacityRemaining };
 }

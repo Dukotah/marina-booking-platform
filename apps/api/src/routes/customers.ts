@@ -5,6 +5,8 @@ import { customerInputSchema } from '@marina/core';
 import type { Prisma } from '@marina/database';
 import type { Env } from '../context.js';
 import { requireStaff } from '../middleware/auth.js';
+import { getClientIp } from '../middleware/rate-limit.js';
+import { AUDIT_ACTIONS, recordAudit, staffActor } from '../services/audit.js';
 
 /**
  * Customers CRM API. All endpoints require an authenticated staff member and the
@@ -71,6 +73,39 @@ function serializeCustomer(c: {
     waiverOnFile: c.waiver_on_file,
     createdAt: c.created_at,
     updatedAt: c.updated_at,
+  };
+}
+
+/**
+ * The personal-data fields an audit row cares about, in the schema's own naming so
+ * the diff reads like the table it describes. Deliberately excludes the derived
+ * counters (lifetime value, booking totals) — they move on their own from order
+ * activity, and a row saying "lifetime_value_cents changed" is noise in a log whose
+ * subject is who edited whose contact details.
+ */
+function auditableCustomer(row: {
+  first_name: string;
+  last_name: string;
+  email: string;
+  phone: string | null;
+  address: string | null;
+  city: string | null;
+  state: string | null;
+  zip: string | null;
+  tags: string[];
+  notes: string | null;
+}) {
+  return {
+    first_name: row.first_name,
+    last_name: row.last_name,
+    email: row.email,
+    phone: row.phone,
+    address: row.address,
+    city: row.city,
+    state: row.state,
+    zip: row.zip,
+    tags: row.tags,
+    notes: row.notes,
   };
 }
 
@@ -295,6 +330,16 @@ customers.post('/', requireStaff, async (c) => {
     },
   });
 
+  await recordAudit({
+    operatorId: c.var.operatorId,
+    actor: staffActor(c.var.auth, getClientIp((h) => c.req.header(h))),
+    action: AUDIT_ACTIONS.CUSTOMER_CREATE,
+    entityType: 'Customer',
+    entityId: created.id,
+    after: auditableCustomer(created),
+    context: { source: 'staff_crm' },
+  });
+
   return c.json({ customer: serializeCustomer(created) }, 201);
 });
 
@@ -314,7 +359,9 @@ customers.patch('/:id', requireStaff, async (c) => {
   }
   const input = parsed.data;
 
-  const existing = await c.var.db.customer.findFirst({ where: { id }, select: { id: true } });
+  // The whole row, not just the id: this is the "before" half of the audit diff,
+  // and a PII edit recorded without what it replaced proves nothing.
+  const existing = await c.var.db.customer.findFirst({ where: { id } });
   if (!existing) {
     return c.json({ error: 'Customer not found' }, 404);
   }
@@ -342,6 +389,17 @@ customers.patch('/:id', requireStaff, async (c) => {
   if (input.notes !== undefined) data.notes = input.notes;
 
   const updated = await c.var.db.customer.update({ where: { id }, data });
+
+  await recordAudit({
+    operatorId: c.var.operatorId,
+    actor: staffActor(c.var.auth, getClientIp((h) => c.req.header(h))),
+    action: AUDIT_ACTIONS.CUSTOMER_UPDATE,
+    entityType: 'Customer',
+    entityId: updated.id,
+    before: auditableCustomer(existing),
+    after: auditableCustomer(updated),
+    context: { fields_submitted: Object.keys(input).sort() },
+  });
 
   return c.json({ customer: serializeCustomer(updated) });
 });

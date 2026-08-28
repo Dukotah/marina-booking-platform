@@ -13,6 +13,11 @@
  */
 import { forOperator } from '@marina/database';
 import { type NotificationResult, skipped } from './notification-data.js';
+// errors.ts imports `sandboxEnabled` from here, so these two modules form a cycle.
+// It is safe because neither side touches the other at module-evaluation time —
+// both references live inside function bodies that only run once both modules are
+// fully initialized. Keep it that way.
+import { captureError } from './errors.js';
 
 /**
  * Is the sandbox sink active?
@@ -95,7 +100,23 @@ export async function captureMessage(args: CaptureArgs): Promise<NotificationRes
     }
     return { sent: true, id: row.id };
   } catch (err) {
-    console.error('[sandbox] capture failed:', err);
+    // This is the catch the NUL bug lived in: Postgres rejected the whole INSERT,
+    // every staff alert disappeared, and the only trace was a console line nobody
+    // was reading. Reporting it puts the next one on the Errors tab instead.
+    //
+    // The message body is deliberately NOT part of the context. It is the one
+    // field guaranteed to hold the guest's name, address and booking details, and
+    // an error record is not a second copy of the mail.
+    await captureError(err, {
+      operatorId: args.operatorId,
+      route: 'sandbox.captureMessage',
+      extra: {
+        channel: args.channel,
+        kind: args.kind,
+        order_id: args.orderId ?? null,
+        order_number: args.orderNumber ?? null,
+      },
+    });
     return skipped('sandbox capture failed');
   }
 }

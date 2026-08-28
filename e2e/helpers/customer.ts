@@ -392,19 +392,52 @@ export class BookingLookupPage {
     await this.page.getByLabel('Confirmation number').fill(orderNumber);
     await this.page.getByLabel('Email', { exact: false }).fill(email);
     await this.page.getByRole('button', { name: 'Find my booking' }).click();
-    await this.page.waitForURL(/\/account\/bookings\?/, { timeout: 60_000 });
-    await expect(
-      this.page.getByRole('heading', { name: new RegExp(`Reservation ${rx(orderNumber)}`) }),
-    ).toBeVisible();
+    try {
+      await this.page.waitForURL(/\/account\/bookings\?/, { timeout: 60_000 });
+    } catch {
+      // The form does not navigate when the lookup is refused, and `lookupBooking`
+      // returns the same "we could not find it" for a genuine miss, a rate-limited
+      // request and an API that is down. Quote what the guest was told rather than
+      // reporting a bare URL timeout, which names the symptom and hides the cause.
+      const shown = (await this.page.locator('main').innerText().catch(() => '')).trim();
+      throw new Error(
+        `The lookup form never reached the manage view for ${orderNumber}. It showed:\n${shown.slice(0, 600)}`,
+      );
+    }
+    await this.expectManageView(orderNumber);
   }
 
   /** Direct link into the manage view, for specs not testing the lookup form itself. */
   async openBooking(orderNumber: string, email: string): Promise<void> {
     const qs = new URLSearchParams({ order: orderNumber, email });
     await this.page.goto(`/account/bookings?${qs.toString()}`, { waitUntil: 'domcontentloaded' });
-    await expect(
-      this.page.getByRole('heading', { name: new RegExp(`Reservation ${rx(orderNumber)}`) }),
-    ).toBeVisible();
+    await this.expectManageView(orderNumber);
+  }
+
+  /**
+   * The manage view for one reservation, or a precise account of why it is not there.
+   *
+   * `/account/bookings` collapses EVERY failure to fetch the order into one screen —
+   * a 404, a 429 from the public rate limiter, an unreachable API — and tells the guest
+   * "We could not find a booking matching that link." Waiting only for the reservation
+   * heading therefore reports a rate-limited page load as a fifteen-second timeout on a
+   * heading, which sends the reader looking at the reschedule dialog for a fault that is
+   * two layers below it. Naming the refusal state costs one locator and ends that hunt.
+   */
+  private async expectManageView(orderNumber: string): Promise<void> {
+    const heading = this.page.getByRole('heading', {
+      name: new RegExp(`Reservation ${rx(orderNumber)}`),
+    });
+    const refused = this.page.getByRole('heading', { name: 'Booking unavailable' });
+
+    await expect(heading.or(refused).first()).toBeVisible();
+    if (await refused.isVisible().catch(() => false)) {
+      const reason = (await this.page.locator('main').innerText().catch(() => '')).trim();
+      throw new Error(
+        `The manage view would not open ${orderNumber}. The page said:\n${reason.slice(0, 400)}`,
+      );
+    }
+    await expect(heading).toBeVisible();
   }
 }
 
@@ -431,12 +464,25 @@ export class ReschedulePanel {
     }
   }
 
+  /**
+   * Pick a day in the dialog's strip.
+   *
+   * The strip renders every day disabled until the range request lands, so this waits
+   * for the day to become enabled and then confirms the choice took. Asserting
+   * `aria-checked` is not ceremony: a click that arrives while the strip is still
+   * reconciling selects nothing, and the failure would otherwise surface one step later
+   * as "no time chips", which reads like the activity has no times that day.
+   */
   async chooseDate(datetime: string): Promise<void> {
     const day = this.dialog()
       .getByRole('radiogroup', { name: 'Choose a date', exact: true })
       .getByRole('radio', { name: new RegExp(`^${rx(dayLabel(datetime))}\\b`) });
     await expect(day).toBeEnabled();
     await day.click();
+    await expect(day, 'the day did not select — the strip was still loading').toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
   }
 
   async chooseTime(datetime: string): Promise<void> {
@@ -445,14 +491,38 @@ export class ReschedulePanel {
       .getByRole('radio', { name: new RegExp(`^${rx(timeLabel(datetime))}\\b`) });
     await expect(chip).toBeEnabled();
     await chip.click();
+    await expect(chip, 'the time did not select — the chips were still loading').toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
   }
 
+  /**
+   * Commit the move.
+   *
+   * A refused move does not throw anything — the dialog renders the server's
+   * customer-safe sentence inline and stays open — and a move whose page went away
+   * underneath it (the manage view re-fetches the order after the move) leaves no
+   * dialog at all. Both used to read as "the 'Reservation updated' heading never
+   * appeared", which says nothing about either. Report what the guest was actually
+   * looking at instead.
+   */
   async confirm(): Promise<void> {
     const button = this.page.getByRole('button', { name: 'Confirm new time' });
     await expect(button).toBeEnabled();
     await button.click();
-    await expect(this.page.getByRole('heading', { name: 'Reservation updated' })).toBeVisible({
-      timeout: 30_000,
-    });
+
+    const updated = this.page.getByRole('heading', { name: 'Reservation updated' });
+    try {
+      await expect(updated).toBeVisible({ timeout: 30_000 });
+    } catch {
+      const scope = (await this.dialog().first().isVisible().catch(() => false))
+        ? this.dialog().first()
+        : this.page.locator('main');
+      const shown = (await scope.innerText().catch(() => '')).trim();
+      throw new Error(
+        `The reschedule was never confirmed. What the page showed instead:\n${shown.slice(0, 600)}`,
+      );
+    }
   }
 }

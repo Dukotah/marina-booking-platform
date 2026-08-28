@@ -4,6 +4,8 @@ import { z } from 'zod';
 import { assertPermission } from '@marina/auth';
 import type { Env } from '../context.js';
 import { requireStaff } from '../middleware/auth.js';
+import { getClientIp } from '../middleware/rate-limit.js';
+import { AUDIT_ACTIONS, recordAudit, staffActor } from '../services/audit.js';
 
 /**
  * Config / settings parity API (Singenuity §4). Mounted under `/api/settings`. Each
@@ -41,6 +43,47 @@ function isUniqueViolation(err: unknown): boolean {
 /** Parse+validate a JSON body against a schema, returning null on parse failure. */
 async function readBody(c: Context<Env>): Promise<unknown> {
   return c.req.json().catch(() => null);
+}
+
+// --- Auditing -------------------------------------------------------------
+
+/**
+ * Columns every row here carries that nobody audits: the id and operator are
+ * already on the audit row itself, and `updated_at` would flag every edit as a
+ * change to a field the operator never touched.
+ */
+const AUDIT_OMIT_COLUMNS = new Set(['id', 'operator_id', 'created_at', 'updated_at']);
+
+function auditableRow<T extends object>(row: T): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(row).filter(([key]) => !AUDIT_OMIT_COLUMNS.has(key)),
+  );
+}
+
+/**
+ * Record one configuration write.
+ *
+ * Every sub-resource in this file is operator configuration, so they all share
+ * `settings.update`; `entityType` is what tells a reader whether a blackout date
+ * or a GL account moved. Omitting `before` marks a creation and omitting `after`
+ * a deletion — that is how services/audit.ts reads a one-sided diff.
+ */
+async function auditSettingsChange(
+  c: Context<Env>,
+  entityType: string,
+  entityId: string,
+  change: { before?: object | null; after?: object | null; context?: Record<string, unknown> },
+): Promise<void> {
+  await recordAudit({
+    operatorId: c.var.operatorId,
+    actor: staffActor(c.var.auth, getClientIp((h) => c.req.header(h))),
+    action: AUDIT_ACTIONS.SETTINGS_UPDATE,
+    entityType,
+    entityId,
+    before: change.before ? auditableRow(change.before) : undefined,
+    after: change.after ? auditableRow(change.after) : undefined,
+    context: change.context,
+  });
 }
 
 // ===========================================================================
@@ -88,6 +131,7 @@ settings.post('/questions', requireStaff, async (c) => {
       sort_index: d.sort_index,
     },
   });
+  await auditSettingsChange(c, 'CustomerQuestion', question.id, { after: question });
   return c.json({ question }, 201);
 });
 
@@ -112,6 +156,10 @@ settings.patch('/questions/:id', requireStaff, async (c) => {
       ...(d.sort_index !== undefined ? { sort_index: d.sort_index } : {}),
     },
   });
+  await auditSettingsChange(c, 'CustomerQuestion', question.id, {
+    before: existing,
+    after: question,
+  });
   return c.json({ question });
 });
 
@@ -121,6 +169,7 @@ settings.delete('/questions/:id', requireStaff, async (c) => {
   const existing = await c.var.db.customerQuestion.findFirst({ where: { id } });
   if (!existing) return c.json({ error: 'Question not found' }, 404);
   await c.var.db.customerQuestion.delete({ where: { id } });
+  await auditSettingsChange(c, 'CustomerQuestion', id, { before: existing });
   return c.json({ ok: true });
 });
 
@@ -164,6 +213,7 @@ settings.post('/affiliates', requireStaff, async (c) => {
         notes: d.notes ?? null,
       },
     });
+    await auditSettingsChange(c, 'Affiliate', affiliate.id, { after: affiliate });
     return c.json({ affiliate }, 201);
   } catch (err) {
     if (isUniqueViolation(err)) return c.json({ error: 'That affiliate code is already in use' }, 409);
@@ -191,6 +241,10 @@ settings.patch('/affiliates/:id', requireStaff, async (c) => {
         ...(d.is_active !== undefined ? { is_active: d.is_active } : {}),
         ...(d.notes !== undefined ? { notes: d.notes } : {}),
       },
+    });
+    await auditSettingsChange(c, 'Affiliate', affiliate.id, {
+      before: existing,
+      after: affiliate,
     });
     return c.json({ affiliate });
   } catch (err) {
@@ -241,6 +295,11 @@ settings.put('/templates/:kind', requireStaff, async (c) => {
   if (!parsed.success) return badRequest(c, parsed.error);
   const d = parsed.data;
   const operatorId = c.var.operatorId;
+  // An upsert hides whether this was the first edit or the fortieth; read the row
+  // it is about to replace so the audit diff can say which, and what it replaced.
+  const existing = await c.var.db.messageTemplate.findUnique({
+    where: { operator_id_kind: { operator_id: operatorId, kind } },
+  });
   const template = await c.var.db.messageTemplate.upsert({
     where: { operator_id_kind: { operator_id: operatorId, kind } },
     create: {
@@ -255,6 +314,11 @@ settings.put('/templates/:kind', requireStaff, async (c) => {
       subject_override: d.subject_override ?? null,
       body_override: d.body_override ?? null,
     },
+  });
+  await auditSettingsChange(c, 'MessageTemplate', template.id, {
+    before: existing,
+    after: template,
+    context: { kind },
   });
   return c.json({ template });
 });
@@ -289,6 +353,7 @@ settings.post('/heard-about', requireStaff, async (c) => {
   const option = await c.var.db.heardAboutOption.create({
     data: { operator_id: c.var.operatorId, label: d.label, is_active: d.is_active, sort_index: d.sort_index },
   });
+  await auditSettingsChange(c, 'HeardAboutOption', option.id, { after: option });
   return c.json({ option }, 201);
 });
 
@@ -309,6 +374,10 @@ settings.patch('/heard-about/:id', requireStaff, async (c) => {
       ...(d.sort_index !== undefined ? { sort_index: d.sort_index } : {}),
     },
   });
+  await auditSettingsChange(c, 'HeardAboutOption', option.id, {
+    before: existing,
+    after: option,
+  });
   return c.json({ option });
 });
 
@@ -318,6 +387,7 @@ settings.delete('/heard-about/:id', requireStaff, async (c) => {
   const existing = await c.var.db.heardAboutOption.findFirst({ where: { id } });
   if (!existing) return c.json({ error: 'Option not found' }, 404);
   await c.var.db.heardAboutOption.delete({ where: { id } });
+  await auditSettingsChange(c, 'HeardAboutOption', id, { before: existing });
   return c.json({ ok: true });
 });
 
@@ -382,6 +452,7 @@ settings.post('/blackouts', requireStaff, async (c) => {
       reason: d.reason ?? null,
     },
   });
+  await auditSettingsChange(c, 'BlackoutDate', blackout.id, { after: blackout });
   return c.json({ blackout: serializeBlackout(blackout) }, 201);
 });
 
@@ -391,6 +462,7 @@ settings.delete('/blackouts/:id', requireStaff, async (c) => {
   const existing = await c.var.db.blackoutDate.findFirst({ where: { id } });
   if (!existing) return c.json({ error: 'Blackout not found' }, 404);
   await c.var.db.blackoutDate.delete({ where: { id } });
+  await auditSettingsChange(c, 'BlackoutDate', id, { before: existing });
   return c.json({ ok: true });
 });
 
@@ -430,6 +502,7 @@ settings.post('/gl-accounts', requireStaff, async (c) => {
         is_active: d.is_active,
       },
     });
+    await auditSettingsChange(c, 'GLAccount', account.id, { after: account });
     return c.json({ account }, 201);
   } catch (err) {
     if (isUniqueViolation(err)) return c.json({ error: 'That GL code is already in use' }, 409);
@@ -455,6 +528,10 @@ settings.patch('/gl-accounts/:id', requireStaff, async (c) => {
         ...(d.category !== undefined ? { category: d.category } : {}),
         ...(d.is_active !== undefined ? { is_active: d.is_active } : {}),
       },
+    });
+    await auditSettingsChange(c, 'GLAccount', account.id, {
+      before: existing,
+      after: account,
     });
     return c.json({ account });
   } catch (err) {

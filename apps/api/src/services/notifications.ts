@@ -11,6 +11,10 @@
  * RESEND_API_KEY env var. If the key is missing, we log once and no-op. These
  * functions NEVER throw — a failed/disabled email must never break a booking,
  * payment, or refund flow. Callers may `void` them or await for a result flag.
+ * Because most callers `void` them, every swallowed failure is also handed to the
+ * error sink (services/errors.ts): nobody is checking the return value, so an
+ * email path that has been dead for a week would otherwise look identical to one
+ * that works.
  *
  * Wiring (see followups): the orders slice should call sendBookingConfirmation +
  * sendStaffNewBooking after an order is created; the payments/refund slice should
@@ -43,6 +47,7 @@ import {
 import { sendReminderSms } from './sms.js';
 import { loadTemplateOverride, resolveTemplate } from './message-templates.js';
 import { sandboxEnabled, captureMessage } from './sandbox.js';
+import { captureError } from './errors.js';
 
 export type { NotificationResult };
 
@@ -101,6 +106,21 @@ interface SendArgs {
   orderNumber?: string | null;
 }
 
+/**
+ * What an error record is allowed to know about a failed send: which message it
+ * was and which order it belonged to. Not the addresses, not the subject, and
+ * never the rendered body — those are the guest's name, itinerary and contact
+ * details, and an error record is not a second copy of the mail.
+ */
+function dispatchContext(args: SendArgs): Record<string, unknown> {
+  return {
+    provider: 'resend',
+    kind: args.kind,
+    order_id: args.orderId ?? null,
+    order_number: args.orderNumber ?? null,
+  };
+}
+
 /** Single choke point for actually dispatching an email. Never throws. */
 async function dispatch(args: SendArgs): Promise<NotificationResult> {
   const recipients = (Array.isArray(args.to) ? args.to : [args.to]).filter(
@@ -138,13 +158,27 @@ async function dispatch(args: SendArgs): Promise<NotificationResult> {
       ...(args.replyTo ? { replyTo: args.replyTo } : {}),
     });
     if (error) {
-      console.error('[notifications] Resend error:', error);
+      // Resend reports a rejection in the result rather than by throwing, so
+      // there is no stack to group on. A named Error built here gives the sink a
+      // real top frame; passing the bare object would file every provider
+      // rejection as one anonymous entry with no route back to this call site.
+      const providerError = new Error(`Resend rejected the send: ${error.message ?? 'unknown'}`);
+      providerError.name = error.name ?? 'ResendError';
+      await captureError(providerError, {
+        operatorId: args.operatorId,
+        route: 'notifications.dispatch',
+        extra: { ...dispatchContext(args), recipients: recipients.length },
+      });
       return skipped(`provider error: ${error.message ?? 'unknown'}`);
     }
     return { sent: true, id: data?.id };
   } catch (err) {
     // Network / unexpected failures must never bubble into the caller's flow.
-    console.error('[notifications] Unexpected send failure:', err);
+    await captureError(err, {
+      operatorId: args.operatorId,
+      route: 'notifications.dispatch',
+      extra: { ...dispatchContext(args), recipients: recipients.length },
+    });
     return skipped('unexpected send failure');
   }
 }
@@ -261,7 +295,11 @@ export async function sendBookingConfirmation(input: {
       orderNumber: order.order_number,
     });
   } catch (err) {
-    console.error('[notifications] sendBookingConfirmation failed:', err);
+    await captureError(err, {
+      operatorId: input.operatorId,
+      route: 'notifications.sendBookingConfirmation',
+      extra: { order_id: input.orderId },
+    });
     return skipped('unexpected failure');
   }
 }
@@ -324,7 +362,11 @@ export async function sendStaffNewBooking(input: {
       orderNumber: order.order_number,
     });
   } catch (err) {
-    console.error('[notifications] sendStaffNewBooking failed:', err);
+    await captureError(err, {
+      operatorId: input.operatorId,
+      route: 'notifications.sendStaffNewBooking',
+      extra: { order_id: input.orderId },
+    });
     return skipped('unexpected failure');
   }
 }
@@ -392,7 +434,11 @@ export async function sendReminder(input: {
       orderNumber: order.order_number,
     });
   } catch (err) {
-    console.error('[notifications] sendReminder failed:', err);
+    await captureError(err, {
+      operatorId: input.operatorId,
+      route: 'notifications.sendReminder',
+      extra: { order_id: input.orderId },
+    });
     return skipped('unexpected failure');
   }
 }
@@ -465,7 +511,11 @@ export async function sendRefundReceipt(input: {
       orderNumber: order.order_number,
     });
   } catch (err) {
-    console.error('[notifications] sendRefundReceipt failed:', err);
+    await captureError(err, {
+      operatorId: input.operatorId,
+      route: 'notifications.sendRefundReceipt',
+      extra: { payment_id: input.paymentId },
+    });
     return skipped('unexpected failure');
   }
 }
@@ -511,7 +561,13 @@ export async function sendGuideAssignmentEmail(input: {
       text,
     });
   } catch (err) {
-    console.error('[notifications] sendGuideAssignmentEmail failed:', err);
+    await captureError(err, {
+      operatorId: input.operatorId,
+      route: 'notifications.sendGuideAssignmentEmail',
+      // The guide's address is the payload here, so the activity is the only
+      // identifying detail that goes in.
+      extra: { activity: input.activityName },
+    });
     return skipped('unexpected failure');
   }
 }
@@ -590,7 +646,11 @@ export async function runDueReminders(
     try {
       email = await sendReminder({ operatorId, orderId });
     } catch (err) {
-      console.error('[notifications] runDueReminders email failed:', err);
+      await captureError(err, {
+        operatorId,
+        route: 'notifications.runDueReminders',
+        extra: { channel: 'email', order_id: orderId },
+      });
       email = skipped('unexpected failure');
     }
 
@@ -598,7 +658,11 @@ export async function runDueReminders(
     try {
       sms = await sendReminderSms({ operatorId, orderId });
     } catch (err) {
-      console.error('[notifications] runDueReminders sms failed:', err);
+      await captureError(err, {
+        operatorId,
+        route: 'notifications.runDueReminders',
+        extra: { channel: 'sms', order_id: orderId },
+      });
       sms = skipped('unexpected failure');
     }
 
