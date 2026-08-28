@@ -32,7 +32,7 @@ interface CheckoutPageProps {
 /** A friendly, branded error frame for unrecoverable checkout entry states. */
 function CheckoutProblem({ title, body }: { title: string; body: string }) {
   return (
-    <main className="mx-auto flex max-w-2xl flex-col items-start gap-4 px-4 py-16">
+    <main id="main-content" tabIndex={-1} className="mx-auto flex max-w-2xl flex-col items-start gap-4 px-4 py-16">
       <h1 className="text-2xl font-bold tracking-tight text-slate-900">{title}</h1>
       <p className="text-slate-600">{body}</p>
       <Link
@@ -149,7 +149,7 @@ export default async function CheckoutPage({ searchParams }: CheckoutPageProps) 
   const brand = getBrand();
 
   return (
-    <main className="mx-auto w-full max-w-5xl px-4 py-6 sm:py-10">
+    <main id="main-content" tabIndex={-1} className="mx-auto w-full max-w-5xl px-4 py-6 sm:py-10">
       <header className="mb-6">
         <Link
           href="/"

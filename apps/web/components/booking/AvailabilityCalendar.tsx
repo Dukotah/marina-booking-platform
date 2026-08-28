@@ -700,13 +700,26 @@ export function AvailabilityCalendar({
                 !state && loading ? 'animate-pulse' : '',
               ].join(' ')}
             >
-              <span aria-hidden className="text-[11px] font-medium uppercase tracking-wide opacity-70">
+              <span
+                aria-hidden
+                // Was opacity-70, which multiplies against whatever tint the day
+                // chip is painted and lands at 4.15:1 on the available-day green.
+                // Opacity is invisible to a design token, so the weight is carried
+                // by the type instead and the colour stays at full strength.
+                className="text-[11px] font-semibold uppercase tracking-wide"
+              >
                 {i === 0 ? 'Today' : i === 1 ? 'Tomo' : format(date, 'EEE')}
               </span>
               <span aria-hidden className="text-lg font-bold leading-none tabular-nums">
                 {format(date, 'd')}
               </span>
-              <span aria-hidden className="text-[10px] font-medium uppercase opacity-60">
+              <span
+                aria-hidden
+                // Same reason as the label above: opacity multiplies against the day
+                // chip's tint and lands at 3.27:1 on the available-day green. At 10px
+                // this is the smallest text in the funnel, so it needs the full 4.5:1.
+                className="text-[10px] font-semibold uppercase"
+              >
                 {format(date, 'MMM')}
               </span>
               {/* Fixed-height status rail: colour changes, geometry never does. */}

@@ -41,7 +41,7 @@ export default async function HomePage() {
     <div style={brandStyle()} className="flex min-h-screen flex-col">
       <SiteHeader />
 
-      <main className="flex-1">
+      <main id="main-content" tabIndex={-1} className="flex-1">
         <CatalogHero activityCount={loadFailed ? 0 : activities.length} />
 
         <div className="mx-auto max-w-6xl px-4 py-10 sm:py-12">

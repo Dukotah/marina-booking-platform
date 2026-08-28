@@ -20,7 +20,7 @@ export default function TermsPage() {
   return (
     <div style={brandStyle(brand)} className="flex min-h-screen flex-col">
       <SiteHeader />
-      <main className="mx-auto w-full max-w-2xl flex-1 px-4 py-12">
+      <main id="main-content" tabIndex={-1} className="mx-auto w-full max-w-2xl flex-1 px-4 py-12">
         <h1 className="text-2xl font-bold tracking-tight text-slate-900">Terms of Service</h1>
         <p className="mt-2 text-sm text-slate-500">Last updated {year}</p>
 

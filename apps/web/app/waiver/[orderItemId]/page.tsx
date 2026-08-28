@@ -38,7 +38,7 @@ export default function WaiverPage({
   return (
     <div style={brandStyle(brand)} className="flex min-h-screen flex-col bg-slate-50">
       <SiteHeader />
-      <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-10">
+      <main id="main-content" tabIndex={-1} className="mx-auto w-full max-w-3xl flex-1 px-4 py-10">
         <header className="mb-6">
           <h1 className="text-2xl font-bold text-slate-900">Liability waiver</h1>
           <p className="mt-1 text-sm text-slate-500">

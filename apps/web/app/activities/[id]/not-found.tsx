@@ -9,7 +9,7 @@ import { getBrand, brandStyle } from '@/lib/brand';
 export default function ActivityNotFound() {
   const brand = getBrand();
   return (
-    <main
+    <main id="main-content" tabIndex={-1}
       style={brandStyle(brand)}
       className="mx-auto flex max-w-xl flex-col items-center px-4 py-24 text-center"
     >

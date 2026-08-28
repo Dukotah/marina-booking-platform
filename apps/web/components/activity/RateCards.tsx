@@ -13,6 +13,7 @@
 import { useRef } from 'react';
 import { formatUSD, formatDuration } from '@/lib/format';
 import type { CatalogRate } from '@/lib/api';
+import { onBrandForeground } from '@/lib/brand';
 
 interface RateCardsProps {
   rates: CatalogRate[];
@@ -129,8 +130,12 @@ export function RateCards({ rates, selectedRateId, onSelect, accentColor }: Rate
           >
             {(isCheapest || isLongest) && (
               <span
-                className="absolute -top-2 right-3 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white"
-                style={{ backgroundColor: accentColor }}
+                // The accent here is the ACTIVITY's colour, not the tenant brand, so the
+                // stylesheet's --brand-foreground override cannot reach it. Derive a
+                // legible foreground for this specific colour instead of assuming white,
+                // which measured 2.77:1 on the seeded sky blue at 10px.
+                className="absolute -top-2 right-3 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
+                style={{ backgroundColor: accentColor, color: onBrandForeground(accentColor) }}
               >
                 {isCheapest ? 'Best value' : 'Most time'}
               </span>

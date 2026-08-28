@@ -9,7 +9,7 @@ import {
   type ActivityDetail,
   type AvailabilityRangeDay,
 } from '@/lib/api';
-import { getBrand, brandStyle } from '@/lib/brand';
+import { getBrand, brandStyle, onBrandForeground } from '@/lib/brand';
 import { formatUSD } from '@/lib/format';
 import { BookingWidget } from '@/components/activity/BookingWidget';
 
@@ -187,7 +187,7 @@ export default async function ActivityDetailPage({ params }: PageProps) {
   const categoryLabel = CATEGORY_LABELS[activity.category];
 
   return (
-    <main style={brandStyle(brand)} className="mx-auto w-full max-w-6xl px-4 py-8">
+    <main id="main-content" tabIndex={-1} style={brandStyle(brand)} className="mx-auto w-full max-w-6xl px-4 py-8">
       <style dangerouslySetInnerHTML={{ __html: PRE_HYDRATION_STYLES }} />
       <script dangerouslySetInnerHTML={{ __html: PRE_HYDRATION_RADIOS }} />
 
@@ -225,8 +225,10 @@ export default async function ActivityDetailPage({ params }: PageProps) {
       <div className="grid grid-cols-1 gap-8 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)] lg:grid-rows-[auto_auto_1fr]">
         <header className="min-w-0 lg:col-start-1 lg:row-start-2">
           <span
-            className="inline-block rounded-full px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-white"
-            style={{ backgroundColor: accent }}
+            className="inline-block rounded-full px-2.5 py-1 text-xs font-semibold uppercase tracking-wide"
+            // The activity's own colour, not the tenant brand, so derive a legible
+            // foreground for it rather than assuming white (2.77:1 on the seed blue).
+            style={{ backgroundColor: accent, color: onBrandForeground(accent) }}
           >
             {categoryLabel}
           </span>

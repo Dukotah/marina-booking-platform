@@ -28,7 +28,7 @@ export default function AccountPage() {
   return (
     <div style={brandStyle(brand)} className="flex min-h-screen flex-col">
       <SiteHeader />
-      <main className="mx-auto flex w-full max-w-md flex-1 flex-col px-4 py-10">
+      <main id="main-content" tabIndex={-1} className="mx-auto flex w-full max-w-md flex-1 flex-col px-4 py-10">
         <header className="mb-8 text-center">
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">My Bookings</h1>
           <p className="mt-2 text-sm text-slate-600">

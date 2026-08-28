@@ -68,7 +68,19 @@ export function DataTable<T>({
         className,
       )}
     >
-      <div className="overflow-x-auto">
+      {/*
+        A region that scrolls has to be reachable by keyboard, or a keyboard-only
+        operator simply cannot see the columns that overflow — on the dock, on a
+        narrow screen, that is most of them. tabIndex makes it focusable and the
+        caption names it, so a screen reader announces WHICH table just took focus
+        rather than an anonymous scroll box.
+      */}
+      <div
+        className="overflow-x-auto"
+        tabIndex={0}
+        role="region"
+        aria-label={caption ? `${caption} (scrollable)` : 'Scrollable table'}
+      >
         <table className="w-full border-collapse text-sm">
           {caption ? <caption className="sr-only">{caption}</caption> : null}
           <thead>

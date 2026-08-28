@@ -25,6 +25,7 @@ import type {
   AvailabilitySlot,
   CatalogRate,
 } from '@/lib/api';
+import { onBrandForeground } from '@/lib/brand';
 import { RateCards } from './RateCards';
 import type { RangeDay } from '../booking/AvailabilityCalendar';
 
@@ -76,8 +77,11 @@ function Step({
       <div className="mb-3 flex items-center gap-2.5">
         <span
           aria-hidden
-          className="flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold text-white"
-          style={{ backgroundColor: done ? accentColor : '#94a3b8' }}
+          className="flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold"
+          style={{
+            backgroundColor: done ? accentColor : '#94a3b8',
+            color: onBrandForeground(done ? accentColor : '#94a3b8'),
+          }}
         >
           {done ? (
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
@@ -338,8 +342,11 @@ export function BookingWidget({ activity, initialRange }: BookingWidgetProps) {
             type="button"
             disabled={!ready}
             onClick={proceedToCheckout}
-            className="flex min-h-[52px] w-full items-center justify-center rounded-xl px-4 py-3 text-center text-base font-semibold text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-            style={{ backgroundColor: accent }}
+            className="flex min-h-[52px] w-full items-center justify-center rounded-xl px-4 py-3 text-center text-base font-semibold shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+            // The accent is the activity's own colour, so a hardcoded white label is a
+            // coin flip: on the seeded sky blue it measured 2.71:1. Derive a foreground
+            // that holds for whatever colour the operator picked.
+            style={{ backgroundColor: accent, color: onBrandForeground(accent) }}
           >
             {ready ? `Continue to checkout · ${formatUSD(lineTotalCents)}` : 'Continue to checkout'}
           </button>
