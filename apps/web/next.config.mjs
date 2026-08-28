@@ -4,13 +4,9 @@
 const nextConfig = {
   reactStrictMode: true,
   transpilePackages: ['@marina/types', '@marina/ui', '@marina/core'],
-  // Proxy browser-side API calls through this app's own origin so they work no
-  // matter how the site is reached (localhost, WSL IP, LAN). Server-side calls
-  // hit the API directly via API_URL; this only covers client `fetch('/api/..')`.
-  async rewrites() {
-    const api = process.env.API_URL ?? 'http://localhost:3001';
-    return [{ source: '/api/:path*', destination: `${api}/api/:path*` }];
-  },
+  // Browser-side API calls are proxied by app/api/[...path]/route.ts, NOT by a
+  // rewrite. A rewrite cannot attach the `x-operator-slug` header, so every proxied
+  // call reached the API with no tenant and was rejected with 400.
   webpack: (config) => {
     // Shared @marina/* packages ship TS source with NodeNext-style `.js` import
     // specifiers; let webpack resolve those to the real `.ts`/`.tsx` files.

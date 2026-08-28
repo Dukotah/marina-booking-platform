@@ -301,9 +301,18 @@ export function AvailabilityCalendar({
           return next;
         });
       } catch (err) {
-        if (controller.signal.aborted) return;
-        // Let a retry re-request these days.
+        // Release the reservation FIRST, whatever went wrong — including an abort.
+        // `requested` exists to stop duplicate in-flight requests, so a request that
+        // did not deliver must give its days back. Leaving them marked means nothing
+        // ever asks again and they sit on "checking availability" forever: the day
+        // stays disabled and the guest cannot book at all.
+        //
+        // React StrictMode makes this reproducible in dev (mount -> abort on the
+        // immediate unmount -> remount finds nothing missing), but it is not a dev-only
+        // bug: switching month quickly, or the reschedule dialog swapping activity,
+        // aborts a live request the same way.
         for (const iso of missing) requested.current.delete(iso);
+        if (controller.signal.aborted) return;
         if (isApiError(err) && err.status === 404) {
           setDays((prev) => {
             const next = { ...prev };

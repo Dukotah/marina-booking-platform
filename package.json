@@ -25,10 +25,14 @@
     "db:reset": "pnpm db:seed && pnpm db:seed:waiver && pnpm db:seed:season",
     "db:seed:waiver": "pnpm --filter @marina/database seed:waiver",
     "db:migrate:deploy": "pnpm --filter @marina/database migrate:deploy",
-    "db:state": "pnpm --silent --filter @marina/database state"
+    "db:state": "pnpm --silent --filter @marina/database state",
+    "e2e": "playwright test",
+    "e2e:ui": "playwright test --ui",
+    "e2e:report": "playwright show-report"
   },
   "devDependencies": {
     "turbo": "^2.5.0",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "@playwright/test": "^1.49.0"
   }
 }
