@@ -41,9 +41,22 @@ export const orders = new Hono<Env>();
  * cleanly when its provider isn't configured.
  */
 function dispatchBookingNotifications(operatorId: string, orderId: string): void {
-  void sendBookingConfirmation({ operatorId, orderId });
-  void sendBookingConfirmationSms({ operatorId, orderId });
-  void sendStaffNewBooking({ operatorId, orderId });
+  // SEQUENTIAL, not concurrent. Each of these opens its own tenant-scoped
+  // transaction, which sets `app.current_operator_id` with SET LOCAL on a shared
+  // Prisma client; firing them together interleaves those transactions and corrupts
+  // the connection's protocol state. The symptom is baffling — Postgres rejecting a
+  // perfectly clean payload with `invalid byte sequence for encoding "UTF8": 0x00` —
+  // and it silently ate the staff alert on every booking while the customer's own
+  // confirmation went out fine. (The same constraint is why the API test suite runs
+  // with fileParallelism:false.)
+  //
+  // Still fire-and-forget as a whole: the chain runs off the response path, and
+  // none of these ever throw, so a slow or failing channel cannot delay a booking.
+  void (async () => {
+    await sendBookingConfirmation({ operatorId, orderId });
+    await sendBookingConfirmationSms({ operatorId, orderId });
+    await sendStaffNewBooking({ operatorId, orderId });
+  })();
 }
 
 // Throttle the PUBLIC/unauthenticated order endpoints (create, lookup-by-number,

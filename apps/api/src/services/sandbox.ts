@@ -32,6 +32,25 @@ export function sandboxEnabled(): boolean {
   return process.env.NODE_ENV !== 'production';
 }
 
+/**
+ * Postgres text columns cannot hold a NUL byte (0x00) — it rejects the whole
+ * statement with `invalid byte sequence for encoding "UTF8"`, which reads like a
+ * corrupt payload and is impossible to trace back to a field. A NUL is never
+ * meaningful content in a rendered email or a text message, so strip it rather than
+ * lose the message.
+ *
+ * This is not hypothetical: a NUL in one rendered staff-alert body silently ate
+ * every staff "new booking" email while the guest's own confirmation went out fine,
+ * so the operator was never told about bookings and nothing surfaced but a log line.
+ * The offending field is named once per call so the source stays findable.
+ */
+function stripNul(value: string | null | undefined, field: string, seen: string[]): string | null {
+  if (value == null) return null;
+  if (!value.includes('\u0000')) return value;
+  seen.push(field);
+  return value.replace(/\u0000/g, '');
+}
+
 export interface CaptureArgs {
   operatorId: string;
   channel: 'EMAIL' | 'SMS';
@@ -53,21 +72,27 @@ export interface CaptureArgs {
 export async function captureMessage(args: CaptureArgs): Promise<NotificationResult> {
   try {
     const db = forOperator(args.operatorId);
+    const dirty: string[] = [];
     const row = await db.sandboxMessage.create({
       data: {
         operator_id: args.operatorId,
         channel: args.channel,
         kind: args.kind,
-        to_address: args.to,
-        from_address: args.from ?? null,
-        subject: args.subject ?? null,
-        body_html: args.html ?? null,
-        body_text: args.text ?? null,
+        to_address: stripNul(args.to, 'to', dirty) ?? '',
+        from_address: stripNul(args.from, 'from', dirty),
+        subject: stripNul(args.subject, 'subject', dirty),
+        body_html: stripNul(args.html, 'html', dirty),
+        body_text: stripNul(args.text, 'text', dirty),
         order_id: args.orderId ?? null,
         order_number: args.orderNumber ?? null,
       },
       select: { id: true },
     });
+    if (dirty.length > 0) {
+      console.warn(
+        `[sandbox] stripped NUL bytes from ${args.kind} (${args.channel}): ${dirty.join(', ')}`,
+      );
+    }
     return { sent: true, id: row.id };
   } catch (err) {
     console.error('[sandbox] capture failed:', err);
