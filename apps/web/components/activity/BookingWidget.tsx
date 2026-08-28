@@ -16,7 +16,7 @@
  * refetch where possible.
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { formatUSD, formatISODate, formatLongDate, formatTime } from '@/lib/format';
 import type {
@@ -71,6 +71,66 @@ function Step({
   );
 }
 
+/**
+ * Hand a radiogroup to the pre-hydration driver, then take it back.
+ *
+ * The activity page ships a tiny inline script that drives any group marked with
+ * `data-prehydration-radiogroup` before the route's JavaScript exists, so a rate tap on
+ * a throttled phone lands in the same frame instead of being thrown away (see
+ * `PRE_HYDRATION_RADIOS` in `app/activities/[id]/page.tsx`, and docs/PERFORMANCE.md
+ * §2.3). This is the other half of that handshake:
+ *
+ *   1. it opts the group in, and carries the brand accent the pre-hydration stylesheet
+ *      paints the selection with;
+ *   2. on mount it reads back whatever the guest already chose and adopts it into React
+ *      state, so the tap survives hydration rather than being reset to nothing;
+ *   3. only then does it flip `data-hydrated`, which silences the script. Adopting
+ *      first matters: flipping the flag before reading would drop a tap that landed
+ *      between the two.
+ *
+ * The choice comes back as a position in the group rather than an id, because the
+ * markup inside belongs to `RateCards` and carries no identifier the script could read.
+ * `RateCards` maps `rates` straight through, so index N is `rates[N]`.
+ */
+function PreHydrationRadioGroup({
+  accentColor,
+  onAdopt,
+  children,
+}: {
+  accentColor: string;
+  /** Called once, with the index of a radio the guest tapped before hydration. */
+  onAdopt: (index: number) => void;
+  children: React.ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [hydrated, setHydrated] = useState(false);
+
+  // Read through a ref so a new callback identity on a re-render cannot re-run the
+  // adoption and overwrite a choice the guest has since changed.
+  const adopt = useRef(onAdopt);
+  adopt.current = onAdopt;
+
+  useEffect(() => {
+    const chosen = ref.current?.getAttribute('data-preselected');
+    const index = chosen === null || chosen === undefined ? -1 : Number(chosen);
+    if (Number.isInteger(index) && index >= 0) adopt.current(index);
+    setHydrated(true);
+  }, []);
+
+  return (
+    <div
+      ref={ref}
+      data-prehydration-radiogroup="rate"
+      // Server and first client render agree on 'false'; the effect above is what
+      // changes it, after React is genuinely listening.
+      data-hydrated={hydrated ? 'true' : 'false'}
+      style={{ '--prehydration-accent': accentColor } as React.CSSProperties}
+    >
+      {children}
+    </div>
+  );
+}
+
 export function BookingWidget({ activity }: BookingWidgetProps) {
   const router = useRouter();
   const accent = activity.color;
@@ -99,6 +159,18 @@ export function BookingWidget({ activity }: BookingWidgetProps) {
   const ready =
     rate !== null && date !== null && slot !== null && slot.capacityRemaining > 0;
   const lineTotalCents = rate ? rate.priceCents * clampedQty : 0;
+
+  /**
+   * Take over a rate the guest chose before this component existed.
+   *
+   * Only ever runs when nothing is selected yet: the single-rate default below already
+   * agrees with whatever was tapped, and a guest cannot have interacted with React
+   * before its mount effect, so there is no live choice this could overwrite.
+   */
+  const adoptPreHydrationRate = (index: number) => {
+    const chosen = activity.rates[index];
+    if (chosen) setRate((current) => current ?? chosen);
+  };
 
   // Choosing a new date invalidates the previously chosen time slot.
   const handleSelectDate = (d: Date) => {
@@ -129,12 +201,14 @@ export function BookingWidget({ activity }: BookingWidgetProps) {
     <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
       <div className="flex flex-col gap-6">
         <Step index={1} title="Choose a rate" done={rate !== null} accentColor={accent}>
-          <RateCards
-            rates={activity.rates}
-            selectedRateId={rate?.id ?? null}
-            onSelect={setRate}
-            accentColor={accent}
-          />
+          <PreHydrationRadioGroup accentColor={accent} onAdopt={adoptPreHydrationRate}>
+            <RateCards
+              rates={activity.rates}
+              selectedRateId={rate?.id ?? null}
+              onSelect={setRate}
+              accentColor={accent}
+            />
+          </PreHydrationRadioGroup>
         </Step>
 
         <Step index={2} title="Pick a date" done={date !== null} accentColor={accent}>

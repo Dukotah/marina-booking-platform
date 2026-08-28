@@ -124,6 +124,41 @@ export class ActivityPage {
 }
 
 // ---------------------------------------------------------------------------
+// Declines
+// ---------------------------------------------------------------------------
+
+/**
+ * Every decline the local processor can produce, and the exact words the guest is
+ * shown for each.
+ *
+ * One list, in one place, so a spec can name a decline (`declineMessage('expired_card')`)
+ * instead of hard-coding a sentence — and so widening the simulator's decline set is a
+ * one-line change here rather than a hunt through regexes.
+ *
+ * Re-declared rather than imported from `apps/api`, for the same reason the wire shapes
+ * in `fixtures/api.ts` are: a suite that shares its expectations with the code under
+ * test cannot catch a change to them, it just compiles differently. If the product
+ * reworded a decline, these assertions SHOULD fail — that copy is what the guest reads
+ * when their card fails, and changing it is a decision, not a refactor.
+ *
+ * Mirrors DECLINE_MESSAGES in apps/api/src/services/payments-sandbox.ts.
+ */
+export const DECLINE_MESSAGES = {
+  card_declined: 'Your card was declined.',
+  insufficient_funds: 'Your card has insufficient funds.',
+  expired_card: 'Your card has expired.',
+  incorrect_cvc: "Your card's security code is incorrect.",
+} as const;
+
+/** The codes the sandbox queue accepts for a scripted DECLINED outcome. */
+export type DeclineCode = keyof typeof DECLINE_MESSAGES;
+
+/** What checkout must say, verbatim, when the processor returns `code`. */
+export function declineMessage(code: DeclineCode): string {
+  return DECLINE_MESSAGES[code];
+}
+
+// ---------------------------------------------------------------------------
 // Checkout
 // ---------------------------------------------------------------------------
 
@@ -163,17 +198,16 @@ export class CheckoutPage {
    * invalid field (`<p role="alert">First name is required</p>`) and Next mounts a route
    * announcer with the same role, so an unscoped alert locator means "whatever the page
    * is currently complaining about" — which is how a form that failed to fill can be
-   * mistaken for a declined card. Narrowing to the alert inside the checkout form that
-   * is an element in its own right, rather than a field's message, resolves to exactly
-   * one thing: the submit-pipeline banner in CheckoutClient.
+   * mistaken for a declined card.
    *
-   * This is structural because the product gives that banner no accessible name. Once it
-   * carries one (`aria-label="Payment problem"`, requested in this run's report) the body
-   * of this method becomes `getByRole('alert', { name: 'Payment problem' })` and no spec
-   * has to change.
+   * This used to be the structural `form div[role="alert"]`, because the banner had no
+   * accessible name to ask for. It has one now (`aria-label="Payment problem"` in
+   * CheckoutClient), so the locator asks for the thing by name: a guest using a screen
+   * reader and this spec are now looking at the same element for the same reason, and
+   * the assertion no longer depends on how the banner happens to be nested.
    */
   alert(): Locator {
-    return this.page.locator('form div[role="alert"]');
+    return this.page.getByRole('alert', { name: 'Payment problem' });
   }
 
   /**
@@ -276,9 +310,21 @@ export class CheckoutPage {
     await this.waitForFormReady();
     await this.page.getByLabel('Promo code').fill(code);
     await this.page.getByRole('button', { name: 'Apply', exact: true }).click();
-    // The applied state replaces the input with a confirmation chip; waiting on that is
+    // The applied state replaces the input with a confirmation chip, so waiting on it is
     // what proves the API round trip landed, rather than a timer.
-    await expect(this.page.getByText(new RegExp(`Promo\\s+${rx(code)}\\s+applied`, 'i'))).toBeVisible();
+    //
+    // Scoped to the live region rather than to the text anywhere on the page, because
+    // "the guest was told it worked" is the actual requirement: the chip carries the
+    // code the order will be submitted with, and a redesign that dropped the
+    // announcement — or that showed the discount without naming the code — would still
+    // satisfy a bare text match while leaving a screen-reader guest with silence.
+    const confirmation = this.page
+      .getByRole('status')
+      .filter({ hasText: new RegExp(`Promo\\s+${rx(code)}\\s+applied`, 'i') });
+    await expect(
+      confirmation,
+      `the promo ${code} was never confirmed — it was rejected, or the confirmation is not announced`,
+    ).toBeVisible();
   }
 
   /** Fill everything a guest must supply, without submitting. */

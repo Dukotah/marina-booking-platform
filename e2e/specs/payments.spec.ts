@@ -9,8 +9,47 @@
  *
  * Each test clears the queue when it finishes. A leftover "decline" is not a cosmetic
  * problem — it is the next test's card being declined for no reason.
+ *
+ * The two decline tests queue through the sandbox's HTTP control plane
+ * (`POST /api/sandbox/payments/queue`) rather than the console's buttons, because they
+ * need to name the decline CODE and the console cannot pass one through today — see
+ * `queueDecline` below. Everything after the queue is identical: same funnel, same
+ * production payment path, same console read-back.
  */
 import { expect, test } from '../fixtures/test';
+import type { MarinaApi } from '../fixtures/api';
+import { declineMessage, type DeclineCode } from '../helpers/customer';
+
+/**
+ * Arm the next charge to decline with an EXACT reason.
+ *
+ * Without a code the simulator derives one from the idempotency key
+ * (`pickDeclineCode`), which is deterministic per key but arbitrary per run — so a spec
+ * that does not name a code cannot assert what the guest was told, only that they were
+ * told something. Naming it is what lets the assertions below be the guest's exact
+ * words. The two tests deliberately use DIFFERENT codes, and neither is the
+ * `card_declined` fallback: if the code stopped being honoured, matching both real
+ * messages by luck is a 1-in-16 accident per run.
+ *
+ * Why not `console.queueOutcome('Decline')`: the console's own "Decline code" select is
+ * currently dropped on the way to the simulator — `queuePaymentOutcomeAction` in
+ * apps/admin/app/dev/actions.ts writes the code to the `failure_code` COLUMN, while
+ * `settleCharge` reads it from attempt METADATA (the API route's `queueOutcome` writes
+ * both). So the owner can pick "expired_card" in the console and still get a random
+ * reason. That is a product bug in a file this run does not own; it is reported, not
+ * papered over, and when it is fixed these two calls can go back through the console.
+ */
+async function queueDecline(api: MarinaApi, code: DeclineCode, note: string): Promise<void> {
+  const res = await api.rawPost('/api/sandbox/payments/queue', {
+    outcome: 'DECLINED',
+    failureCode: code,
+    note,
+  });
+  expect(
+    res.status(),
+    `the sandbox must accept a scripted ${code} decline — without it this test proves nothing`,
+  ).toBe(201);
+}
 
 test.describe('payment outcomes', () => {
   test.afterEach(async ({ console: localConsole }) => {
@@ -83,14 +122,20 @@ test.describe('payment outcomes', () => {
     const selection = await seed.selection();
     const guest = seed.guest('decline');
 
-    await localConsole.queueOutcome('Decline', { note: 'e2e decline' });
+    // An expired card, not the generic decline: the guest is entitled to the REASON,
+    // and a product that collapsed every decline into one house message would pass a
+    // vaguer assertion while telling the guest less.
+    await queueDecline(api, 'expired_card', 'e2e decline');
 
     await checkoutPage.openDirect(selection);
     await checkoutPage.fillAll(selection, guest);
     await checkoutPage.submit();
 
-    // 1. The guest is told, in words, and is still on checkout with their details.
-    await expect(checkoutPage.alert()).toContainText(/declined|different card/i, {
+    // 1. The guest is told, in the processor's own words, and is still on checkout with
+    //    their details. Asserted as the exact sentence — this is the copy a guest reads
+    //    at the moment their card fails, so "some red text appeared" is not the claim
+    //    worth making.
+    await expect(checkoutPage.alert()).toHaveText(declineMessage('expired_card'), {
       timeout: 60_000,
     });
     await expect(page).toHaveURL(/\/checkout\?/);
@@ -108,28 +153,28 @@ test.describe('payment outcomes', () => {
       'a declined payment must not leave an order behind for this guest',
     ).toHaveLength(0);
 
-    // 4. The attempt itself is recorded, with the reason. Failing silently is worse than
-    //    failing: the owner has to be able to see why a guest could not pay.
+    // 4. The attempt itself is recorded, with the reason — the SAME reason the guest was
+    //    given, not a generic one. Failing silently is worse than failing: the owner has
+    //    to be able to see why a guest could not pay, and "card declined" on the console
+    //    when the guest was told their card expired is a support call he cannot answer.
     await localConsole.open('payments');
-    const rows = localConsole.panel().getByRole('row').filter({ hasText: /card_declined/ });
+    const rows = localConsole.panel().getByRole('row').filter({ hasText: 'expired_card' });
     await expect(rows.first()).toBeVisible();
   });
 
-  test('a retry after a decline succeeds and books once', async ({
-    api,
-    seed,
-    checkoutPage,
-    console: localConsole,
-  }) => {
+  test('a retry after a decline succeeds and books once', async ({ api, seed, checkoutPage }) => {
     const selection = await seed.selection();
     const guest = seed.guest('retry');
 
-    await localConsole.queueOutcome('Decline', { note: 'e2e retry — first attempt' });
+    // A different reason from the test above, on purpose: two exact messages from two
+    // named codes is what proves the simulator is being told what to do rather than
+    // guessing, since only one instruction is queued and only one charge consumes it.
+    await queueDecline(api, 'insufficient_funds', 'e2e retry — first attempt');
 
     await checkoutPage.openDirect(selection);
     await checkoutPage.fillAll(selection, guest);
     await checkoutPage.submit();
-    await expect(checkoutPage.alert()).toContainText(/declined|different card/i, {
+    await expect(checkoutPage.alert()).toHaveText(declineMessage('insufficient_funds'), {
       timeout: 60_000,
     });
 

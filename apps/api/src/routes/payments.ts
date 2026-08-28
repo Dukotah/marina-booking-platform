@@ -402,6 +402,41 @@ payments.post('/charge', async (c) => {
         authentication: challenge,
       });
     }
+
+    // A terminal decline must not leave a booking behind. createBooking reserves the
+    // seat when the order is created, so without this a declined card leaves an
+    // UPCOMING order on the operator's manifest, holding capacity, for a guest who
+    // never paid — the exact half-created state the build contract forbids.
+    //
+    // Only for a first, wholly unpaid charge: if anything has already been collected
+    // this is a staff balance-collection or a deposit top-up, and cancelling the
+    // whole booking because a second card failed would be far worse than leaving it.
+    if (order.amount_paid_cents === 0 && order.status === 'UPCOMING') {
+      const priorPayments = await c.var.db.payment.count({
+        where: { order_id: order.id, status: { in: ['PAID', 'PARTIAL_REFUND', 'REFUNDED'] } },
+      });
+      if (priorPayments === 0) {
+        try {
+          // Cancel first: that is the tested path that returns the seat to the
+          // timeslot (and to any shared resource pool), so capacity is correct even
+          // if the delete below fails.
+          await cancelBooking(c.var.operatorId, order.id, {
+            actor: 'system',
+            reason: 'Payment declined at checkout — booking released',
+          });
+          // Then remove it. An abandoned checkout never became a booking, and an
+          // operator who leaves a busy Saturday with thirty dead CANCELLED rows in
+          // Orders cannot see the real ones. The attempt is NOT lost: the payment
+          // ledger keeps it with its decline reason, which is where a failed charge
+          // belongs. Cascades clear the items, events and any payment rows.
+          await c.var.db.order.delete({ where: { id: order.id } });
+        } catch (releaseErr) {
+          // Never let the cleanup mask the payment error the guest needs to see.
+          console.error('[payments] failed to release declined order', order.id, releaseErr);
+        }
+      }
+    }
+
     return stripeErrorResponse(c, err);
   }
 

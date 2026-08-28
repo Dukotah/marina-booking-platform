@@ -82,6 +82,11 @@ promos.post('/validate', publicRateLimit, async (c) => {
 
   return c.json({
     valid: true as const,
+    // Echo the operator's stored code. The client's PromoValidation contract has
+    // always declared this, and the demo driver returned it — the real API did not,
+    // so checkout submitted `promoCode: undefined` and the discount shown on screen
+    // never reached the actual charge.
+    code: promo.code,
     name: promo.name,
     discountType: promo.discount_type,
     discountValue: promo.discount_value,

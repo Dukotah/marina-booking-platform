@@ -387,6 +387,12 @@ export function CheckoutClient({
       });
 
       if (!result.ok) {
+        // Retire the key. The idempotency key de-duplicates ONE attempt (a
+        // double-click, a transport retry); a guest who reads "your card was
+        // declined" and tries again is making a NEW attempt. The API releases the
+        // declined order and its seat, so reusing the key here would replay straight
+        // back into that cancelled booking instead of creating a live one.
+        attemptKey.current = null;
         fail(result.error);
         return;
       }

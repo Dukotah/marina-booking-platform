@@ -35,6 +35,11 @@ server serves it (`Cache-Control: public, max-age=31536000, immutable`). Read §
 quoting this number — under `next dev` the same journey does not finish at all, and the
 reason has nothing to do with the booking flow.
 
+> **Provenance.** This table is from the pass that produced it, under production cache
+> headers. It has **not** been re-measured since; the numbers re-measured on 2026-08-28
+> are the ones in §2.3 and §3, all taken against `next dev`, and they are labelled as
+> such. Do not blend the two tables into one figure.
+
 ---
 
 ## 2. What was actually slow, and what fixed it
@@ -79,24 +84,74 @@ placement at `lg` (`lg:col-start-*` / `lg:row-start-*`, with
 `lg:grid-rows-[auto_auto_1fr]` so the tall sticky widget does not push the left column's
 rows apart). The rate cards now paint at y ≈ 298 — in the first screen.
 
-### 2.3 A tap that lands before hydration was thrown away
+### 2.3 The rate picker was painted but inert, and queueing the tap did not save it
 
 On a throttled connection the widget is painted and looks live for seconds before its
 JavaScript executes. A tap in that window is dispatched to nothing and lost: the guest
 watches a rate card refuse to select and taps again. React 18 replays events that arrive
 *during* hydration, but not ones that arrive before its runtime has run at all.
 
-The activity page now carries a ~20-line inline script that remembers the tap and
-re-applies it once something is listening. Scoped hard, because a blind replay of
-arbitrary clicks would be a menace — a late "Continue to checkout" is a navigation nobody
-asked for:
+**The first attempt queued the tap** and re-applied it once something was listening,
+giving up 15 s after the tap and 4 s after `load`. Measured on Slow 4G + 4× CPU against
+`next dev`, that is not enough by a wide margin:
 
-- only `role="radio"` controls, whose activation is idempotent and which carry an
-  unambiguous success signal in `aria-checked`;
-- it stops the instant `aria-checked` flips, so a hydrated app is never clicked twice
-  (verified: two rate taps leave exactly one card selected);
-- any later real tap supersedes the queued one;
-- it gives up 4 s after the document finishes loading, and 15 s after the tap regardless.
+| | measured |
+|---|---|
+| Rate cards painted | 3.3 s |
+| Tap dispatched | 3.4 s |
+| Queue gave up (tap + 15 s) | 18.4 s |
+| React actually listening | **42.3 s** |
+| `aria-checked` ever `true` | **never** (still false at 90 s) |
+
+A queue cannot beat a wall 24 s further out than its own deadline, and lengthening the
+deadline is worse, not better — a rate that selects itself half a minute after the tap is
+a control the guest has already given up on.
+
+**So the group is driven directly instead.** The activity page ships a ~20-line inline
+script (`PRE_HYDRATION_RADIOS` in `app/activities/[id]/page.tsx`) that *is* the
+radiogroup until React takes over: a delegated `click` sets `aria-checked` on the tapped
+control, clears its siblings, and records the choice on the group. The selected look
+comes from a matching parse-time stylesheet, so the script writes semantics only.
+`BookingWidget` closes the loop — `PreHydrationRadioGroup` opts the group in, reads the
+choice back on mount, adopts it into React state, and only then sets `data-hydrated`,
+which silences the script for the rest of the page's life.
+
+Result, same profile, same route, same dev server:
+
+| | before | after |
+|---|---|---|
+| Rate cards painted | 3.3 s | 2.3 s |
+| Tap → `aria-checked="true"` | **never** | **26 ms** |
+| Selected card survives hydration | n/a | yes (41.1 s, still the tapped one) |
+
+Kept narrow on purpose, because a document-wide click driver is a menace otherwise:
+
+- only inside a group that opted in with `data-prehydration-radiogroup`, and only
+  `role="radio"` children of it. Nothing here can fire a navigation or change a party
+  size — a late "Continue to checkout" was the real hazard in the queueing design.
+- selecting a radio is idempotent and reversible, which is what makes it safe to do
+  without the application's agreement.
+- it never touches `tabindex` or focus. The controls are real `<button>`s, so Tab and
+  Enter/Space already work; a roving tabindex that React would not maintain afterwards
+  would leave the group *less* navigable than it is now.
+
+Verified on Slow 4G + 4× CPU, with `data-hydrated` confirmed `false` at the moment of the
+tap in every case:
+
+- a tap before hydration selects in 26 ms and is still selected after React mounts;
+- two taps before hydration leave exactly one card selected — the second one — and that
+  is the one React adopts;
+- keyboard works the same way: focus a card, press Enter before hydration, it selects and
+  survives;
+- after hydration, mouse and keyboard both still select exactly one card, focus stays on
+  the radio, and the widget's summary and CTA price update. Checked at 412 px and
+  1440 px: no horizontal overflow, desktop two-column layout unchanged.
+
+One expected side effect: because the DOM deliberately diverges from the server HTML,
+React logs `Prop 'aria-checked' did not match` in the console when a pre-hydration tap is
+adopted. That warning is **dev-only and correct** — React 18 does not overwrite the
+attribute, and the mount effect reconciles state a frame later. Do not "fix" it by making
+the control inert again.
 
 ### 2.4 Comparing two days cost a round trip every time
 
@@ -131,36 +186,80 @@ cached by day key for the session, and a later month fetches only the days it is
 **The `mobile-throttled` project cannot pass while it points at `next dev`, and no change
 to the application can make it pass.** This is arithmetic, not opinion:
 
-| | `next dev` | `next start` (production) |
-|---|---|---|
-| `Cache-Control` on `_next/static` | `no-store, must-revalidate` | `public, max-age=31536000, immutable` |
-| Transferred per navigation | **1 951 kB** | ~0 kB after the warm pass |
-| Time to transfer at 400 kbps | **38.1 s** | — |
-| Rate cards painted | 2.2 s | **0.67 s** |
-| First tap honoured (hydrated) | **never within 60 s** (~41 s) | **1.31 s** |
+Re-measured against the live dev server on 2026-08-28, because a number this decisive
+should not be taken on trust from a previous pass. It held.
 
-Slow 4G is 51.2 kB/s. 1 951 kB / 51.2 kB/s = 38.1 s of pure wire time before parsing
-starts — the whole 30 s budget spent, twice over, on a bundle the guest would never
-download. `warmRoutes` cannot help: `no-store` means the warm pass leaves nothing in the
-browser cache to reuse.
+Slow 4G is 51.2 kB/s. Every `_next/static` response carries
+`Cache-Control: no-store, must-revalidate`, so `warmRoutes` leaves nothing in the browser
+cache and the whole bundle crosses the wire again on the measured navigation:
 
-What that 1 951 kB is:
-
-| kB | Chunk |
+| kB (gzipped, off the wire) | Chunk |
 |---|---|
-| 1 322 | `main-app.js` — Next/React dev runtime, unminified. Not product code. |
-| 509 | the route's own client tree (see §4) |
+| 1 321 | `main-app.js` — Next/React dev runtime, unminified. Not product code. |
+| 517 | `app/activities/[id]/page.js` — the route's own client tree (see §4) |
 | 51 | `not-found.js`, shipped on every activity page load in dev |
-| 33 | `app-pages-internals.js` |
-| 11 | `layout.css` |
-| 7 | the HTML document |
-| 2 | `GET /api/availability/range` — the funnel's only data request on load |
+| 32 | `app-pages-internals.js` |
+| 10 | `webpack.js` |
+| 10 | `layout.css` |
+| **1 943** | **total → 37.9 s of pure wire time at 51.2 kB/s** |
 
-**The fix belongs in the harness, not the app:** the `mobile-throttled` project needs to
-run against a production build (`next build && next start`, or `E2E_WEB_URL` pointing at
-one) so the number describes the product. Until that happens the spec is honestly red, and
-the 7.3 s in §1 is the closest measurement of the real thing — same throttle profile, same
-viewport, same journey, with `_next/static` given production cache headers.
+The whole 30 s budget spent, twice over, on a bundle the guest would never download.
+Observed consequence, consistent across five runs: React first executes on this route at
+**40.7 – 42.3 s**, and `AvailabilityCalendar`'s one data request (`/api/availability/range`)
+does not leave the browser until 42.9 s, because a client component cannot fetch before it
+mounts.
+
+**No change to the application can close a 38 s gap that is 68 % Next's own dev runtime.**
+Even deleting the route's entire client tree leaves 1 426 kB — 27.9 s — before a byte of
+booking logic runs. The fix belongs in the harness: the `mobile-throttled` project needs
+to run against a production build (`next build && next start`, or `E2E_WEB_URL` pointing
+at one) so the number describes the product. Until that happens the spec is honestly red,
+and the 7.3 s in §1 is the closest measurement of the real thing — same throttle profile,
+same viewport, same journey, with `_next/static` given production cache headers.
+
+### 3.1 Where the funnel stops today, and what that says
+
+The rate step is no longer where it stops. With §2.3 in place the spec gets through
+"choose a rate" in ~2.5 s and fails one step later:
+
+```
+Error: expect(locator).toBeEnabled() failed
+Locator: getByRole('radiogroup', { name: 'Choose a date', exact: true })
+           .getByRole('radio', { name: /^Wednesday, September 9/ })
+Received: disabled   ...aria-label="Wednesday, September 9 — checking availability"
+```
+
+That is the correct next symptom of the same root cause, in a different component.
+`AvailabilityCalendar` renders every day disabled and "checking availability" until its
+client-side range request resolves — which cannot begin before hydration, i.e. not before
+~41 s here. It is not a defect in the calendar's own logic; it is the dev-bundle wall
+again, seen through a control that has a loading state where the rate cards did not.
+
+There is a real product lesson underneath it, worth acting on when §3 is resolved: **the
+rate picker needs no data, so it could be made to work with no JavaScript at all, and the
+date strip could be too.** The activity page is a server component with API access; if it
+server-rendered the 14-day range rollup the way it already server-renders the rate list,
+the first two of the guest's three choices would be usable in the first frame on any
+connection. That is a change inside `AvailabilityCalendar`'s props and was outside this
+pass's ownership.
+
+### 3.2 What was *not* worth doing, and the measurement that says so
+
+Splitting the booking widget's client boundary — lazily loading `AvailabilityCalendar`
+and `TimeSlotPicker` out of the route chunk so the rate picker hydrates without waiting
+for `date-fns` — was considered and rejected on the numbers:
+
+- it cannot move the wall. `page.js` is 517 kB of 1 943 kB (27 %); the remaining 1 426 kB
+  still has to land before React runs at all, and lazy chunks are *additional* requests,
+  not smaller ones, so total wire time is unchanged.
+- it would make the funnel worse. The calendar chunk would then be requested during
+  hydration rather than alongside it, pushing the date strip — already the step that
+  fails — later still.
+- there is nothing left to win on the control it was meant to help. Rate selection is now
+  26 ms from tap, with no JavaScript involved at all.
+
+The lever on `page.js` is §4 (a currency formatter dragging ~700 kB of ledger and
+validation code into a customer's browser), not code-splitting the widget.
 
 ---
 
@@ -218,7 +317,12 @@ resolved and there is a production build to measure.
 - **Source order is mobile order.** Reordering with CSS `order` splits reading order from
   visual order; explicit grid placement at the desktop breakpoint does not.
 - **The first control must be usable, not merely visible.** Painted-but-not-hydrated is a
-  real state on rural cell, and it lasts seconds.
+  real state on rural cell, and it lasts seconds. Make the control work without the
+  framework rather than making the guest wait for it — a queue that re-applies the tap
+  later is still a control that did not respond (§2.3).
+- **One writer per attribute.** A pre-hydration driver and React must never both be
+  painting the same group: the driver hands over on `data-hydrated`, and it hands over
+  only *after* the component has adopted whatever the guest already chose.
 - Lighthouse mobile performance 95+ and accessibility 100 (§6) are **not yet enforced in
   CI**. That gate is still open and depends on §3 as well — there is no point Lighthouse-ing
   a dev server.

@@ -45,62 +45,84 @@ const CATEGORY_LABELS: Record<ActivityDetail['category'], string> = {
 };
 
 /**
- * Bridge the gap between "the control is painted" and "React is listening".
+ * Make the first booking control work before React exists.
  *
- * On a throttled phone the booking widget is on screen and looks live long before its
- * JavaScript has arrived, and a tap in that window is simply thrown away: the browser
- * dispatches it, nothing is subscribed, and the guest is left staring at a rate card
- * that did not select. React 18 replays events that land *during* hydration, but not
- * ones that land before its runtime has executed at all — which on Slow 4G is the
- * entire first several seconds of the page's life.
+ * On a throttled phone the booking widget is painted and looks live for many seconds
+ * before its JavaScript has arrived — measured at 3.3s to paint against 42.3s to
+ * hydrate on Slow 4G (docs/PERFORMANCE.md §3). A tap in that window is dispatched to
+ * nothing: React 18 replays events that land *during* hydration, but not ones that land
+ * before its runtime has executed at all. The guest taps a rate card, nothing happens,
+ * and the funnel is dead on arrival on exactly the connection this product is for.
  *
- * So the document itself remembers the tap and re-applies it once something is
- * listening. Deliberately narrow, because a blind replay of arbitrary clicks would be a
- * menace — a queued "Continue to checkout" firing late is a navigation the guest did not
- * ask for, and a queued "Increase guests" is a wrong party size:
+ * The previous attempt at this queued the tap and re-applied it once something was
+ * listening. That is the wrong shape: it still makes the guest wait for hydration, it
+ * has to guess how long to keep trying, and its 15s cap expired 24s before React ran.
+ * A queue cannot beat a wall that far out.
  *
- *   - only `role="radio"` controls, whose activation is idempotent (choosing the same
- *     rate twice is choosing it once) and which carry an unambiguous success signal in
- *     `aria-checked`;
- *   - it stops the instant `aria-checked` flips, so a hydrated app is never clicked twice;
- *   - any later real tap supersedes the queued one, so a guest who changes their mind
- *     while waiting gets what they asked for second, not first;
- *   - it gives up 4s after the document finishes loading (hydration gets a grace period,
- *     because the last byte arriving is not the same as React running), and 15s after the
- *     tap regardless — a selection applied later than that would startle a guest more
- *     than the lost tap did.
+ * So the group is driven directly instead. This script IS the radiogroup until React
+ * takes over: a delegated click sets `aria-checked` on the tapped control, clears its
+ * siblings, and leaves the choice on the group for the component to adopt when it
+ * mounts. The control responds in the same frame as the tap, on a page with no
+ * application JavaScript yet at all.
  *
- * Inline and parse-blocking on purpose: it is ~20 lines and it has to be listening
- * before the widget's markup is parsed, which is the whole point.
+ * Kept deliberately narrow, because a document-wide click driver is a menace otherwise:
+ *
+ *   - only inside a group that opted in with `data-prehydration-radiogroup`, and only
+ *     `role="radio"` children of it — nothing here can fire a navigation or change a
+ *     party size;
+ *   - selecting a radio is idempotent and reversible, which is what makes it safe to do
+ *     without the application's agreement;
+ *   - it goes silent the instant the group reports `data-hydrated="true"`, so React is
+ *     the single writer of that attribute for the rest of the page's life;
+ *   - it never touches `tabindex` or focus. The controls are real `<button>`s, so Tab
+ *     and Enter/Space already work, and roving tabindex that React would not maintain
+ *     afterwards would leave the group *less* keyboard-navigable than it is now.
+ *
+ * The selected *look* comes from the stylesheet below rather than from here, so the
+ * script writes semantics only and there is one place that decides what selected means.
+ *
+ * Inline and parse-blocking on purpose: ~20 lines that must be listening before the
+ * widget's markup is parsed, which is the whole point.
  */
-const REPLAY_EARLY_TAPS = `
+const PRE_HYDRATION_RADIOS = `
 (function () {
-  var CAP_MS = 15000, GRACE_MS = 4000;
-  var pending = null, cap = 0, settledAt = 0, timer = 0;
-  function stop() { pending = null; settledAt = 0; if (timer) { clearInterval(timer); timer = 0; } }
-  function retry() {
-    if (!pending || !pending.isConnected || Date.now() > cap) return stop();
-    if (pending.getAttribute('aria-checked') === 'true') return stop();
-    // Keep going while scripts are still arriving; once the page is fully loaded,
-    // give hydration a short grace period and then accept that nothing is coming.
-    if (document.readyState === 'complete') {
-      if (!settledAt) settledAt = Date.now();
-      else if (Date.now() - settledAt > GRACE_MS) return stop();
-    } else {
-      settledAt = 0;
+  var GROUP = '[data-prehydration-radiogroup]';
+  document.addEventListener('click', function (e) {
+    var el = e.target;
+    if (!el || !el.closest) return;
+    var radio = el.closest('[role="radio"]');
+    if (!radio || radio.disabled) return;
+    var group = radio.closest(GROUP);
+    if (!group || group.getAttribute('data-hydrated') === 'true') return;
+    var radios = group.querySelectorAll('[role="radio"]');
+    var index = -1;
+    for (var i = 0; i < radios.length; i++) {
+      var on = radios[i] === radio;
+      if (on) index = i;
+      radios[i].setAttribute('aria-checked', on ? 'true' : 'false');
     }
-    pending.click();
-  }
-  document.addEventListener('pointerdown', function (e) {
-    if (!e.isTrusted) return;
-    stop();
-    var el = e.target && e.target.closest && e.target.closest('[role="radio"]');
-    if (!el || el.disabled || el.getAttribute('aria-checked') === 'true') return;
-    pending = el;
-    cap = Date.now() + CAP_MS;
-    timer = setInterval(retry, 150);
-  }, true);
+    // Position, not id: the group's markup belongs to the component inside it and
+    // carries no identifier. Reading it back by index is what lets the choice the
+    // guest already made survive hydration instead of being reset to nothing.
+    group.setAttribute('data-preselected', String(index));
+  });
 })();
+`;
+
+/**
+ * What "selected" looks like before React can say so.
+ *
+ * `!important` is load-bearing rather than lazy: the rate cards paint their selected
+ * border with an inline `style` driven by React state, and an inline style outranks a
+ * stylesheet. Scoped to `data-hydrated="false"` so it applies only while nothing else
+ * is painting the group — the moment React takes over, this rule stops matching and
+ * the component's own styling is unopposed.
+ */
+const PRE_HYDRATION_STYLES = `
+[data-prehydration-radiogroup][data-hydrated='false'] [role='radio'][aria-checked='true'] {
+  border-color: var(--prehydration-accent, #0f172a) !important;
+  box-shadow: 0 0 0 1px var(--prehydration-accent, #0f172a) !important;
+}
 `;
 
 async function loadActivity(id: string): Promise<ActivityDetail | null> {
@@ -138,7 +160,8 @@ export default async function ActivityDetailPage({ params }: PageProps) {
 
   return (
     <main style={brandStyle(brand)} className="mx-auto w-full max-w-6xl px-4 py-8">
-      <script dangerouslySetInnerHTML={{ __html: REPLAY_EARLY_TAPS }} />
+      <style dangerouslySetInnerHTML={{ __html: PRE_HYDRATION_STYLES }} />
+      <script dangerouslySetInnerHTML={{ __html: PRE_HYDRATION_RADIOS }} />
 
       {/* Breadcrumb */}
       <nav aria-label="Breadcrumb" className="mb-5 text-sm text-slate-500">

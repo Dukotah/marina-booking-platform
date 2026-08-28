@@ -191,6 +191,11 @@ export async function queuePaymentOutcomeAction(input: {
           metadata: {
             queuedBy: ctx.auth.userId,
             queuedAt: new Date().toISOString(),
+            // Must ALSO live in metadata, not only in the column: settleCharge reads
+            // `scripted.failureCode` from here, so a code written only to failure_code
+            // was silently ignored and every console-queued decline got a random
+            // reason instead of the one that was picked.
+            ...(failureCode ? { failureCode } : {}),
             ...(disputeReason ? { disputeReason } : {}),
             ...(note ? { note } : {}),
           } as Prisma.InputJsonValue,

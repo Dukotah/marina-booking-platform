@@ -39,7 +39,20 @@ export default defineConfig({
    * one Postgres and one dev server.
    */
   fullyParallel: false,
-  workers: process.env.CI ? 1 : Number(process.env.E2E_WORKERS ?? 2),
+  /*
+   * ONE worker. Not a performance compromise — a correctness requirement. The payment
+   * simulator's outcome queue is per-OPERATOR global state (the Local Console queues
+   * "the next charge will decline", and whichever charge arrives first consumes it),
+   * and every spec books against the same seeded operator. With two workers, a decline
+   * queued by payments.spec was consumed by a booking in local-console.spec, which then
+   * failed with a 402 it never asked for.
+   *
+   * Scoping the queue per guest would let this parallelise, but that would be inventing
+   * product complexity to serve the test harness; the owner's console is single-operator
+   * by design. Override with E2E_WORKERS if you are running a subset that does not touch
+   * simulator state.
+   */
+  workers: Number(process.env.E2E_WORKERS ?? 1),
 
   /* A retry is for a genuinely flaky environment, never a way to launder a real bug —
      so local runs get none, and any CI retry shows up in the report as a retry. */

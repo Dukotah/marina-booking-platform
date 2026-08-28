@@ -7,7 +7,10 @@
  *
  * The active tab is mirrored into the URL hash so a reload (or a link the owner
  * sends himself) lands back where he was. It is read in an effect rather than in
- * the initial state so the server and client render the same first frame.
+ * the initial state so the server and client render the same first frame, and it
+ * keeps listening afterwards: changing only the fragment of a URL you are already
+ * on is a same-document navigation, so nothing remounts. Without the listener,
+ * following a `/dev#errors` link from the console itself silently does nothing.
  */
 import { useEffect, useState, type ReactNode } from 'react';
 import { cn } from '../../lib/cn';
@@ -30,9 +33,16 @@ export function DevTabs({ tabs }: DevTabsProps) {
   const [active, setActive] = useState(tabs[0]?.key ?? '');
 
   useEffect(() => {
-    const fromHash = window.location.hash.replace(/^#/, '');
-    if (fromHash && tabs.some((t) => t.key === fromHash)) setActive(fromHash);
-    // Tabs are static for the life of the page; this restores the deep link once.
+    function applyHash() {
+      const fromHash = window.location.hash.replace(/^#/, '');
+      if (fromHash && tabs.some((t) => t.key === fromHash)) setActive(fromHash);
+    }
+    applyHash();
+    // `select` below writes the hash with replaceState, which fires no event — so
+    // this only ever reacts to a hash the user (or a link) put there.
+    window.addEventListener('hashchange', applyHash);
+    return () => window.removeEventListener('hashchange', applyHash);
+    // Tabs are static for the life of the page.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -72,18 +82,25 @@ export function DevTabs({ tabs }: DevTabsProps) {
             >
               {t.label}
               {typeof t.count === 'number' ? (
-                <span
-                  className={cn(
-                    'ml-1.5',
-                    isActive
-                      ? 'opacity-60'
-                      : t.highlight
-                        ? 'rounded-full bg-amber-100 px-1.5 py-0.5 text-[11px] font-semibold text-amber-800'
-                        : 'opacity-60',
-                  )}
-                >
-                  {t.count}
-                </span>
+                <>
+                  {/* The count is a separate inline element with no whitespace
+                      before it, so the accessible name concatenates to "Errors0"
+                      and is announced as one word. The margin separates the two
+                      visually; this separates them for anyone listening. */}
+                  <span className="sr-only">, </span>
+                  <span
+                    className={cn(
+                      'ml-1.5',
+                      isActive
+                        ? 'opacity-60'
+                        : t.highlight
+                          ? 'rounded-full bg-amber-100 px-1.5 py-0.5 text-[11px] font-semibold text-amber-800'
+                          : 'opacity-60',
+                    )}
+                  >
+                    {t.count}
+                  </span>
+                </>
               ) : t.highlight && !isActive ? (
                 // A tab with nothing to count can still be "armed" — the clock
                 // being off real time is the case this exists for.
