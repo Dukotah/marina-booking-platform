@@ -58,7 +58,7 @@ export function KpiCard({
           <span
             className={cn(
               'inline-flex items-center gap-0.5 font-medium',
-              positive && 'text-emerald-600',
+              positive && 'text-emerald-700',
               negative && 'text-red-600',
               !positive && !negative && 'text-slate-500',
             )}
@@ -66,7 +66,8 @@ export function KpiCard({
             {DeltaIcon ? <DeltaIcon className="h-3.5 w-3.5" aria-hidden /> : null}
             {`${deltaRatio! > 0 ? '+' : ''}${(deltaRatio! * 100).toFixed(1)}%`}
           </span>
-          {deltaLabel ? <span className="text-slate-400">{deltaLabel}</span> : null}
+          {/* slate-500: slate-400 on the white card is 2.56:1. (1.4.3) */}
+          {deltaLabel ? <span className="text-slate-500">{deltaLabel}</span> : null}
         </div>
       ) : null}
     </div>

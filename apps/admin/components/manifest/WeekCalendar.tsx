@@ -69,13 +69,15 @@ export function WeekCalendar({ days, events }: WeekCalendarProps) {
               d.isToday && 'bg-sky-50',
             )}
           >
-            <div className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
+            {/* slate-600: slate-400 on the slate-50 header is 2.45:1, and these
+                are the weekday names the whole grid is read against. (1.4.3) */}
+            <div className="text-[11px] font-medium uppercase tracking-wide text-slate-600">
               {d.weekday}
             </div>
             <div
               className={cn(
                 'mx-auto mt-0.5 flex h-7 w-7 items-center justify-center rounded-full text-sm font-semibold',
-                d.isToday ? 'bg-sky-600 text-white' : 'text-slate-700',
+                d.isToday ? 'bg-sky-700 text-white' : 'text-slate-700',
               )}
             >
               {d.dayNum}
@@ -92,7 +94,7 @@ export function WeekCalendar({ days, events }: WeekCalendarProps) {
             {ticks.slice(0, -1).map((t) => (
               <div
                 key={t.hour}
-                className="absolute right-2 -translate-y-1/2 text-[11px] font-medium text-slate-400"
+                className="absolute right-2 -translate-y-1/2 text-[11px] font-medium text-slate-600"
                 style={{ top: ((t.hour - win.startHour) * HOUR_PX) }}
               >
                 {t.label}
@@ -186,7 +188,10 @@ function DayColumn({
       })}
 
       {events.length === 0 ? (
-        <div className="pointer-events-none absolute inset-x-0 top-2 text-center text-[11px] text-slate-300">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 top-2 text-center text-[11px] text-slate-500"
+        >
           —
         </div>
       ) : null}

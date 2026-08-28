@@ -81,7 +81,9 @@ export function OrderTimeline({ events }: { events: TimelineEvent[] }) {
             </span>
             <div className="min-w-0 pt-1">
               <p className="text-sm text-slate-800">{event.description}</p>
-              <p className="mt-0.5 text-xs text-slate-400">
+              {/* slate-500, not slate-400: slate-400 on the white card is 2.45:1.
+                  This line carries the audit trail's when and who. (1.4.3) */}
+              <p className="mt-0.5 text-xs text-slate-500">
                 {formatDateTime(event.createdAt)} · {actorLabel(event.actor)}
               </p>
             </div>

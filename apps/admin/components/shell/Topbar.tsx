@@ -28,10 +28,16 @@ export function Topbar({ brandName, userName, roleLabel }: TopbarProps) {
 
       <div className="relative hidden flex-1 md:block">
         <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" aria-hidden />
+        {/* Placeholder text is text: slate-400 on the slate-50 field is 2.45:1.
+            slate-500 clears AA on both the resting (slate-50) and focused (white)
+            field. (1.4.3) */}
         <input
           type="search"
+          // A placeholder is not a label: it is the fallback name source, and it
+          // disappears the moment the field has content. (4.1.2)
+          aria-label="Search orders, customers and activities"
           placeholder="Search orders, customers, activities…"
-          className="w-full max-w-md rounded-lg border border-slate-200 bg-slate-50 py-2 pl-9 pr-3 text-sm text-slate-700 placeholder:text-slate-400 focus:border-slate-300 focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-200"
+          className="w-full max-w-md rounded-lg border border-slate-200 bg-slate-50 py-2 pl-9 pr-3 text-sm text-slate-700 placeholder:text-slate-500 focus:border-slate-300 focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-200"
         />
       </div>
 

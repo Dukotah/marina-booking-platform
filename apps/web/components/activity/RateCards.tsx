@@ -10,6 +10,7 @@
  * parent (the booking widget) so date/time selection stays in sync.
  */
 
+import { useRef } from 'react';
 import { formatUSD, formatDuration } from '@/lib/format';
 import type { CatalogRate } from '@/lib/api';
 
@@ -27,6 +28,58 @@ function perHourCents(rate: CatalogRate): number | null {
 }
 
 export function RateCards({ rates, selectedRateId, onSelect, accentColor }: RateCardsProps) {
+  /*
+   * Keyboard semantics for a radiogroup made of buttons.
+   *
+   * `role="radio"` is a promise, and half of what it promises is the arrow keys: a
+   * screen-reader user told "radio button, 1 of 4" reaches for Down, not Tab. Nothing
+   * here answered them, so the group announced itself as a radiogroup and then behaved
+   * like four unrelated buttons. Moving focus also chooses, which is what a native
+   * radio group does and what makes the announcement match the state.
+   *
+   * The tab order is deliberately NOT collapsed to the checked card the way the date
+   * strip's is. Two reasons, and both are specific to this group rather than a general
+   * preference: there are only ever a handful of rates (against fourteen days), so
+   * every card being a tab stop costs a keyboard user almost nothing; and this is the
+   * group the activity page drives before hydration (`PRE_HYDRATION_RADIOS`), where a
+   * roving tabindex would have to be maintained by that inline script too.
+   */
+  const cardRefs = useRef<Array<HTMLButtonElement | null>>([]);
+
+  const move = (from: number, step: number) => {
+    if (rates.length === 0) return;
+    const to = (((from + step) % rates.length) + rates.length) % rates.length;
+    const rate = rates[to];
+    if (!rate) return;
+    cardRefs.current[to]?.focus();
+    onSelect(rate);
+  };
+
+  const onKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
+    switch (event.key) {
+      case 'ArrowRight':
+      case 'ArrowDown':
+        event.preventDefault();
+        move(index, 1);
+        break;
+      case 'ArrowLeft':
+      case 'ArrowUp':
+        event.preventDefault();
+        move(index, -1);
+        break;
+      case 'Home':
+        event.preventDefault();
+        move(-1, 1);
+        break;
+      case 'End':
+        event.preventDefault();
+        move(0, -1);
+        break;
+      default:
+        break;
+    }
+  };
+
   if (rates.length === 0) {
     return (
       <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
@@ -51,7 +104,7 @@ export function RateCards({ rates, selectedRateId, onSelect, accentColor }: Rate
       role="radiogroup"
       aria-label="Choose a rate"
     >
-      {rates.map((rate) => {
+      {rates.map((rate, index) => {
         const selected = rate.id === selectedRateId;
         const hourly = perHourCents(rate);
         const isCheapest = showBadges && rate.id === cheapestId;
@@ -60,10 +113,14 @@ export function RateCards({ rates, selectedRateId, onSelect, accentColor }: Rate
         return (
           <button
             key={rate.id}
+            ref={(node) => {
+              cardRefs.current[index] = node;
+            }}
             type="button"
             role="radio"
             aria-checked={selected}
             onClick={() => onSelect(rate)}
+            onKeyDown={(event) => onKeyDown(event, index)}
             className="relative flex flex-col rounded-xl border-2 bg-white p-4 text-left transition focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1"
             style={{
               borderColor: selected ? accentColor : '#e2e8f0',

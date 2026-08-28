@@ -119,6 +119,27 @@ function spotsLabel(remaining: number): string {
   return `${remaining} ${remaining === 1 ? 'spot' : 'spots'} left`;
 }
 
+/**
+ * The chip that owns the group's single tab stop — the checked one, or the first chip
+ * a guest can actually pick. -1 when the whole day is full, which leaves the group out
+ * of the tab order instead of parking focus on a sold-out chip.
+ */
+function rovingIndex(selectable: boolean[], selectedIndex: number): number {
+  if (selectedIndex >= 0 && selectable[selectedIndex]) return selectedIndex;
+  return selectable.indexOf(true);
+}
+
+/** The next pickable chip `step` away, wrapping; -1 when none is left. */
+function nextSelectableIndex(selectable: boolean[], from: number, step: number): number {
+  const n = selectable.length;
+  if (n === 0 || step === 0) return -1;
+  for (let hop = 1; hop <= n; hop++) {
+    const candidate = (((from + step * hop) % n) + n) % n;
+    if (selectable[candidate]) return candidate;
+  }
+  return -1;
+}
+
 function chipClasses(
   status: AvailabilitySlot['status'],
   selected: boolean,
@@ -156,6 +177,7 @@ export function TimeSlotPicker({
   const [error, setError] = useState<string | null>(null);
 
   const requestSeq = useRef(0);
+  const chipRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
   useEffect(() => {
     const seq = ++requestSeq.current;
@@ -190,77 +212,188 @@ export function TimeSlotPicker({
     };
   }, [activityId, iso]);
 
+  /*
+   * 4.1.3 Status Messages. This picker mounts the moment a date is tapped, so a live
+   * region rendered with its message already inside it would be an INSERTION, which
+   * assistive tech does not reliably announce. Holding the text back by one commit
+   * turns it into the update it has to be for the guest to hear anything.
+   *
+   * The region itself is rendered in every state below, at the same position, so it
+   * survives loading → loaded and reports the end of the wait as well as the start.
+   */
+  const [announcement, setAnnouncement] = useState('');
+  useEffect(() => {
+    if (loading) {
+      setAnnouncement('Loading available times…');
+      return;
+    }
+    // The failure has its own alert; repeating it here would say it twice.
+    if (error) {
+      setAnnouncement('');
+      return;
+    }
+    setAnnouncement(
+      slots.length === 0
+        ? 'No times are available on this day.'
+        : `${slots.length} ${slots.length === 1 ? 'time' : 'times'} available.`,
+    );
+  }, [loading, error, slots.length]);
+
+  /**
+   * The live region, always the FIRST child of the returned fragment.
+   *
+   * Same type, same position in every branch, so React keeps the one element across
+   * loading → loaded instead of remounting it and losing the announcement. It stays
+   * outside the radiogroup on purpose: a `status` is not an allowed child of a
+   * `radiogroup`, and putting it there would trade one finding for another.
+   */
+  const status = (
+    <span role="status" className="sr-only">
+      {announcement}
+    </span>
+  );
+
   if (loading) {
     return (
-      // The placeholders are the height of a real chip (min-h-[52px] + border), so
-      // the answer arriving does not shove the guest's thumb target down the page.
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-        {Array.from({ length: 6 }).map((_, i) => (
-          <div
-            key={i}
-            className="h-[52px] animate-pulse rounded-xl border-2 border-slate-100 bg-slate-100"
-            aria-hidden
-          />
-        ))}
-        <span className="sr-only">Loading available times…</span>
-      </div>
+      <>
+        {status}
+        {/* The placeholders are the height of a real chip (min-h-[52px] + border), so
+            the answer arriving does not shove the guest's thumb target down the page. */}
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div
+              key={i}
+              className="h-[52px] animate-pulse rounded-xl border-2 border-slate-100 bg-slate-100"
+              aria-hidden
+            />
+          ))}
+        </div>
+      </>
     );
   }
 
   if (error) {
     return (
-      <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-        {error}
-      </p>
+      <>
+        {status}
+        {/* Inserted with no focus move, so it has to announce itself. */}
+        <p
+          role="alert"
+          className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700"
+        >
+          {error}
+        </p>
+      </>
     );
   }
 
   if (slots.length === 0) {
     return (
-      <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-500">
-        No times are available on this day. Try another date.
-      </p>
+      <>
+        {status}
+        <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-500">
+          No times are available on this day. Try another date.
+        </p>
+      </>
     );
   }
 
+  /*
+   * Keyboard semantics for the radiogroup: one tab stop for the whole group (the
+   * chosen chip, or the first pickable one), and arrows to move inside it. Twelve
+   * timeslots used to be twelve tab stops between the date and the CTA.
+   *
+   * Selection follows focus here, unlike the date strip. Choosing a time is pure local
+   * state — no request, nothing discarded — so the native radio behaviour is free, and
+   * it keeps what the screen reader announces and what the booking will use identical.
+   *
+   * Left/Up and Right/Down all step by one rather than by a row: the grid is two
+   * columns on a phone and three from `sm` up, so any fixed row step would be a lie on
+   * one of them.
+   */
+  const selectable = slots.map((slot) => !(slot.status === 'FULL' || slot.capacityRemaining <= 0));
+  const selectedIndex = slots.findIndex((slot) => slot.timeslotId === selectedTimeslotId);
+  const tabStop = rovingIndex(selectable, selectedIndex);
+
+  const move = (from: number, step: number) => {
+    const to = nextSelectableIndex(selectable, from, step);
+    const slot = to >= 0 ? slots[to] : undefined;
+    if (!slot) return;
+    chipRefs.current[to]?.focus();
+    onSelect(slot);
+  };
+
+  const onKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
+    switch (event.key) {
+      case 'ArrowRight':
+      case 'ArrowDown':
+        event.preventDefault();
+        move(index, 1);
+        break;
+      case 'ArrowLeft':
+      case 'ArrowUp':
+        event.preventDefault();
+        move(index, -1);
+        break;
+      case 'Home':
+        event.preventDefault();
+        move(-1, 1);
+        break;
+      case 'End':
+        event.preventDefault();
+        move(slots.length, -1);
+        break;
+      default:
+        break;
+    }
+  };
+
   return (
-    <div
-      className="grid grid-cols-2 gap-2 sm:grid-cols-3"
-      role="radiogroup"
-      aria-label="Choose a time"
-    >
-      {slots.map((slot) => {
-        const full = slot.status === 'FULL' || slot.capacityRemaining <= 0;
-        const selected = slot.timeslotId === selectedTimeslotId;
-        return (
-          <button
-            key={slot.timeslotId}
-            type="button"
-            role="radio"
-            aria-checked={selected}
-            disabled={full}
-            onClick={() => onSelect(slot)}
-            className={chipClasses(slot.status, selected, full)}
-          >
-            <span className="text-sm font-semibold">{formatTime(slot.datetime)}</span>
-            <span
-              className={`text-[11px] font-medium ${
-                selected ? 'text-white/80' : full ? 'text-rose-400' : 'opacity-80'
-              }`}
+    <>
+      {status}
+      <div
+        className="grid grid-cols-2 gap-2 sm:grid-cols-3"
+        role="radiogroup"
+        aria-label="Choose a time"
+      >
+        {slots.map((slot, index) => {
+          const full = !selectable[index];
+          const selected = slot.timeslotId === selectedTimeslotId;
+          return (
+            <button
+              key={slot.timeslotId}
+              ref={(node) => {
+                chipRefs.current[index] = node;
+              }}
+              type="button"
+              role="radio"
+              aria-checked={selected}
+              disabled={full}
+              tabIndex={index === tabStop ? 0 : -1}
+              onClick={() => onSelect(slot)}
+              onKeyDown={(event) => onKeyDown(event, index)}
+              className={chipClasses(slot.status, selected, full)}
             >
-              {spotsLabel(slot.capacityRemaining)}
-            </span>
-            {selected && (
+              <span className="text-sm font-semibold">{formatTime(slot.datetime)}</span>
               <span
-                aria-hidden
-                className="mt-0.5 h-1 w-6 rounded-full"
-                style={{ backgroundColor: accentColor }}
-              />
-            )}
-          </button>
-        );
-      })}
-    </div>
+                className={`text-[11px] font-medium ${
+                  selected ? 'text-white/80' : full ? 'text-rose-400' : 'opacity-80'
+                }`}
+              >
+                {spotsLabel(slot.capacityRemaining)}
+              </span>
+              {selected && (
+                <span
+                  aria-hidden
+                  className="mt-0.5 h-1 w-6 rounded-full"
+                  style={{ backgroundColor: accentColor }}
+                />
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </>
   );
 }
 

@@ -8,9 +8,80 @@
  * brandStyle()) and consumed by Tailwind's `brand` color (tailwind.config.ts)
  * and any `var(--brand-color)` usage. Never hardcode a specific operator's
  * brand in customer-facing UI.
+ *
+ * The two companions are DERIVED from the brand and must never be authored by
+ * hand at a call site:
+ *
+ *   --brand-foreground  legible text/icons drawn ON the brand color
+ *   --brand-text        the brand color made legible AS text on a light surface
+ *
+ * The defaults below are what lib/brand.ts computes for the default `#0ea5e9`,
+ * and they are what pages that render no header/footer (checkout) inherit.
+ * brandStyle() always emits all three together, so a tenant color can never be
+ * paired with the previous tenant's foregrounds. If you change the default
+ * brand here, recompute these two with onBrandForeground()/brandTextColor()
+ * rather than guessing — white on #0ea5e9 is 2.77:1, and the raw color as text
+ * on white is 2.31:1. Both fail WCAG 1.4.3.
  */
 :root {
   --brand-color: #0ea5e9;
+  --brand-foreground: #0f172a; /* 6.44:1 on #0ea5e9 (white would be 2.77:1) */
+  --brand-text: #0a77a9; /* 4.97:1 on white, 4.54:1 on slate-100 */
+}
+
+/*
+ * Deliberately OUTSIDE @layer: the three rules that follow have to win over
+ * the Tailwind color utilities emitted by `@tailwind utilities` above, which
+ * they do purely by coming later at equal specificity.
+ *
+ * They are the white-label safety net for contrast. Shared components in
+ * @marina/ui (and several app call sites) hardcode `text-white` next to a
+ * brand fill, and hardcoding a foreground against an operator-chosen color is
+ * a guaranteed contrast bug — the shipped default `#0ea5e9` already fails at
+ * 2.77:1. Rather than chase every call site, anything painted in the brand
+ * color takes its foreground from the derived variable. A tenant who picks a
+ * pale yellow gets near-black labels automatically; nobody has to remember.
+ *
+ * The selectors match a whole class token (`~=`), never a substring: the tip
+ * chips use `bg-[var(--brand-color)]/10`, a 10% tint that is nearly white and
+ * correctly carries slate-900 text. Capturing that too would hand it a
+ * foreground computed for the *solid* brand and break it for any dark brand.
+ */
+.bg-brand,
+[class~='bg-[var(--brand-color)]'],
+[class~='bg-[var(--brand-color,#0f766e)]'] {
+  color: var(--brand-foreground, #0f172a);
+}
+
+/*
+ * The same guarantee for the other way this app paints the brand: a dozen call
+ * sites use `style={{ backgroundColor: 'var(--brand-color)' }}` with a
+ * hardcoded `text-white` class (the catalog "Book" chips, the empty-state and
+ * embed CTAs, the confirmation tick). A stylesheet cannot see an inline
+ * background, so match on the attribute text — both spellings, because a
+ * server-rendered attribute has no space after the colon and a browser
+ * re-serialising the style property adds one.
+ *
+ * This is a net, not the fix: the real fix is for those call sites to swap
+ * `text-white` for `.text-on-brand` below. It is safe to leave in place either
+ * way — the color it sets is the same one they should be asking for, and no
+ * element gets a WORSE foreground than the hardcoded white it replaces. The
+ * element's own inline `color`, where one exists, still wins as normal.
+ */
+[style*='background-color:var(--brand-color)'],
+[style*='background-color: var(--brand-color)'] {
+  color: var(--brand-foreground, #0f172a);
+}
+
+/*
+ * The mirror image: the brand color used AS text. A mid-tone brand reads fine
+ * as a button fill and fails as 14px body copy, so `text-brand` resolves to the
+ * darkened, hue-preserving `--brand-text` instead of the raw brand. Fills
+ * (bg-/border-/ring-brand) still use the operator's exact color, so the
+ * identity is unchanged — only small text is corrected.
+ */
+.text-brand {
+  color: var(--brand-text, var(--brand-color, #0a77a9));
 }
 
 html,
@@ -65,14 +136,35 @@ body {
   /*
    * A guaranteed focus indicator for anything that doesn't style its own. Lives
    * in `base` so component-level `focus-visible:ring-*` utilities still win.
+   *
+   * Drawn in `--brand-text`, not the raw brand: a mid-tone operator color can
+   * sit under the 3:1 non-text floor against a white page, and the ring is the
+   * only thing telling a keyboard user where they are. The derived value keeps
+   * the operator's hue and is contrast-checked by construction (1.4.11).
+   * Brand-FILLED controls still opt out to a slate-900 ring — a darkened brand
+   * on the brand itself would be near-invisible (see SiteHeader).
    */
   :focus-visible {
-    outline: 2px solid var(--brand-color);
+    outline: 2px solid var(--brand-text, var(--brand-color));
     outline-offset: 2px;
   }
 }
 
 @layer utilities {
+  /*
+   * The two sanctioned ways to put the brand colour near text. Use these
+   * instead of `text-white` on a brand fill or `var(--brand-color)` as a text
+   * colour — both of those are contrast bugs the moment an operator picks a
+   * colour other than the one you happened to look at (see lib/brand.ts).
+   *
+   *   .text-on-brand  labels/icons sitting ON a brand-filled surface
+   *   .text-brand     brand-tinted text on a light surface (Tailwind's own
+   *                   `text-brand` utility, corrected above)
+   */
+  .text-on-brand {
+    color: var(--brand-foreground, #0f172a);
+  }
+
   /*
    * Horizontal date strip: the primary date control on mobile. Snapping keeps a
    * whole day chip in view after a flick, and `overscroll-behavior` stops the

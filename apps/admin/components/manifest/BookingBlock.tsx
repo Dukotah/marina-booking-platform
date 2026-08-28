@@ -93,6 +93,10 @@ export function BookingBlock({ booking, color, window: win, lane }: BookingBlock
         ) : null}
 
         <div className="min-w-0 flex-1 leading-tight">
+          {/* The block's status is carried by a mute/saturation treatment and a tick
+              glyph, both of which are pure appearance. Stated in text, it survives
+              being read aloud. (1.4.1) */}
+          <span className="sr-only">{style.label}: </span>
           <div className="truncate font-semibold">{booking.customerName}</div>
           <div className="flex items-center gap-2 truncate opacity-90">
             <span className="inline-flex items-center gap-0.5">
@@ -112,7 +116,14 @@ export function BookingBlock({ booking, color, window: win, lane }: BookingBlock
             type="button"
             onClick={toggleCheckIn}
             disabled={isPending}
-            aria-label={checkedIn ? 'Undo check-in' : 'Check in guest'}
+            // One of these per block, all with the same name until now: on a busy
+            // day that is "Check in guest" thirty times with nothing saying which
+            // guest. (4.1.2, 2.4.6)
+            aria-label={
+              checkedIn
+                ? `Undo check-in for ${booking.customerName}, ${formatTime(booking.startISO)}`
+                : `Check in ${booking.customerName}, ${formatTime(booking.startISO)}`
+            }
             className={cn(
               'flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-[11px] font-semibold transition-colors',
               'bg-white/90 text-slate-900 hover:bg-white disabled:opacity-70',
@@ -130,8 +141,14 @@ export function BookingBlock({ booking, color, window: win, lane }: BookingBlock
         ) : null}
       </div>
 
+      {/* role="alert": the optimistic state silently reverts on failure, so without
+          this the block just flips back to its old status with no explanation of
+          why. The colour is unchanged — white on rose-600 measures 4.7:1. (4.1.3) */}
       {error ? (
-        <div className="absolute left-0 top-full z-10 mt-1 rounded-md bg-rose-600 px-2 py-1 text-[11px] text-white shadow">
+        <div
+          role="alert"
+          className="absolute left-0 top-full z-10 mt-1 rounded-md bg-rose-600 px-2 py-1 text-[11px] text-white shadow"
+        >
           {error}
         </div>
       ) : null}

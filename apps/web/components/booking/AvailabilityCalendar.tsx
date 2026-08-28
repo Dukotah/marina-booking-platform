@@ -247,6 +247,51 @@ function dayLabel(
   return `${when} — ${n} ${n === 1 ? 'spot' : 'spots'} left`;
 }
 
+// ---------------------------------------------------------------------------
+// Radiogroup keyboard semantics
+// ---------------------------------------------------------------------------
+
+/*
+ * `role="radio"` promises two things, and this component only ever kept one of them.
+ * A screen reader announces "radio button, 3 of 14" and its user reaches for an arrow
+ * key; nothing answered, so the strip behaved like fourteen unrelated buttons — and
+ * fourteen tab stops (thirty-one more with the month grid open) sat between the rate
+ * and the time for anyone driving the booking from a keyboard. The two functions below
+ * are the WAI-ARIA radiogroup pattern: one tab stop for the whole group, arrows to move
+ * inside it.
+ */
+
+/**
+ * The option that owns the group's single tab stop.
+ *
+ * The checked one, normally. When nothing is checked — or the checked day is no longer
+ * selectable, which happens the moment a day sells out under a guest — the first day
+ * that CAN be picked takes it, so Tab always lands somewhere that does something. -1
+ * when no day is selectable at all, which leaves the group out of the tab order rather
+ * than parking focus on a dead control.
+ */
+function rovingIndex(selectable: boolean[], selectedIndex: number): number {
+  if (selectedIndex >= 0 && selectable[selectedIndex]) return selectedIndex;
+  return selectable.indexOf(true);
+}
+
+/**
+ * The next selectable option `step` positions away, wrapping, or -1 if there is none.
+ *
+ * Unselectable days are stepped over rather than landed on: a sold-out day is not a
+ * choice, and focusing one would strand the arrow keys on a disabled button. `step` is
+ * ±1 along the strip and ±7 in the month grid, where it walks the same weekday column.
+ */
+function nextSelectableIndex(selectable: boolean[], from: number, step: number): number {
+  const n = selectable.length;
+  if (n === 0 || step === 0) return -1;
+  for (let hop = 1; hop <= n; hop++) {
+    const candidate = (((from + step * hop) % n) + n) % n;
+    if (selectable[candidate]) return candidate;
+  }
+  return -1;
+}
+
 export function AvailabilityCalendar({
   activityId,
   selectedDate,
@@ -501,6 +546,116 @@ export function AvailabilityCalendar({
     onSelectDate(startOfDay(date));
   };
 
+  // Selectability is derived once and read by BOTH the render and the arrow keys.
+  // Deriving it twice is how a keyboard walk drifts out of step with what is on
+  // screen — the arrows would happily land on a day the render had disabled.
+  const stripSelectable = useMemo(
+    () =>
+      stripDays.map((date) => {
+        const state = days[format(date, 'yyyy-MM-dd')];
+        return Boolean(state) && state?.status !== 'FULL' && state?.status !== 'NONE';
+      }),
+    [stripDays, days],
+  );
+
+  const gridSelectable = useMemo(
+    () =>
+      monthGrid.allDays.map((date) => {
+        if (isBefore(date, today) || isBefore(horizon, date)) return false;
+        const state = days[format(date, 'yyyy-MM-dd')];
+        return Boolean(state) && state?.status !== 'FULL' && state?.status !== 'NONE';
+      }),
+    [monthGrid.allDays, today, horizon, days],
+  );
+
+  const stripSelectedIndex = selectedDate
+    ? stripDays.findIndex((d) => isSameDay(d, selectedDate))
+    : -1;
+  const gridSelectedIndex = selectedDate
+    ? monthGrid.allDays.findIndex((d) => isSameDay(d, selectedDate))
+    : -1;
+
+  /*
+   * The arrow keys here MOVE FOCUS WITHOUT SELECTING; Space or Enter chooses the day.
+   *
+   * That is the deliberate exception to "selection follows focus", which is what a
+   * native radio group does and what the rate cards and the time chips do. Choosing a
+   * day is not free the way choosing a rate is: it discards the time the guest already
+   * picked and sends the time picker back to the network for that day's slots. Arrowing
+   * across a fortnight would be fourteen round trips on precisely the rural connection
+   * this product is built for. So the group announces "not checked" as focus passes,
+   * and the guest commits with Space — the documented alternative for a radiogroup
+   * whose selection has side effects.
+   *
+   * Because selection no longer follows focus, the tab stop has to follow focus
+   * instead: without this, tabbing out of the strip and back would drop the guest on
+   * the checked day rather than the one they had arrowed to.
+   */
+  const [stripFocusIndex, setStripFocusIndex] = useState(-1);
+  const [gridFocusIndex, setGridFocusIndex] = useState(-1);
+
+  const stripTabStop =
+    stripFocusIndex >= 0 && stripSelectable[stripFocusIndex]
+      ? stripFocusIndex
+      : rovingIndex(stripSelectable, stripSelectedIndex);
+  const gridTabStop =
+    gridFocusIndex >= 0 && gridSelectable[gridFocusIndex]
+      ? gridFocusIndex
+      : rovingIndex(gridSelectable, gridSelectedIndex);
+
+  const stripRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const gridRefs = useRef<Array<HTMLButtonElement | null>>([]);
+
+  /** Move focus within one of the two day groups, stepping over unbookable days. */
+  const moveWithin = (which: 'strip' | 'grid', from: number, step: number) => {
+    const selectable = which === 'strip' ? stripSelectable : gridSelectable;
+    const refs = which === 'strip' ? stripRefs : gridRefs;
+
+    const to = nextSelectableIndex(selectable, from, step);
+    if (to < 0) return;
+    refs.current[to]?.focus();
+  };
+
+  /** Arrow / Home / End for a day group. `rowStep` is 1 on the strip, 7 in the grid. */
+  const dayKeyDown = (
+    event: React.KeyboardEvent<HTMLButtonElement>,
+    which: 'strip' | 'grid',
+    index: number,
+    rowStep: number,
+  ) => {
+    const count = (which === 'strip' ? stripSelectable : gridSelectable).length;
+    switch (event.key) {
+      case 'ArrowRight':
+        event.preventDefault();
+        moveWithin(which, index, 1);
+        break;
+      case 'ArrowLeft':
+        event.preventDefault();
+        moveWithin(which, index, -1);
+        break;
+      case 'ArrowDown':
+        event.preventDefault();
+        moveWithin(which, index, rowStep);
+        break;
+      case 'ArrowUp':
+        event.preventDefault();
+        moveWithin(which, index, -rowStep);
+        break;
+      case 'Home':
+        // Search forward from before the first option, so Home lands on the first
+        // BOOKABLE day rather than on whatever happens to sit at index 0.
+        event.preventDefault();
+        moveWithin(which, -1, 1);
+        break;
+      case 'End':
+        event.preventDefault();
+        moveWithin(which, count, -1);
+        break;
+      default:
+        break;
+    }
+  };
+
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm sm:p-4">
       {/* Fast path: the next two weeks, one horizontal flick. */}
@@ -514,18 +669,25 @@ export function AvailabilityCalendar({
           const iso = format(date, 'yyyy-MM-dd');
           const state = days[iso];
           const status = state?.status ?? 'NONE';
-          const disabled = !state || status === 'FULL' || status === 'NONE';
+          const disabled = !stripSelectable[i];
           const selected = selectedDate ? isSameDay(date, selectedDate) : false;
 
           return (
             <button
               key={iso}
+              ref={(node) => {
+                stripRefs.current[i] = node;
+              }}
               type="button"
               role="radio"
               aria-checked={selected}
               aria-label={dayLabel(date, state, disabled, loadFailed)}
               disabled={disabled}
+              // One tab stop for the whole strip; the arrows do the rest.
+              tabIndex={i === stripTabStop ? 0 : -1}
+              onFocus={() => setStripFocusIndex(i)}
               onClick={() => pick(date, disabled)}
+              onKeyDown={(event) => dayKeyDown(event, 'strip', i, 1)}
               className={[
                 'flex min-h-[76px] w-[68px] shrink-0 flex-col items-center justify-center gap-0.5 rounded-xl border-2 pt-2 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1',
                 selected
@@ -575,15 +737,35 @@ export function AvailabilityCalendar({
           </svg>
           {showGrid ? 'Hide calendar' : 'More dates'}
         </button>
-        {loading && (
-          <span className="flex items-center gap-2 text-xs text-slate-400">
-            <span
-              aria-hidden
-              className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600"
-            />
-            Checking availability…
-          </span>
-        )}
+        {/*
+          4.1.3 Status Messages. The strip used to announce its loading state only
+          through the day buttons themselves — fourteen DISABLED controls whose names
+          silently changed from "checking availability" to a spot count under the
+          guest. A disabled control is not where a screen reader is waiting, and a name
+          that mutates in place is not an announcement. This region carries it instead.
+
+          It is rendered from the first paint and only its TEXT changes: a live region
+          inserted into the DOM at the same moment as its message is not reliably
+          announced at all, so the region has to outlive the state it reports. The day
+          names are left exactly as they were — they answer "what is this?" for anyone
+          who does reach one mid-load, which is a different question.
+        */}
+        <span role="status" className="flex items-center gap-2 text-xs text-slate-400">
+          {loading ? (
+            <>
+              <span
+                aria-hidden
+                className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600"
+              />
+              Checking availability…
+            </>
+          ) : loadFailed ? null : (
+            // Silence after "checking availability…" reads as a page that gave up.
+            // Visually hidden on purpose: the spinner vanishing is the sighted
+            // equivalent, and visible text here would be new UI rather than a fix.
+            <span className="sr-only">Availability updated. Dates are ready to choose.</span>
+          )}
+        </span>
       </div>
 
       {showGrid && (
@@ -592,7 +774,13 @@ export function AvailabilityCalendar({
           <div className="mb-3 flex items-center justify-between">
             <button
               type="button"
-              onClick={() => canGoPrev && setViewMonth((m) => startOfMonth(addMonths(m, -1)))}
+              onClick={() => {
+                if (!canGoPrev) return;
+                // Index N means a different day next month, so the remembered tab stop
+                // has to go back to the checked/first bookable day.
+                setGridFocusIndex(-1);
+                setViewMonth((m) => startOfMonth(addMonths(m, -1)));
+              }}
               disabled={!canGoPrev}
               aria-label="Previous month"
               className="flex h-11 w-11 items-center justify-center rounded-lg border border-slate-200 text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-30"
@@ -606,7 +794,11 @@ export function AvailabilityCalendar({
             </h3>
             <button
               type="button"
-              onClick={() => canGoNext && setViewMonth((m) => startOfMonth(addMonths(m, 1)))}
+              onClick={() => {
+                if (!canGoNext) return;
+                setGridFocusIndex(-1);
+                setViewMonth((m) => startOfMonth(addMonths(m, 1)));
+              }}
               disabled={!canGoNext}
               aria-label="Next month"
               className="flex h-11 w-11 items-center justify-center rounded-lg border border-slate-200 text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-30"
@@ -635,26 +827,31 @@ export function AvailabilityCalendar({
               <div key={`blank-${i}`} aria-hidden />
             ))}
 
-            {monthGrid.allDays.map((date) => {
+            {monthGrid.allDays.map((date, i) => {
               const iso = format(date, 'yyyy-MM-dd');
-              const inPast = isBefore(date, today);
-              const beyondHorizon = isBefore(horizon, date);
               const state = days[iso];
               const status: DayAvailability = state?.status ?? 'NONE';
-              const disabled =
-                inPast || beyondHorizon || !state || status === 'FULL' || status === 'NONE';
+              const disabled = !gridSelectable[i];
               const selected = selectedDate ? isSameDay(date, selectedDate) : false;
               const isToday = isSameDay(date, today);
 
               return (
                 <button
                   key={iso}
+                  ref={(node) => {
+                    gridRefs.current[i] = node;
+                  }}
                   type="button"
                   role="radio"
                   aria-checked={selected}
                   disabled={disabled}
                   aria-label={dayLabel(date, state, disabled, loadFailed)}
+                  // One tab stop for the month, as on the strip. Up/Down walk the
+                  // weekday column, which is the movement the grid's shape implies.
+                  tabIndex={i === gridTabStop ? 0 : -1}
+                  onFocus={() => setGridFocusIndex(i)}
                   onClick={() => pick(date, disabled)}
+                  onKeyDown={(event) => dayKeyDown(event, 'grid', i, 7)}
                   className={cellClasses(status, selected, disabled)}
                 >
                   <span className={isToday && !selected ? 'underline decoration-2 underline-offset-2' : undefined}>

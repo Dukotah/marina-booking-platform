@@ -29,6 +29,13 @@ export interface DataTableProps<T> {
   getRowKey: (row: T, index: number) => string;
   /** Shown when there are no rows. */
   emptyState?: ReactNode;
+  /**
+   * Accessible name for the table, announced when a screen-reader user lands on it.
+   * Rendered as a visually hidden <caption>: several of these tables sit under a
+   * short "Items"/"Payments" heading that a table-navigation command never reads,
+   * which leaves the reader in an unnamed grid of numbers. (1.3.1)
+   */
+  caption?: string;
   /** Optional row click handler (client usage). */
   onRowClick?: (row: T) => void;
   className?: string;
@@ -50,6 +57,7 @@ export function DataTable<T>({
   rows,
   getRowKey,
   emptyState,
+  caption,
   onRowClick,
   className,
 }: DataTableProps<T>) {
@@ -62,6 +70,7 @@ export function DataTable<T>({
     >
       <div className="overflow-x-auto">
         <table className="w-full border-collapse text-sm">
+          {caption ? <caption className="sr-only">{caption}</caption> : null}
           <thead>
             <tr className="border-b border-slate-200 bg-slate-50 text-left">
               {columns.map((col) => (

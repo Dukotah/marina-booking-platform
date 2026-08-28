@@ -85,9 +85,15 @@ function SummaryChip({
     tone === 'emerald'
       ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
       : 'border-slate-200 bg-white text-slate-700';
+  // The label used to be `opacity-70` over the tone colour, which composites to
+  // #707a88 on white — 4.34:1, under the floor. Opacity on text is the trap here:
+  // the colour that ships is not the colour in the class, so nothing in the source
+  // looks wrong. De-emphasis now comes from size and weight, and the label carries a
+  // real, measurable colour. (1.4.3)
+  const labelClass = tone === 'emerald' ? 'text-emerald-800' : 'text-slate-600';
   return (
     <div className={`rounded-lg border px-4 py-2 shadow-sm ${toneClass}`}>
-      <div className="text-xs font-medium opacity-70">{label}</div>
+      <div className={`text-xs font-medium ${labelClass}`}>{label}</div>
       <div className="text-lg font-semibold tabular-nums">{value}</div>
     </div>
   );
@@ -100,8 +106,10 @@ function Legend() {
     { label: 'Full', className: 'bg-rose-500' },
   ];
   return (
-    <div className="mt-4 flex flex-wrap items-center gap-4 text-xs text-slate-500">
-      <span className="font-medium text-slate-600">Capacity:</span>
+    // slate-600/700, not slate-500/600: the legend sits on the page background
+    // (bg-slate-100), where slate-500 is only 4.34:1. (1.4.3)
+    <div className="mt-4 flex flex-wrap items-center gap-4 text-xs text-slate-600">
+      <span className="font-medium text-slate-700">Capacity:</span>
       {items.map((i) => (
         <span key={i.label} className="inline-flex items-center gap-1.5">
           <span className={`h-2.5 w-2.5 rounded-full ${i.className}`} aria-hidden />

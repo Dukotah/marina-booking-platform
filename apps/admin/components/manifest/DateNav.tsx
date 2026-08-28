@@ -61,7 +61,7 @@ export function DateNav({ date, stepDays = 1, label, className }: DateNavProps) 
       <div className="flex items-center rounded-lg border border-slate-200 bg-white shadow-sm">
         <button
           type="button"
-          aria-label="Previous"
+          aria-label={stepDays === 7 ? 'Previous week' : 'Previous day'}
           onClick={() => go(shiftIsoDate(date, -stepDays))}
           className="flex h-9 w-9 items-center justify-center rounded-l-lg text-slate-600 hover:bg-slate-100"
         >
@@ -73,7 +73,7 @@ export function DateNav({ date, stepDays = 1, label, className }: DateNavProps) 
         </div>
         <button
           type="button"
-          aria-label="Next"
+          aria-label={stepDays === 7 ? 'Next week' : 'Next day'}
           onClick={() => go(shiftIsoDate(date, stepDays))}
           className="flex h-9 w-9 items-center justify-center rounded-r-lg text-slate-600 hover:bg-slate-100"
         >
@@ -98,7 +98,7 @@ export function DateNav({ date, stepDays = 1, label, className }: DateNavProps) 
       <input
         type="date"
         value={date}
-        aria-label="Pick a date"
+        aria-label="Jump to a date"
         onChange={(e) => {
           if (e.target.value) go(e.target.value);
         }}

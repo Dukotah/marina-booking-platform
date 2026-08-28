@@ -4,63 +4,20 @@
  * Renders the OPERATOR's brand only (logo or name + tagline) — never any
  * platform branding. Brand data comes from getBrand(); the brand color drives
  * the logo accent and CTA via the `--brand-color` variable, which this header
- * also sets locally so it works even if a parent layout hasn't set it.
+ * also sets locally so it works even if a parent layout hasn't set it. The CTA
+ * label color comes from lib/brand's onBrandForeground() rather than a
+ * hardcoded white, because the brand is operator-chosen (see that file).
  *
  * Server component (no client interactivity needed): the mobile experience uses
  * a CSS-only collapse so it stays fast and avoids hydration cost.
  */
 import Link from 'next/link';
-import { getBrand, brandStyle, type Brand } from '@/lib/brand';
+import { getBrand, brandStyle, onBrandForeground, type Brand } from '@/lib/brand';
 import { DEMO_MODE } from '@/lib/demo/config';
-
-/** sRGB channel (0–255) to its linear-light value, per WCAG 2.x. */
-function channelLuminance(value: number): number {
-  const s = value / 255;
-  return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
-}
-
-/** Relative luminance of a #rgb / #rrggbb color, or null if unparseable. */
-function relativeLuminance(hex: string): number | null {
-  const v = hex.trim().replace(/^#/, '');
-  const full =
-    v.length === 3 && /^[0-9a-fA-F]{3}$/.test(v)
-      ? v[0] + v[0] + v[1] + v[1] + v[2] + v[2]
-      : v.length === 6 && /^[0-9a-fA-F]{6}$/.test(v)
-        ? v
-        : null;
-  if (!full) return null;
-  const r = channelLuminance(parseInt(full.slice(0, 2), 16));
-  const g = channelLuminance(parseInt(full.slice(2, 4), 16));
-  const b = channelLuminance(parseInt(full.slice(4, 6), 16));
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-}
-
-function contrastRatio(a: number, b: number): number {
-  return a >= b ? (a + 0.05) / (b + 0.05) : (b + 0.05) / (a + 0.05);
-}
-
-/**
- * Pick a label color that clears WCAG 1.4.3 (4.5:1) on the tenant's brand color.
- *
- * The brand color is operator-supplied, so hardcoding white text on it is a real
- * contrast bug rather than a theoretical one: the default sky `#0ea5e9` gives
- * only 2.8:1 against white. Trying white, then near-black, then pure black is
- * provably safe — for any background, the better of white and black is at least
- * 4.58:1 — so no per-tenant override is ever needed.
- */
-function onBrandForeground(brandColor: string): string {
-  const bg = relativeLuminance(brandColor);
-  if (bg === null) return '#ffffff';
-  for (const candidate of ['#ffffff', '#0f172a', '#000000']) {
-    const fg = relativeLuminance(candidate);
-    if (fg !== null && contrastRatio(bg, fg) >= 4.5) return candidate;
-  }
-  return '#000000';
-}
 
 /**
  * Focus ring for controls painted in the brand color. The global
- * `:focus-visible` outline is itself `--brand-color`, which all but disappears
+ * `:focus-visible` outline is a brand-derived color, which all but disappears
  * on a brand-filled button, so brand CTAs opt out and ring in slate-900.
  */
 const BRAND_CTA_FOCUS =

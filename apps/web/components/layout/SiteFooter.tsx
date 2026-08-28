@@ -45,8 +45,10 @@ export function SiteFooter() {
             <Link
               key={link.href}
               href={link.href}
-              // slate-500 is the lightest slate that still clears 4.5:1 on white
-              // (4.76:1). Anything lighter fails WCAG 1.4.3 for body text.
+              // slate-500 is the app's muted-text token, retinted in
+              // tailwind.config.ts to clear 4.5:1 on white, slate-50 and
+              // slate-100 alike (5.20 / 4.97 / 4.75). Nothing lighter than that
+              // token passes WCAG 1.4.3 for body text.
               className="rounded text-sm text-slate-500 transition-colors hover:text-slate-900"
             >
               {link.label}

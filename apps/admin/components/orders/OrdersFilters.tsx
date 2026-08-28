@@ -81,7 +81,7 @@ export function OrdersFilters({
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search order #, name, email…"
           aria-label="Search orders"
-          className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm text-slate-700 placeholder:text-slate-400 focus:border-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-200"
+          className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm text-slate-700 placeholder:text-slate-500 focus:border-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-200"
         />
       </div>
 
@@ -127,7 +127,9 @@ export function OrdersFilters({
             })
           }
           className={cn(
-            'inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-slate-500',
+            // slate-600: this button has no fill of its own, so it sits on the
+            // page background (bg-slate-100) where slate-500 is 4.34:1. (1.4.3)
+            'inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-slate-600',
             'hover:bg-slate-100 hover:text-slate-700',
           )}
         >

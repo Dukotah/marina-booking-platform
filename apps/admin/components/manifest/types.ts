@@ -80,11 +80,14 @@ export function isCheckInable(status: OrderItemStatus): boolean {
   return status === 'UPCOMING';
 }
 
-/**
- * Pick readable foreground (text) color for a given hex background. Uses the
- * perceived-luminance (YIQ) heuristic so labels stay legible on any activity color.
- */
-export function readableTextColor(hex: string): string {
+/** WCAG relative luminance of an sRGB channel (0-255). */
+function channelLuminance(value: number): number {
+  const c = value / 255;
+  return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+}
+
+/** WCAG 2.1 relative luminance of a #rrggbb / #rgb colour. */
+function relativeLuminance(hex: string): number {
   const c = hex.replace('#', '');
   const full =
     c.length === 3
@@ -93,9 +96,38 @@ export function readableTextColor(hex: string): string {
           .map((ch) => ch + ch)
           .join('')
       : c.padEnd(6, '0').slice(0, 6);
-  const r = parseInt(full.slice(0, 2), 16);
-  const g = parseInt(full.slice(2, 4), 16);
-  const b = parseInt(full.slice(4, 6), 16);
-  const yiq = (r * 299 + g * 587 + b * 114) / 1000;
-  return yiq >= 140 ? '#0f172a' : '#ffffff';
+  const r = channelLuminance(parseInt(full.slice(0, 2), 16));
+  const g = channelLuminance(parseInt(full.slice(2, 4), 16));
+  const b = channelLuminance(parseInt(full.slice(4, 6), 16));
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+/** WCAG contrast ratio between two relative luminances. */
+function contrastRatio(a: number, b: number): number {
+  const [hi, lo] = a >= b ? [a, b] : [b, a];
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+/**
+ * Pick a readable foreground (text) colour for a given hex background.
+ *
+ * Activity colours are operator-supplied white-label data, so this runs against
+ * colours nobody here has ever seen. It used to split on a perceived-luminance
+ * (YIQ >= 140) threshold, which is not a contrast measurement: for the shipped
+ * default brand `#0ea5e9` it returns white at 2.8:1, under the 4.5:1 floor. It now
+ * measures the actual ratio and takes the first candidate that clears AA.
+ *
+ * A passing candidate always exists: for any background, the better of black and
+ * white is at least 4.58:1, so the final fallback is a floor and not a guess.
+ * (1.4.3 Contrast (Minimum))
+ */
+export function readableTextColor(hex: string): string {
+  const bg = relativeLuminance(hex);
+  const near = relativeLuminance('#0f172a');
+  const white = relativeLuminance('#ffffff');
+  if (contrastRatio(near, bg) >= 4.5) return '#0f172a';
+  if (contrastRatio(white, bg) >= 4.5) return '#ffffff';
+  // Neither slate-900 nor white clears AA (a mid-tone background). Take whichever
+  // is further away rather than keeping a preference that measured worse.
+  return contrastRatio(near, bg) >= contrastRatio(white, bg) ? '#0f172a' : '#ffffff';
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useId, useState, useTransition } from 'react';
+import { useEffect, useId, useRef, useState, useTransition, type KeyboardEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { Ban, Mail, Undo2, Loader2, X, Wallet } from 'lucide-react';
 import { formatUSD } from '../../lib/format';
@@ -45,6 +45,13 @@ type Banner = { ok: boolean; message: string } | null;
  * full/partial refund with a reason. Each calls a tenant-scoped server action and
  * surfaces the result inline. Buttons are gated by the caller's permissions so a
  * staff member without `order:refund` never sees a refund control.
+ *
+ * The two confirm steps are disclosure panels, not modal dialogs: they render
+ * immediately after their trigger, so Tab reaches them in the order they appear.
+ * What they owe, and now honour, is the rest of the disclosure contract — the
+ * trigger reports its expanded state, opening moves focus into the panel so the
+ * confirm step is announced rather than silently appearing below the fold, Escape
+ * closes, and closing puts focus back on the control that opened it. (4.1.2, 2.4.3)
  */
 export function OrderActions({
   orderId,
@@ -61,12 +68,23 @@ export function OrderActions({
   const [showCancel, setShowCancel] = useState(false);
   const [showRefund, setShowRefund] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
+  const [returnFocusTo, setReturnFocusTo] = useState<'cancel' | 'refund' | null>(null);
+
+  const cancelPanelId = useId();
+  const refundPanelId = useId();
+  const cancelTriggerRef = useRef<HTMLButtonElement>(null);
+  const refundTriggerRef = useRef<HTMLButtonElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
 
   function run(action: () => Promise<ActionResult>) {
     startTransition(async () => {
       const result = await action();
       setBanner({ ok: result.ok, message: result.message });
       if (result.ok) {
+        // A panel that submitted successfully is about to unmount with focus
+        // inside it; hand the keyboard back before that happens.
+        if (showCancel) setReturnFocusTo('cancel');
+        else if (showRefund) setReturnFocusTo('refund');
         setShowCancel(false);
         setShowRefund(false);
         setCancelReason('');
@@ -75,14 +93,30 @@ export function OrderActions({
     });
   }
 
+  useEffect(() => {
+    // Deferred to an effect, and held until the transition commits, because the
+    // trigger can legitimately disappear — a full refund leaves nothing refundable,
+    // so the "Refund" button unmounts with the panel. The root then takes focus, and
+    // it sits immediately before the result banner the reader needs to hear.
+    if (!returnFocusTo || pending) return;
+    const trigger =
+      returnFocusTo === 'cancel' ? cancelTriggerRef.current : refundTriggerRef.current;
+    const target = trigger && !trigger.disabled ? trigger : rootRef.current;
+    target?.focus();
+    setReturnFocusTo(null);
+  }, [returnFocusTo, pending]);
+
   const hasRefundable = refundablePayments.length > 0;
   const hasBalanceDue = balanceDueCents > 0 && !isCancelled;
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3" ref={rootRef} tabIndex={-1}>
       {banner ? (
         <div
-          role="status"
+          // A failure needs to interrupt; a confirmation does not. Both appear
+          // without a focus move, so both need a live region — assertive for the
+          // one that means the money did not move. (4.1.3)
+          role={banner.ok ? 'status' : 'alert'}
           className={cn(
             'flex items-start justify-between gap-3 rounded-lg px-3 py-2 text-sm',
             banner.ok
@@ -93,9 +127,9 @@ export function OrderActions({
           <span>{banner.message}</span>
           <button
             type="button"
-            aria-label="Dismiss"
+            aria-label="Dismiss this message"
             onClick={() => setBanner(null)}
-            className="shrink-0 opacity-60 hover:opacity-100"
+            className="shrink-0 text-current opacity-70 hover:opacity-100"
           >
             <X className="h-4 w-4" aria-hidden />
           </button>
@@ -142,7 +176,12 @@ export function OrderActions({
         {canRefund && hasRefundable ? (
           <button
             type="button"
+            ref={refundTriggerRef}
             disabled={pending}
+            aria-expanded={showRefund}
+            // Only referenced while the panel exists: aria-controls pointing at a
+            // missing id is an invalid attribute value.
+            aria-controls={showRefund ? refundPanelId : undefined}
             onClick={() => {
               setShowRefund((v) => !v);
               setShowCancel(false);
@@ -160,7 +199,10 @@ export function OrderActions({
         {canWrite ? (
           <button
             type="button"
+            ref={cancelTriggerRef}
             disabled={pending || isCancelled}
+            aria-expanded={isCancelled ? undefined : showCancel}
+            aria-controls={showCancel ? cancelPanelId : undefined}
             onClick={() => {
               setShowCancel((v) => !v);
               setShowRefund(false);
@@ -179,35 +221,66 @@ export function OrderActions({
 
       {showCancel ? (
         <CancelPanel
+          id={cancelPanelId}
           reason={cancelReason}
           pending={pending}
           onReasonChange={setCancelReason}
           onConfirm={() => run(() => cancelOrderAction({ orderId, reason: cancelReason }))}
-          onClose={() => setShowCancel(false)}
+          onClose={() => {
+            setShowCancel(false);
+            setReturnFocusTo('cancel');
+          }}
         />
       ) : null}
 
       {showRefund && canRefund ? (
         <RefundPanel
+          id={refundPanelId}
           payments={refundablePayments}
           pending={pending}
           onSubmit={(paymentId, amountCents, reason) =>
             run(() => refundPaymentAction({ paymentId, amountCents, reason }))
           }
-          onClose={() => setShowRefund(false)}
+          onClose={() => {
+            setShowRefund(false);
+            setReturnFocusTo('refund');
+          }}
         />
       ) : null}
     </div>
   );
 }
 
+/**
+ * Focus the panel on mount and close it on Escape.
+ *
+ * Shared by both confirm steps. Focusing the panel itself — rather than its first
+ * field — announces the panel's own name ("Cancel this order?") before anything
+ * inside it, which is the whole point of a confirm step. (2.4.3, 4.1.3)
+ */
+function useConfirmPanel(onClose: () => void) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    ref.current?.focus();
+  }, []);
+  function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key === 'Escape') {
+      event.stopPropagation();
+      onClose();
+    }
+  }
+  return { ref, onKeyDown };
+}
+
 function CancelPanel({
+  id,
   reason,
   pending,
   onReasonChange,
   onConfirm,
   onClose,
 }: {
+  id: string;
   reason: string;
   pending: boolean;
   onReasonChange: (value: string) => void;
@@ -215,9 +288,21 @@ function CancelPanel({
   onClose: () => void;
 }) {
   const fieldId = useId();
+  const titleId = useId();
+  const { ref, onKeyDown } = useConfirmPanel(onClose);
   return (
-    <div className="rounded-lg border border-red-200 bg-red-50/60 p-4">
-      <p className="text-sm font-medium text-red-900">Cancel this order?</p>
+    <div
+      id={id}
+      ref={ref}
+      role="group"
+      aria-labelledby={titleId}
+      tabIndex={-1}
+      onKeyDown={onKeyDown}
+      className="rounded-lg border border-red-200 bg-red-50/60 p-4"
+    >
+      <p id={titleId} className="text-sm font-medium text-red-900">
+        Cancel this order?
+      </p>
       <p className="mt-1 text-xs text-red-700">
         This cancels all booked items and restores their timeslot capacity. This cannot be undone.
       </p>
@@ -231,7 +316,8 @@ function CancelPanel({
         rows={2}
         maxLength={500}
         placeholder="e.g. Customer requested cancellation"
-        className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 placeholder:text-slate-400 focus:border-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-200"
+        // Placeholder text is text: slate-400 on white is 2.45:1. (1.4.3)
+        className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 placeholder:text-slate-500 focus:border-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-200"
       />
       <div className="mt-3 flex gap-2">
         <button
@@ -257,11 +343,13 @@ function CancelPanel({
 }
 
 function RefundPanel({
+  id,
   payments,
   pending,
   onSubmit,
   onClose,
 }: {
+  id: string;
   payments: RefundablePayment[];
   pending: boolean;
   onSubmit: (paymentId: string, amountCents: number | undefined, reason: string) => void;
@@ -271,8 +359,12 @@ function RefundPanel({
   const [mode, setMode] = useState<'full' | 'partial'>('full');
   const [amountInput, setAmountInput] = useState('');
   const [reason, setReason] = useState('');
+  const paymentFieldId = useId();
   const amountFieldId = useId();
+  const amountErrorId = useId();
   const reasonFieldId = useId();
+  const titleId = useId();
+  const { ref, onKeyDown } = useConfirmPanel(onClose);
 
   const selected = payments.find((p) => p.id === paymentId) ?? payments[0];
   const refundableCents = selected ? selected.amountCents - selected.refundedCents : 0;
@@ -287,14 +379,32 @@ function RefundPanel({
       ? refundableCents > 0
       : parsedAmountCents > 0 && parsedAmountCents <= refundableCents;
 
+  const showAmountError = mode === 'partial' && Boolean(amountInput) && !amountValid;
+
   return (
-    <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-4">
-      <p className="text-sm font-medium text-amber-900">Issue a refund</p>
+    <div
+      id={id}
+      ref={ref}
+      role="group"
+      aria-labelledby={titleId}
+      tabIndex={-1}
+      onKeyDown={onKeyDown}
+      className="rounded-lg border border-amber-200 bg-amber-50/60 p-4"
+    >
+      <p id={titleId} className="text-sm font-medium text-amber-900">
+        Issue a refund
+      </p>
 
       {payments.length > 1 ? (
         <div className="mt-3">
-          <label className="block text-xs font-medium text-slate-600">Payment</label>
+          {/* The label was decorative markup: no htmlFor, and the select had no id,
+              so the control that picks which card gets refunded announced as a bare
+              "combo box". (4.1.2 — axe select-name) */}
+          <label htmlFor={paymentFieldId} className="block text-xs font-medium text-slate-600">
+            Payment
+          </label>
           <select
+            id={paymentFieldId}
             value={paymentId}
             onChange={(e) => {
               setPaymentId(e.target.value);
@@ -317,26 +427,32 @@ function RefundPanel({
         <span className="font-medium text-slate-800">{formatUSD(refundableCents)}</span>
       </p>
 
-      <div className="mt-3 flex gap-4 text-sm">
-        <label className="inline-flex items-center gap-1.5">
-          <input
-            type="radio"
-            name="refund-mode"
-            checked={mode === 'full'}
-            onChange={() => setMode('full')}
-          />
-          Full
-        </label>
-        <label className="inline-flex items-center gap-1.5">
-          <input
-            type="radio"
-            name="refund-mode"
-            checked={mode === 'partial'}
-            onChange={() => setMode('partial')}
-          />
-          Partial
-        </label>
-      </div>
+      {/* Two radios with no grouping announce as "Full, radio 1 of 2" with nothing
+          saying what is being chosen. Tailwind's preflight zeroes the fieldset's
+          native border and padding, so this is markup-only. (1.3.1) */}
+      <fieldset className="mt-3">
+        <legend className="sr-only">Refund amount</legend>
+        <div className="flex gap-4 text-sm">
+          <label className="inline-flex items-center gap-1.5">
+            <input
+              type="radio"
+              name="refund-mode"
+              checked={mode === 'full'}
+              onChange={() => setMode('full')}
+            />
+            Full
+          </label>
+          <label className="inline-flex items-center gap-1.5">
+            <input
+              type="radio"
+              name="refund-mode"
+              checked={mode === 'partial'}
+              onChange={() => setMode('partial')}
+            />
+            Partial
+          </label>
+        </div>
+      </fieldset>
 
       {mode === 'partial' ? (
         <div className="mt-3">
@@ -349,10 +465,14 @@ function RefundPanel({
             value={amountInput}
             onChange={(e) => setAmountInput(e.target.value)}
             placeholder="0.00"
-            className="mt-1 w-40 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 placeholder:text-slate-400 focus:border-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            // aria-invalid alone announces *that* something is wrong; only a bound
+            // description announces what, when the reader tabs back to ask. (3.3.1)
+            aria-invalid={showAmountError || undefined}
+            aria-describedby={showAmountError ? amountErrorId : undefined}
+            className="mt-1 w-40 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 placeholder:text-slate-500 focus:border-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-200"
           />
-          {amountInput && !amountValid ? (
-            <p className="mt-1 text-xs text-red-600">
+          {showAmountError ? (
+            <p id={amountErrorId} className="mt-1 text-xs text-red-700">
               Enter an amount between $0.01 and {formatUSD(refundableCents)}.
             </p>
           ) : null}
@@ -369,7 +489,7 @@ function RefundPanel({
         rows={2}
         maxLength={500}
         placeholder="e.g. Weather cancellation"
-        className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 placeholder:text-slate-400 focus:border-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-200"
+        className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 placeholder:text-slate-500 focus:border-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-200"
       />
 
       <div className="mt-3 flex gap-2">
@@ -380,7 +500,9 @@ function RefundPanel({
             selected &&
             onSubmit(selected.id, mode === 'full' ? undefined : parsedAmountCents, reason)
           }
-          className="inline-flex items-center gap-2 rounded-lg bg-amber-600 px-3 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
+          // amber-700, not amber-600: white on amber-600 is 3.19:1, one of the worst
+          // ratios on this page, and it is the button that moves money. (1.4.3)
+          className="inline-flex items-center gap-2 rounded-lg bg-amber-700 px-3 py-2 text-sm font-medium text-white hover:bg-amber-800 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {pending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
           Refund {amountValid ? formatUSD(parsedAmountCents) : ''}

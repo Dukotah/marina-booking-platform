@@ -223,7 +223,7 @@ export default async function OrderDetailPage({
       header: 'Waiver',
       cell: (row) =>
         !row.waiverRequired ? (
-          <span className="text-xs text-slate-400">N/A</span>
+          <span className="text-xs text-slate-500">N/A</span>
         ) : row.waiverSigned ? (
           <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700">
             <ShieldCheck className="h-3.5 w-3.5" aria-hidden /> Signed
@@ -268,7 +268,13 @@ export default async function OrderDetailPage({
         row.refundedCents > 0 ? (
           <span className="text-amber-700">{formatUSD(row.refundedCents)}</span>
         ) : (
-          <span className="text-slate-400">—</span>
+          // The dash is typography, not information: spoken it is silence or
+          // "dash", so the cell states its own value. slate-500, not slate-400
+          // (2.45:1 on white). (1.3.1, 1.4.3)
+          <span className="text-slate-500">
+            <span aria-hidden>—</span>
+            <span className="sr-only">None</span>
+          </span>
         ),
     },
     {
@@ -282,7 +288,9 @@ export default async function OrderDetailPage({
     <AdminShell>
       <Link
         href="/orders"
-        className="mb-3 inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-slate-700"
+        // This link sits on the page background (bg-slate-100), where slate-500 is
+        // 4.34:1 — under the floor. slate-600 is 6.9:1 on the same ground. (1.4.3)
+        className="mb-3 inline-flex items-center gap-1.5 text-sm font-medium text-slate-600 hover:text-slate-800"
       >
         <ArrowLeft className="h-4 w-4" aria-hidden />
         Back to orders
@@ -298,33 +306,35 @@ export default async function OrderDetailPage({
         <div className="space-y-6 lg:col-span-2">
           {/* Items */}
           <section>
-            <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
+            <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-600">
               Items
             </h2>
             <DataTable
               columns={itemColumns}
               rows={itemRows}
               getRowKey={(row) => row.id}
+              caption={`Items on order ${order.order_number}`}
               emptyState="This order has no items."
             />
           </section>
 
           {/* Payments */}
           <section>
-            <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
+            <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-600">
               Payments
             </h2>
             <DataTable
               columns={paymentColumns}
               rows={paymentRows}
               getRowKey={(row) => row.id}
+              caption={`Payments on order ${order.order_number}`}
               emptyState="No payments recorded for this order."
             />
           </section>
 
           {/* Timeline */}
           <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
+            <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-600">
               Timeline
             </h2>
             <OrderTimeline events={events} />
@@ -335,7 +345,7 @@ export default async function OrderDetailPage({
           {/* Actions */}
           {canWrite || canRefund ? (
             <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-              <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">
+              <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-600">
                 Actions
               </h2>
               <OrderActions
@@ -352,7 +362,7 @@ export default async function OrderDetailPage({
 
           {/* Summary */}
           <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">
+            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-600">
               Summary
             </h2>
             <dl className="space-y-2 text-sm">
@@ -383,7 +393,7 @@ export default async function OrderDetailPage({
 
           {/* Customer */}
           <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">
+            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-600">
               Customer
             </h2>
             <div className="space-y-2 text-sm">
@@ -415,7 +425,7 @@ export default async function OrderDetailPage({
 
           {/* Waiver status */}
           <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">
+            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-600">
               Waiver status
             </h2>
             {waiverItems.length === 0 ? (

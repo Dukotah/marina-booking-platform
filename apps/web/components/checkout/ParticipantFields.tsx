@@ -8,6 +8,11 @@
  *
  * The number of blocks tracks the booked quantity; the parent keeps the
  * react-hook-form `participants` field array sized to `count`.
+ *
+ * Accessibility: an invalid field carries `aria-invalid` *and* an
+ * `aria-describedby` pointing at its own error text. With several identical
+ * driver blocks on the page, "invalid" with no reason attached is not enough to
+ * tell a guest which of nine fields to go back to (WCAG 3.3.1).
  */
 import { useFormContext } from 'react-hook-form';
 import { Input, Label, Select } from '@marina/ui';
@@ -34,6 +39,22 @@ function todayISO(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+/**
+ * The inline error message, in an element with a stable id.
+ *
+ * The shared `FieldError` renders no id for a caller to point `aria-describedby`
+ * at, so the id lives on this wrapper. Rendered only when there is a message, so
+ * nothing ever points `aria-describedby` at an empty element.
+ */
+function DescribedFieldError({ id, message }: { id: string; message?: string }) {
+  if (!message) return null;
+  return (
+    <div id={id}>
+      <FieldError message={message} />
+    </div>
+  );
+}
+
 export function ParticipantFields({ count }: ParticipantFieldsProps) {
   const {
     register,
@@ -47,6 +68,14 @@ export function ParticipantFields({ count }: ParticipantFieldsProps) {
     <div className="space-y-5">
       {indices.map((i) => {
         const fieldErrors = errors.participants?.[i];
+        // Ids match the ones the checkout error summary links to, so every entry
+        // in that summary reaches the control it is talking about.
+        const nameId = `participant-${i}-name`;
+        const licenseId = `participant-${i}-license`;
+        const dobId = `participant-${i}-dob`;
+        const nameError = fieldErrors?.driver_name?.message;
+        const licenseError = fieldErrors?.license?.message;
+        const dobError = fieldErrors?.dob?.message;
         return (
           <fieldset
             key={i}
@@ -58,48 +87,51 @@ export function ParticipantFields({ count }: ParticipantFieldsProps) {
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="space-y-1.5 sm:col-span-2">
-                <Label htmlFor={`participant-${i}-name`} required>
+                <Label htmlFor={nameId} required>
                   Full name
                 </Label>
                 <Input
-                  id={`participant-${i}-name`}
+                  id={nameId}
                   autoComplete="name"
-                  aria-invalid={fieldErrors?.driver_name ? true : undefined}
+                  aria-invalid={nameError ? true : undefined}
+                  aria-describedby={nameError ? `${nameId}-error` : undefined}
                   {...register(`participants.${i}.driver_name` as const, {
                     required: 'Driver name is required',
                     maxLength: { value: 120, message: 'Too long' },
                   })}
                 />
-                <FieldError message={fieldErrors?.driver_name?.message} />
+                <DescribedFieldError id={`${nameId}-error`} message={nameError} />
               </div>
 
               <div className="space-y-1.5">
-                <Label htmlFor={`participant-${i}-license`}>
+                <Label htmlFor={licenseId}>
                   Driver license #
                 </Label>
                 <Input
-                  id={`participant-${i}-license`}
-                  aria-invalid={fieldErrors?.license ? true : undefined}
+                  id={licenseId}
+                  aria-invalid={licenseError ? true : undefined}
+                  aria-describedby={licenseError ? `${licenseId}-error` : undefined}
                   {...register(`participants.${i}.license` as const, {
                     maxLength: { value: 64, message: 'Too long' },
                   })}
                 />
-                <FieldError message={fieldErrors?.license?.message} />
+                <DescribedFieldError id={`${licenseId}-error`} message={licenseError} />
               </div>
 
               <div className="space-y-1.5">
-                <Label htmlFor={`participant-${i}-dob`}>Date of birth</Label>
+                <Label htmlFor={dobId}>Date of birth</Label>
                 <Input
-                  id={`participant-${i}-dob`}
+                  id={dobId}
                   type="date"
                   max={max}
-                  aria-invalid={fieldErrors?.dob ? true : undefined}
+                  aria-invalid={dobError ? true : undefined}
+                  aria-describedby={dobError ? `${dobId}-error` : undefined}
                   {...register(`participants.${i}.dob` as const, {
                     validate: (value) =>
                       !value || value <= max || 'Date of birth cannot be in the future',
                   })}
                 />
-                <FieldError message={fieldErrors?.dob?.message} />
+                <DescribedFieldError id={`${dobId}-error`} message={dobError} />
               </div>
 
               <div className="space-y-1.5 sm:col-span-2">

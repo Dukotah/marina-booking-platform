@@ -16,7 +16,14 @@ export function ManifestViews({ rows }: { rows: ManifestRow[] }) {
 
   return (
     <div>
-      <div className="mb-4 inline-flex rounded-lg border border-slate-200 bg-white p-0.5 shadow-sm">
+      {/* role="group" + the per-button pressed state: which view is showing was
+          conveyed only by the dark fill, so a screen-reader user heard two identical
+          unrelated buttons and no current state. (1.4.1, 4.1.2) */}
+      <div
+        role="group"
+        aria-label="Manifest view"
+        className="mb-4 inline-flex rounded-lg border border-slate-200 bg-white p-0.5 shadow-sm"
+      >
         <TabButton active={view === 'list'} onClick={() => setView('list')}>
           <List className="h-4 w-4" aria-hidden /> List
         </TabButton>
@@ -43,6 +50,7 @@ function TabButton({
     <button
       type="button"
       onClick={onClick}
+      aria-pressed={active}
       className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
         active ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
       }`}

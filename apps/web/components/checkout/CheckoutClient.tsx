@@ -21,7 +21,7 @@
  * offending controls (WCAG 3.3.1/3.3.3), and asynchronous progress and failures
  * are announced through live regions rather than only appearing on screen.
  */
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { FormProvider, useForm, type FieldErrors } from 'react-hook-form';
 import { AlertTriangle } from 'lucide-react';
@@ -150,9 +150,12 @@ function collectFieldErrors(errors: FieldErrors<CheckoutFormValues>): CheckoutEr
     });
   }
 
-  // The waiver acceptance checkbox has no id of its own, so this entry cannot
-  // link anywhere yet — see docs/ACCESSIBILITY.md.
-  add('waiverAccepted', 'Liability waiver', errors.waiverAccepted?.message);
+  add(
+    'waiverAccepted',
+    'Liability waiver',
+    errors.waiverAccepted?.message,
+    'waiverAccepted',
+  );
   add('signatureName', 'Signature', errors.signatureName?.message, 'signatureName');
 
   return out;
@@ -205,9 +208,24 @@ export function CheckoutClient({
     null,
   );
   const [submitting, setSubmitting] = useState(false);
-  // Bumped on every failed validation pass so focus returns to the summary even
-  // when the same fields fail twice in a row.
-  const [invalidCount, setInvalidCount] = useState(0);
+  /*
+   * What the last failed submit found — a snapshot, taken in `onInvalid` from the
+   * errors react-hook-form hands us, not derived from `formState` on every render.
+   *
+   * Two reasons. It is committed in the same render as the failure, so the summary
+   * is in the DOM the moment there is something to focus (deriving it from
+   * `formState` meant the panel appeared a render later than the state that was
+   * supposed to trigger the focus move — the bug in docs/ACCESSIBILITY.md finding
+   * F). And because the summary is a live region (below), a derived list would
+   * re-announce "there are 4 problems… 3 problems…" on every keystroke that
+   * changed a field's validity. A summary is a report on a submission, so it
+   * changes when a submission does. `attempt` distinguishes two failures with
+   * identical contents.
+   */
+  const [errorSummary, setErrorSummary] = useState<{
+    entries: CheckoutErrorEntry[];
+    attempt: number;
+  } | null>(null);
   // Returning-guest ("book again") prefill, read from this device only.
   const [rememberedGuest, setRememberedGuest] = useState<RememberedGuest | null>(null);
   // Set when the bank asks for a second factor; drives the modal below.
@@ -216,7 +234,22 @@ export function CheckoutClient({
   const paymentRef = useRef<PaymentSectionHandle>(null);
   // See the submit handler: the de-duplication key for this checkout attempt.
   const attemptKey = useRef<string | null>(null);
-  const errorSummaryRef = useRef<HTMLDivElement>(null);
+
+  /*
+   * Move focus to the error summary the instant it exists.
+   *
+   * A callback ref, not an effect: an effect keyed on a failure counter runs on
+   * the render where the counter changed, which is not necessarily the render
+   * where the summary mounted — that is exactly how the previous version focused
+   * `null` and left the guest on "Complete booking" with no idea the submit had
+   * been rejected. A ref callback cannot fire early, because it is handed the
+   * node. `useCallback` with no dependencies keeps its identity stable so React
+   * only calls it on mount/unmount; the panel is keyed on the attempt number, so
+   * a second failed submit remounts it and re-runs this.
+   */
+  const focusErrorSummary = useCallback((node: HTMLDivElement | null) => {
+    node?.focus();
+  }, []);
 
   const summaryHeadingId = useId();
   const reservationHeadingId = useId();
@@ -239,8 +272,8 @@ export function CheckoutClient({
     },
   });
 
-  const fieldErrors = collectFieldErrors(methods.formState.errors);
-  const showErrorSummary = invalidCount > 0 && fieldErrors.length > 0;
+  const summaryEntries = errorSummary?.entries ?? [];
+  const showErrorSummary = summaryEntries.length > 0;
 
   const fail = (message: string) =>
     setSubmitError((prev) => ({ message, nonce: (prev?.nonce ?? 0) + 1 }));
@@ -296,12 +329,6 @@ export function CheckoutClient({
     setRememberedGuest(loadRememberedGuest());
   }, []);
 
-  // A failed validation pass is silent to a screen reader unless focus moves —
-  // the guest would otherwise press "Complete booking" and hear nothing.
-  useEffect(() => {
-    if (invalidCount > 0) errorSummaryRef.current?.focus();
-  }, [invalidCount]);
-
   // One-tap "book again": fill the lead-guest fields from the remembered guest.
   const applyRememberedGuest = () => {
     if (!rememberedGuest) return;
@@ -330,14 +357,21 @@ export function CheckoutClient({
     return subtotalCents - discountCents;
   }, [selection.rate.priceCents, quantity, promo]);
 
-  const onInvalid = () => {
+  // A failed validation pass is silent to a screen reader unless something moves
+  // focus — the guest would otherwise press "Complete booking" and hear nothing.
+  // The errors are taken from the argument rather than read back off `formState`
+  // so the summary and the focus move land in the same commit.
+  const onInvalid = (errors: FieldErrors<CheckoutFormValues>) => {
     setSubmitError(null);
-    setInvalidCount((n) => n + 1);
+    setErrorSummary((prev) => ({
+      entries: collectFieldErrors(errors),
+      attempt: (prev?.attempt ?? 0) + 1,
+    }));
   };
 
   const onSubmit = async (values: CheckoutFormValues) => {
     setSubmitError(null);
-    setInvalidCount(0);
+    setErrorSummary(null);
 
     if (!stripe.configured && !stripe.fakeMode) {
       fail(
@@ -445,43 +479,65 @@ export function CheckoutClient({
     <FormProvider {...methods}>
       <form onSubmit={methods.handleSubmit(onSubmit, onInvalid)} noValidate>
         {/*
-          Error summary. Focused (not role="alert") after a failed submit: moving
-          focus here reads the whole list once, and every entry is a link to the
-          control that needs fixing — one thumb-tap away on a phone.
+          Error summary — the only thing that tells a non-sighted guest the submit
+          was rejected at all. Two mechanisms, deliberately, because neither
+          covers the whole case on its own:
+
+          1. Focus moves to the panel, which reads the heading and the whole list
+             once and puts the guest one Tab from the first offending control.
+          2. The wrapper is a polite live region that is present from FIRST
+             render. A live region created in the same mutation as its content is
+             routinely not announced, and the panel is not a `role="alert"`
+             because an alert that is also focused gets read twice. Keying the
+             panel on the attempt number makes a second failed submit a real DOM
+             change inside a region that already existed, so an identical repeat
+             failure still speaks instead of appearing to do nothing.
+
+          Every entry is a link to the control that needs fixing — one thumb-tap
+          away on a phone, including the waiver checkbox.
         */}
-        {showErrorSummary && (
-          <div
-            ref={errorSummaryRef}
-            tabIndex={-1}
-            aria-labelledby={summaryHeadingId}
-            className="mb-6 rounded-lg border border-red-300 bg-red-50 p-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-600 focus-visible:ring-offset-2"
-          >
-            <h2
-              id={summaryHeadingId}
-              className="flex items-center gap-2 text-sm font-semibold text-red-800"
+        <div aria-live="polite">
+          {showErrorSummary && (
+            <div
+              key={errorSummary?.attempt}
+              ref={focusErrorSummary}
+              tabIndex={-1}
+              aria-labelledby={summaryHeadingId}
+              className="mb-6 rounded-lg border border-red-300 bg-red-50 p-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-600 focus-visible:ring-offset-2"
             >
-              <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden />
-              {fieldErrors.length === 1
-                ? 'There is 1 problem with your booking details'
-                : `There are ${fieldErrors.length} problems with your booking details`}
-            </h2>
-            <ul className="mt-2 space-y-1 text-sm text-red-800">
-              {fieldErrors.map((entry) => (
-                <li key={entry.key}>
-                  {entry.fieldId ? (
-                    <a href={`#${entry.fieldId}`} className="rounded underline">
-                      {entry.label}: {entry.message}
-                    </a>
-                  ) : (
-                    <span>
-                      {entry.label}: {entry.message}
-                    </span>
-                  )}
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
+              <h2
+                id={summaryHeadingId}
+                className="flex items-center gap-2 text-sm font-semibold text-red-800"
+              >
+                <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden />
+                {summaryEntries.length === 1
+                  ? 'There is 1 problem with your booking details'
+                  : `There are ${summaryEntries.length} problems with your booking details`}
+              </h2>
+              <ul className="mt-2 space-y-1 text-sm text-red-800">
+                {summaryEntries.map((entry) => (
+                  <li key={entry.key}>
+                    {entry.fieldId ? (
+                      /*
+                        A plain in-page link, so the guest lands ON the control
+                        rather than merely scrolled near it: every id linked here
+                        belongs to a focusable input, and following a fragment to
+                        a focusable element gives it focus.
+                      */
+                      <a href={`#${entry.fieldId}`} className="rounded underline">
+                        {entry.label}: {entry.message}
+                      </a>
+                    ) : (
+                      <span>
+                        {entry.label}: {entry.message}
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_22rem]">
           {/* Main column ----------------------------------------------------- */}

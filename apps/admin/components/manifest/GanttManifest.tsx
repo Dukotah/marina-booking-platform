@@ -54,7 +54,9 @@ export function GanttManifest({ rows }: GanttManifestProps) {
           {ticks.map((t) => (
             <div
               key={t.hour}
-              className="absolute top-0 flex h-full -translate-x-1/2 items-center text-[11px] font-medium text-slate-400"
+              // slate-600, not slate-400: the hour ruler is the axis every block is
+              // read against, and slate-400 on the slate-50 header is 2.4:1. (1.4.3)
+              className="absolute top-0 flex h-full -translate-x-1/2 items-center text-[11px] font-medium text-slate-600"
               style={{ left: `${t.leftPct}%` }}
             >
               {t.label}
@@ -121,7 +123,9 @@ function ManifestRowView({
         {/* Blocks */}
         <div className="relative" style={{ height: trackHeight }}>
           {row.bookings.length === 0 ? (
-            <div className="flex h-full items-center text-xs text-slate-300">No bookings</div>
+            // slate-300 on white is 1.6:1 — this line was effectively invisible to
+            // anyone with reduced contrast sensitivity. (1.4.3)
+            <div className="flex h-full items-center text-xs text-slate-500">No bookings</div>
           ) : (
             laned.map(({ booking, lane }) => (
               <BookingBlock

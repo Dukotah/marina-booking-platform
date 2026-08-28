@@ -36,7 +36,10 @@ export function ManifestUtilization({ rows }: { rows: ManifestRow[] }) {
                 aria-hidden
               />
               <span className="truncate text-sm font-medium text-slate-700">{row.activityName}</span>
-              <span className="ml-auto text-xs tabular-nums text-slate-400">
+              {/* slate-500, not slate-400: slate-400 on white is 2.45:1. The whole
+                  admin uses slate-500 as its lightest text on a white card. (1.4.3) */}
+              <span className="ml-auto text-xs tabular-nums text-slate-500">
+                <span className="sr-only">Booked: </span>
                 {row.capacityBooked}/{row.capacityTotal}
               </span>
             </div>
@@ -60,8 +63,17 @@ export function ManifestUtilization({ rows }: { rows: ManifestRow[] }) {
                         : `${slot.capacityBooked} of ${slot.capacityTotal} booked`
                     }
                   >
-                    {conflict ? <AlertTriangle className="h-3 w-3" aria-hidden /> : null}
+                    {/* An over-subscribed slot was rose fill + an aria-hidden icon +
+                        a `title`, i.e. colour only for anyone not using a mouse. The
+                        conflict is now stated in text the reader reaches. (1.4.1) */}
+                    {conflict ? (
+                      <>
+                        <AlertTriangle className="h-3 w-3" aria-hidden />
+                        <span className="sr-only">Over capacity, resource conflict: </span>
+                      </>
+                    ) : null}
                     {slotTime(slot.startISO)} · {slot.capacityBooked}/{slot.capacityTotal}
+                    <span className="sr-only"> booked</span>
                   </span>
                 );
               })}
@@ -77,12 +89,13 @@ export function ManifestUtilization({ rows }: { rows: ManifestRow[] }) {
                   >
                     <UserRound className="h-3 w-3" aria-hidden />
                     {g.guideName || g.guideEmail}
-                    {g.roleLabel ? <span className="text-sky-400"> · {g.roleLabel}</span> : null}
+                    {/* Inherits sky-700; sky-400 on sky-50 was 1.98:1. (1.4.3) */}
+                    {g.roleLabel ? <span> · {g.roleLabel}</span> : null}
                   </span>
                 ))}
               </div>
             ) : (
-              <div className="mt-2 text-[11px] text-slate-400">No guide assigned</div>
+              <div className="mt-2 text-[11px] text-slate-500">No guide assigned</div>
             )}
           </div>
         ))}

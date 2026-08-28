@@ -142,7 +142,10 @@ export function Sidebar({
         </div>
       )}
 
-      <div className="border-t border-slate-800 p-4 text-xs text-slate-500">
+      {/* slate-400, not slate-500: on the dark rail (bg-slate-900) slate-500 is
+          3.75:1, under the 4.5:1 floor. slate-400 is 6.9:1 there. The rail inverts,
+          so the safe grey inverts with it. (1.4.3) */}
+      <div className="border-t border-slate-800 p-4 text-xs text-slate-400">
         &copy; {new Date().getFullYear()} {brandName}
       </div>
     </aside>

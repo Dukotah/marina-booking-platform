@@ -130,7 +130,10 @@ export default async function ConfirmationPage({
         {/* Success header */}
         <div className="text-center">
           <div
-            className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-full text-white shadow-sm"
+            // text-on-brand, not text-white: the tick is drawn in currentColor
+            // on an operator-chosen fill, and white on the default brand is
+            // 2.77:1. The derived foreground is legible on any brand. (1.4.11)
+            className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-full text-on-brand shadow-sm"
             style={{ backgroundColor: 'var(--brand-color)' }}
             aria-hidden
           >
@@ -231,8 +234,10 @@ export default async function ConfirmationPage({
           Need to make a change?{' '}
           <a
             href="/account"
-            className="font-medium underline-offset-2 hover:underline"
-            style={{ color: 'var(--brand-color)' }}
+            // text-brand resolves to the contrast-corrected --brand-text. The
+            // raw brand as 14px link text is 2.31:1 on white with the shipped
+            // default, and an inline style would out-rank the correction. (1.4.3)
+            className="font-medium text-brand underline-offset-2 hover:underline"
           >
             Look up your booking
           </a>

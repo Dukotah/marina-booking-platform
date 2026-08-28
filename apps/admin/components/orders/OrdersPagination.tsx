@@ -40,7 +40,9 @@ export function OrdersPagination({
 
   return (
     <div className="mt-4 flex items-center justify-between gap-4">
-      <p className="text-sm text-slate-500">
+      {/* slate-600, not slate-500: the pager sits on the page background
+          (bg-slate-100), where slate-500 measures 4.34:1. (1.4.3) */}
+      <p className="text-sm text-slate-600">
         {total === 0 ? (
           'No orders'
         ) : (
@@ -66,7 +68,7 @@ export function OrdersPagination({
           <ChevronLeft className="h-4 w-4" aria-hidden />
           Prev
         </button>
-        <span className="px-2 text-sm text-slate-500">
+        <span className="px-2 text-sm text-slate-600">
           Page {safePage} of {totalPages}
         </span>
         <button
