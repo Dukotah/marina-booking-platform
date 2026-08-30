@@ -618,6 +618,11 @@ model OrderItem {
   state            String?
   zip              String?
   has_driven_boat  Boolean?
+  /// Set when this line is a checkout add-on rather than a booked seat.
+  add_on_id        String?
+  add_on           PackageUpsell? @relation(fields: [operator_id, add_on_id], references: [operator_id, id])
+  /// Name snapshot - renaming an add-on must not rewrite an old receipt.
+  add_on_name      String?
   created_at       DateTime        @default(now())
   waiver_signatures WaiverSignature[]
   resource_bookings ResourceBooking[]
@@ -627,6 +632,7 @@ model OrderItem {
   @@index([operator_id])
   @@index([order_id])
   @@index([timeslot_id])
+  @@index([operator_id, add_on_id])
 }
 
 model Payment {
@@ -777,14 +783,25 @@ model PackageItem {
 model PackageUpsell {
   id          String   @id @default(cuid())
   operator_id String
-  activity_id String
-  activity    Activity @relation(fields: [operator_id, activity_id], references: [operator_id, id], onDelete: Cascade)
+  /// Null = a global add-on offered on every activity (life jackets, coolers).
+  activity_id String?
+  activity    Activity? @relation(fields: [operator_id, activity_id], references: [operator_id, id], onDelete: Cascade)
   name        String
   description String?
   price_cents Int
   is_active   Boolean  @default(true)
   sort_index  Int      @default(0)
+  /// True = one per person, so the party size sets the quantity. False = the guest picks.
+  per_guest       Boolean @default(false)
+  max_per_booking Int?
+  /// Units sellable for the season. Null = unlimited.
+  stock_total     Int?
+  /// Units committed to orders. Moved ONLY by the reserve/release helpers, so the
+  /// oversell check is a single conditional UPDATE rather than a read-then-write.
+  stock_sold      Int     @default(0)
   created_at  DateTime @default(now())
+
+  order_items OrderItem[]
 
   @@unique([operator_id, id])
   @@index([operator_id])
