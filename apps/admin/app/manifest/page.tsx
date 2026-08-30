@@ -3,9 +3,14 @@ import { ManifestViews } from '../../components/manifest/ManifestViews';
 import { ManifestUtilization } from '../../components/manifest/ManifestUtilization';
 import { GuideScheduler } from '../../components/manifest/GuideScheduler';
 import { DateNav } from '../../components/manifest/DateNav';
+import {
+  FleetStatus,
+  type FleetDownNote,
+  type FleetResourceRow,
+} from '../../components/manifest/FleetStatus';
 import { loadManifest, loadGuideRoster } from './data';
-import { getOperatorContext, getTenantDb } from '../../lib/session';
-import { normalizeIsoDate } from '../../components/manifest/tz';
+import { currentPermissions, getOperatorContext, getTenantDb } from '../../lib/session';
+import { normalizeIsoDate, todayIsoIn } from '../../components/manifest/tz';
 import { formatShortDate } from '../../lib/format';
 
 export const dynamic = 'force-dynamic';
@@ -34,6 +39,12 @@ export default async function ManifestPage({ searchParams }: ManifestPageProps) 
   const { rows, totalBookings, checkedIn, capacityTotal, capacityBooked } =
     await loadManifest(isoDate);
   const roster = await loadGuideRoster();
+  const fleet = await loadFleetRows(db);
+  // `operator:manage` is the bar the settings screen sets on this same write, so the
+  // manifest holds it too rather than inventing a looser one — and staff who cannot
+  // commit the change are shown the fleet read-only instead of a dead button.
+  const permissions = await currentPermissions();
+  const canManageFleet = permissions.has('operator:manage');
   const label = formatShortDate(`${isoDate}T12:00:00`);
   const utilizationPct =
     capacityTotal > 0 ? Math.round((capacityBooked / capacityTotal) * 100) : 0;
@@ -63,13 +74,100 @@ export default async function ManifestPage({ searchParams }: ManifestPageProps) 
 
       <ManifestUtilization rows={rows} />
 
+      <FleetStatus
+        resources={fleet}
+        canManage={canManageFleet}
+        defaultFromISO={isoDate}
+        todayISO={todayIsoIn(timeZone)}
+      />
+
       <GuideScheduler rows={rows} roster={roster} />
 
-      <ManifestViews rows={rows} />
+      <ManifestViews rows={rows} timeZone={timeZone} isoDate={isoDate} />
 
       <Legend />
     </AdminShell>
   );
+}
+
+/**
+ * The fleet as the dock needs it: each shared-resource pool, how much of it is on the
+ * water, and — for anything currently down — the reason and dates last recorded.
+ *
+ * The reason and dates live in the audit log rather than on Resource (there is no
+ * column for them; see the fleet section of ./actions.ts), so this reads the most
+ * recent fleet event per pool and uses it only when the pool is in fact still down.
+ * If the numbers and the note ever disagree, the numbers win: `out_of_service_qty` is
+ * what the booking engine actually enforces.
+ */
+async function loadFleetRows(
+  db: Awaited<ReturnType<typeof getTenantDb>>,
+): Promise<FleetResourceRow[]> {
+  const resources = await db.resource.findMany({
+    orderBy: { name: 'asc' },
+    select: {
+      id: true,
+      name: true,
+      quantity: true,
+      seat_capacity: true,
+      out_of_service_qty: true,
+      is_active: true,
+      activities: { select: { name_internal: true, name_external: true } },
+    },
+  });
+
+  const downIds = resources.filter((r) => r.out_of_service_qty > 0).map((r) => r.id);
+  const notes = new Map<string, FleetDownNote>();
+
+  if (downIds.length > 0) {
+    const events = await db.auditLog.findMany({
+      where: {
+        entity_type: 'Resource',
+        entity_id: { in: downIds },
+        action: { in: ['resource.out_of_service', 'resource.in_service'] },
+      },
+      orderBy: { created_at: 'desc' },
+      select: { entity_id: true, action: true, after: true, created_at: true },
+      // Newest-first with a ceiling: we only want the latest event per pool, and a
+      // long-running marina should not pay for a season of history to find it.
+      take: Math.max(50, downIds.length * 10),
+    });
+
+    for (const event of events) {
+      // First row seen for a pool is its latest, because the list is newest-first.
+      if (notes.has(event.entity_id)) continue;
+      if (event.action !== 'resource.out_of_service') {
+        // Latest event put it BACK, so the current downtime came from somewhere else
+        // (settings, most likely) and we have no note to show. Mark it seen so an
+        // older, stale reason cannot be dredged up and presented as current.
+        notes.set(event.entity_id, { reason: '', fromISO: null, untilISO: null, recordedAtISO: '' });
+        continue;
+      }
+      const after = (event.after ?? {}) as Record<string, unknown>;
+      const reason = typeof after.reason === 'string' ? after.reason : '';
+      if (!reason) continue;
+      notes.set(event.entity_id, {
+        reason,
+        fromISO: typeof after.out_from === 'string' ? after.out_from : null,
+        untilISO: typeof after.expected_back === 'string' ? after.expected_back : null,
+        recordedAtISO: event.created_at.toISOString(),
+      });
+    }
+  }
+
+  return resources.map((r) => {
+    const note = notes.get(r.id);
+    return {
+      id: r.id,
+      name: r.name,
+      quantity: r.quantity,
+      seatCapacity: r.seat_capacity,
+      outOfServiceQty: r.out_of_service_qty,
+      isActive: r.is_active,
+      activityNames: r.activities.map((a) => a.name_internal || a.name_external),
+      down: note && note.reason ? note : null,
+    };
+  });
 }
 
 function SummaryChip({

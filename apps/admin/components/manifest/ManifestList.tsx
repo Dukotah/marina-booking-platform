@@ -1,8 +1,9 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
-import { Check, UserX, RotateCcw, Phone } from 'lucide-react';
+import { AlertTriangle, Check, UserX, RotateCcw, Phone } from 'lucide-react';
 import { formatUSD } from '../../lib/format';
+import { localMinutesOfDay, todayIsoIn } from './tz';
 import type { ManifestRow, ManifestListItem } from './types';
 import {
   checkInOrderItem,
@@ -10,6 +11,8 @@ import {
   markNoShowOrderItem,
   undoNoShowOrderItem,
 } from '../../app/manifest/actions';
+
+const MINUTES_PER_DAY = 24 * 60;
 
 /** "8:00 AM" from minutes-since-midnight (already operator-local). */
 function timeLabel(startMin: number): string {
@@ -21,16 +24,37 @@ function timeLabel(startMin: number): string {
 }
 
 /**
+ * "2:00 PM" for a trip's return.
+ *
+ * `endMin` is clamped to 24*60 by the loader, and 1440 through `timeLabel` would come
+ * out as "12:00 PM" — the wrong half of the day on the row that says when a boat is
+ * due back. Wrapping the clock first turns it into midnight, which is what it is.
+ */
+function returnLabel(endMin: number): string {
+  return timeLabel(endMin % MINUTES_PER_DAY);
+}
+
+/** "25 min" / "1 hr 05 min" — how late a boat is, said the way a dock says it. */
+function lateLabel(minutes: number): string {
+  if (minutes < 60) return `${minutes} min`;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return m === 0 ? `${h} hr` : `${h} hr ${String(m).padStart(2, '0')} min`;
+}
+
+/**
  * How a control in this table names the booking it acts on.
  *
  * Every row renders the same two or three controls, so an accessible name of
  * "Check in" is thirty identical controls to anyone not reading the row visually —
  * and the one thing that matters at the dock is *which* booking is being checked in.
- * Guest, activity and start time are the three facts staff read off the row before
- * they tap, so they are the three facts the name carries. (4.1.2, 2.4.6)
+ * Guest, activity, and now both ends of the trip: when a boat is due back is the
+ * number staff are actually working from, so it belongs in the name too. (4.1.2, 2.4.6)
  */
 function bookingLabel(it: ManifestListItem): string {
-  return `${it.customerName}, ${it.activityName} at ${timeLabel(it.startMin)}`;
+  return `${it.customerName}, ${it.activityName} at ${timeLabel(it.startMin)}, back by ${returnLabel(
+    it.endMin,
+  )}`;
 }
 
 /**
@@ -39,12 +63,43 @@ function bookingLabel(it: ManifestListItem): string {
  * in time order, across activities, with waiver + outstanding balance visible and
  * one-tap check-in / no-show (and undo). Complements the visual Gantt.
  */
-export function ManifestList({ rows }: { rows: ManifestRow[] }) {
+export function ManifestList({
+  rows,
+  timeZone,
+  isoDate,
+}: {
+  rows: ManifestRow[];
+  /** Operator IANA timezone — the lens "now" is measured through. */
+  timeZone: string;
+  /** The day being shown, YYYY-MM-DD. Overdue only means anything on today. */
+  isoDate: string;
+}) {
   const [error, setError] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState('');
   const [focusAfterId, setFocusAfterId] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const tableRef = useRef<HTMLDivElement>(null);
+
+  /**
+   * Operator-local "now", set after mount and re-read every minute.
+   *
+   * Deliberately null on the first render rather than computed inline: the server
+   * render and the hydration render would disagree about the clock, and React would
+   * either warn or silently keep the server's stale minute. Starting from null means
+   * the first paint simply has no overdue state and the client fills it in — and the
+   * interval is what makes a boat that goes overdue at 2:01 say so at 2:01, instead of
+   * whenever somebody happens to reload.
+   */
+  const [now, setNow] = useState<{ isoDate: string; minutes: number } | null>(null);
+  useEffect(() => {
+    function tick() {
+      const at = new Date();
+      setNow({ isoDate: todayIsoIn(timeZone), minutes: localMinutesOfDay(at, timeZone) });
+    }
+    tick();
+    const timer = window.setInterval(tick, 60_000);
+    return () => window.clearInterval(timer);
+  }, [timeZone]);
 
   const items: ManifestListItem[] = useMemo(() => {
     const flat = rows.flatMap((row) =>
@@ -58,6 +113,22 @@ export function ManifestList({ rows }: { rows: ManifestRow[] }) {
     flat.sort((a, b) => a.startMin - b.startMin || a.activityName.localeCompare(b.activityName));
     return flat;
   }, [rows]);
+
+  /**
+   * Minutes a boat is late, or null when it is not.
+   *
+   * "Overdue" is a checked-in trip whose return time has passed — the guest is out on
+   * the water and should be back. An UPCOMING trip past its end time is a different
+   * problem (a no-show), and the row already says so.
+   */
+  function overdueBy(it: ManifestListItem): number | null {
+    if (!now || now.isoDate !== isoDate) return null;
+    if (it.status !== 'CHECKED_IN') return null;
+    const late = now.minutes - it.endMin;
+    return late > 0 ? late : null;
+  }
+
+  const overdueCount = items.filter((it) => overdueBy(it) !== null).length;
 
   /**
    * Run a check-in/no-show write, then say what happened and put the keyboard back
@@ -125,36 +196,57 @@ export function ManifestList({ rows }: { rows: ManifestRow[] }) {
           {error}
         </p>
       ) : null}
+
+      {/* The headline number at a dock: how many boats are out past their return time.
+          Words and an icon, never the colour on its own. (1.4.1) */}
+      {overdueCount > 0 ? (
+        <p className="flex items-center gap-2 border-b border-rose-100 bg-rose-50 px-4 py-2.5 text-sm font-semibold text-rose-800">
+          <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden />
+          {overdueCount === 1
+            ? '1 boat is overdue back at the dock.'
+            : `${overdueCount} boats are overdue back at the dock.`}
+        </p>
+      ) : null}
+
       <div className="overflow-x-auto" ref={tableRef}>
         <table className="w-full border-collapse text-sm">
           {/* The table sits under the view toggle with no heading of its own, so a
               reader jumping table-to-table lands in an unnamed grid. (1.3.1) */}
           <caption className="sr-only">
-            Bookings for the selected day, in start-time order.
+            Bookings for the selected day, in start-time order, with the time each boat is
+            due back.
           </caption>
           <thead>
+            {/*
+              Five of the eight columns are `hidden sm:table-cell`, and what they carry
+              is re-stated inside the Guest cell under `sm:hidden`. That is what keeps a
+              360px phone from scrolling sideways without dropping a single fact: the
+              browser removes display:none content from the accessibility tree, so at
+              any one width exactly one copy exists — a screen reader never hears the
+              activity twice, and a narrow screen never hides the balance.
+            */}
             <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
               {/* scope="col" binds every cell below to its header, which is what
                   makes a dense grid readable a cell at a time. (1.3.1) */}
               <th scope="col" className="px-3 py-2.5">
-                Time
+                Out · back
               </th>
-              <th scope="col" className="px-3 py-2.5">
+              <th scope="col" className="hidden px-3 py-2.5 sm:table-cell">
                 Activity
               </th>
               <th scope="col" className="px-3 py-2.5">
                 Guest
               </th>
-              <th scope="col" className="px-3 py-2.5 text-center">
+              <th scope="col" className="hidden px-3 py-2.5 text-center sm:table-cell">
                 Party
               </th>
-              <th scope="col" className="px-3 py-2.5 text-center">
+              <th scope="col" className="hidden px-3 py-2.5 text-center sm:table-cell">
                 Waiver
               </th>
-              <th scope="col" className="px-3 py-2.5 text-right">
+              <th scope="col" className="hidden px-3 py-2.5 text-right sm:table-cell">
                 Balance
               </th>
-              <th scope="col" className="px-3 py-2.5">
+              <th scope="col" className="hidden px-3 py-2.5 sm:table-cell">
                 Status
               </th>
               <th scope="col" className="px-3 py-2.5 text-right">
@@ -163,24 +255,51 @@ export function ManifestList({ rows }: { rows: ManifestRow[] }) {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {items.map((it) => (
+            {items.map((it) => {
+              const late = overdueBy(it);
+              return (
               <tr
                 key={it.orderItemId}
                 className={
-                  it.status === 'CHECKED_IN'
-                    ? 'bg-emerald-50/40'
-                    : it.status === 'NO_SHOW'
-                      ? // slate-500, not slate-400: slate-400 on the slate-50 row
-                        // fill is 2.4:1. The row tint is decoration either way — the
-                        // status is stated in the Status cell. (1.4.3, 1.4.1)
-                        'bg-slate-50 text-slate-500'
-                      : ''
+                  late !== null
+                    ? // An overdue boat outranks the checked-in tint: it is the row
+                      // staff need to find first. The words in the cell carry the
+                      // meaning; this is only what makes it findable. (1.4.1)
+                      'bg-rose-50/60'
+                    : it.status === 'CHECKED_IN'
+                      ? 'bg-emerald-50/40'
+                      : it.status === 'NO_SHOW'
+                        ? // slate-500, not slate-400: slate-400 on the slate-50 row
+                          // fill is 2.4:1. The row tint is decoration either way — the
+                          // status is stated in the Status cell. (1.4.3, 1.4.1)
+                          'bg-slate-50 text-slate-500'
+                        : ''
                 }
               >
-                <td className="whitespace-nowrap px-3 py-2.5 font-medium tabular-nums text-slate-700">
-                  {timeLabel(it.startMin)}
+                {/*
+                  Both ends of the trip, because only one of them was ever on screen.
+                  A dock does not ask "when did that boat leave" — it asks when it is
+                  coming back, and until now the answer was in the Gantt or in nobody's
+                  head. `endMin` was already computed from the rate duration.
+                */}
+                <td className="px-3 py-2.5 align-top">
+                  <div className="whitespace-nowrap font-semibold tabular-nums text-slate-800">
+                    {timeLabel(it.startMin)}
+                  </div>
+                  <div className="whitespace-nowrap text-xs text-slate-600">
+                    back by{' '}
+                    <span className="font-semibold tabular-nums text-slate-700">
+                      {returnLabel(it.endMin)}
+                    </span>
+                  </div>
+                  {late !== null ? (
+                    <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-bold text-rose-900">
+                      <AlertTriangle className="h-3 w-3 shrink-0" aria-hidden />
+                      {lateLabel(late)} overdue
+                    </span>
+                  ) : null}
                 </td>
-                <td className="px-3 py-2.5">
+                <td className="hidden px-3 py-2.5 align-top sm:table-cell">
                   <span className="inline-flex items-center gap-2">
                     <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: it.color }} aria-hidden />
                     <span className="truncate text-slate-700">{it.activityName}</span>
@@ -190,23 +309,61 @@ export function ManifestList({ rows }: { rows: ManifestRow[] }) {
                       nodes on this screen. (1.4.3) */}
                   <span className="mt-0.5 block text-xs text-slate-500">{it.rateName}</span>
                 </td>
-                <td className="px-3 py-2.5">
+                <td className="px-3 py-2.5 align-top">
                   <div className="font-medium text-slate-800">{it.customerName}</div>
-                  <div className="flex items-center gap-3 text-xs text-slate-500">
+                  {/* slate-600, not slate-500: slate-500 measures 4.66:1 on white and
+                      slips under the floor on a tinted row — and this row now carries
+                      a rose tint when the boat is overdue. slate-600 clears on every
+                      fill this table uses. (1.4.3) */}
+                  <div className="flex flex-wrap items-center gap-x-3 text-xs text-slate-600">
                     <span className="font-mono">{it.orderNumber}</span>
                     {it.customerPhone ? (
                       <a
                         href={`tel:${it.customerPhone}`}
                         aria-label={`Call ${it.customerName} on ${it.customerPhone}`}
-                        className="inline-flex items-center gap-1 hover:text-slate-700"
+                        className="inline-flex items-center gap-1 py-1.5 hover:text-slate-700"
                       >
                         <Phone className="h-3 w-3" aria-hidden /> {it.customerPhone}
                       </a>
                     ) : null}
                   </div>
+
+                  {/* Phone-width fold-in of the five columns hidden above. */}
+                  <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 sm:hidden">
+                    <span className="inline-flex items-center gap-1.5 text-xs text-slate-600">
+                      <span
+                        className="h-2 w-2 shrink-0 rounded-full"
+                        style={{ backgroundColor: it.color }}
+                        aria-hidden
+                      />
+                      {it.activityName} · {it.rateName}
+                    </span>
+                    <StatusBadge status={it.status} />
+                    <span className="text-xs text-slate-600">
+                      Party of <span className="font-semibold tabular-nums">{it.quantity}</span>
+                    </span>
+                    {it.waiverSigned ? (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
+                        <Check className="h-3 w-3" aria-hidden /> Waiver signed
+                      </span>
+                    ) : (
+                      <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800">
+                        Waiver needed
+                      </span>
+                    )}
+                    {it.balanceDueCents > 0 ? (
+                      <span className="text-xs font-semibold tabular-nums text-rose-700">
+                        {formatUSD(it.balanceDueCents)} due
+                      </span>
+                    ) : (
+                      <span className="text-xs text-slate-600">Paid</span>
+                    )}
+                  </div>
                 </td>
-                <td className="px-3 py-2.5 text-center tabular-nums text-slate-700">{it.quantity}</td>
-                <td className="px-3 py-2.5 text-center">
+                <td className="hidden px-3 py-2.5 text-center align-top tabular-nums text-slate-700 sm:table-cell">
+                  {it.quantity}
+                </td>
+                <td className="hidden px-3 py-2.5 text-center align-top sm:table-cell">
                   {it.waiverSigned ? (
                     <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
                       <Check className="h-3 w-3" aria-hidden /> Signed
@@ -217,7 +374,7 @@ export function ManifestList({ rows }: { rows: ManifestRow[] }) {
                     </span>
                   )}
                 </td>
-                <td className="px-3 py-2.5 text-right tabular-nums">
+                <td className="hidden px-3 py-2.5 text-right align-top tabular-nums sm:table-cell">
                   {it.balanceDueCents > 0 ? (
                     // rose-700, not rose-600: rose-600 clears on white (4.70:1) but
                     // measures 4.49:1 on the slate-50 fill a no-show row carries —
@@ -228,11 +385,13 @@ export function ManifestList({ rows }: { rows: ManifestRow[] }) {
                     <span className="text-slate-500">Paid</span>
                   )}
                 </td>
-                <td className="px-3 py-2.5">
+                <td className="hidden px-3 py-2.5 align-top sm:table-cell">
                   <StatusBadge status={it.status} />
                 </td>
-                <td className="px-3 py-2.5">
-                  <div className="flex items-center justify-end gap-1">
+                <td className="px-3 py-2.5 align-top">
+                  {/* Stacked and 44px tall on a phone, compact and inline from `sm`.
+                      These are tapped with a thumb while holding a bow line. (2.5.5) */}
+                  <div className="flex flex-col items-stretch gap-1 sm:flex-row sm:items-center sm:justify-end">
                     {it.status === 'UPCOMING' ? (
                       <>
                         <button
@@ -249,7 +408,7 @@ export function ManifestList({ rows }: { rows: ManifestRow[] }) {
                           aria-label={`Check in ${bookingLabel(it)}`}
                           // emerald-700, not emerald-600: white on emerald-600 is
                           // 3.79:1. emerald-700 is 5.5:1 and keeps the green. (1.4.3)
-                          className="inline-flex items-center gap-1 rounded-md bg-emerald-700 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-emerald-800 disabled:opacity-50"
+                          className="inline-flex min-h-11 items-center justify-center gap-1 rounded-md bg-emerald-700 px-2.5 text-xs font-semibold text-white hover:bg-emerald-800 disabled:opacity-50 sm:min-h-0 sm:py-1.5"
                         >
                           <Check className="h-3.5 w-3.5" aria-hidden /> Check in
                         </button>
@@ -262,9 +421,14 @@ export function ManifestList({ rows }: { rows: ManifestRow[] }) {
                             )
                           }
                           aria-label={`Mark no-show: ${bookingLabel(it)}`}
-                          className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-50"
+                          className="inline-flex min-h-11 items-center justify-center gap-1 rounded-md border border-slate-300 px-2 text-xs font-medium text-slate-600 hover:bg-slate-50 sm:min-h-0 sm:py-1.5"
                         >
                           <UserX className="h-3.5 w-3.5" aria-hidden />
+                          {/* The icon is the whole control from `sm` up, where the
+                              column is narrow; on a phone it gets its word back so the
+                              two stacked buttons are not a guess. The accessible name
+                              contains it either way. (2.5.3) */}
+                          <span className="sm:hidden">No-show</span>
                         </button>
                       </>
                     ) : it.status === 'CHECKED_IN' ? (
@@ -278,7 +442,7 @@ export function ManifestList({ rows }: { rows: ManifestRow[] }) {
                           )
                         }
                         aria-label={`Undo check-in for ${bookingLabel(it)}`}
-                        className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-50"
+                        className="inline-flex min-h-11 items-center justify-center gap-1 rounded-md border border-slate-300 px-2.5 text-xs font-medium text-slate-600 hover:bg-slate-50 sm:min-h-0 sm:py-1.5"
                       >
                         <RotateCcw className="h-3.5 w-3.5" aria-hidden /> Undo
                       </button>
@@ -293,13 +457,13 @@ export function ManifestList({ rows }: { rows: ManifestRow[] }) {
                           )
                         }
                         aria-label={`Undo no-show for ${bookingLabel(it)}`}
-                        className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-50"
+                        className="inline-flex min-h-11 items-center justify-center gap-1 rounded-md border border-slate-300 px-2.5 text-xs font-medium text-slate-600 hover:bg-slate-50 sm:min-h-0 sm:py-1.5"
                       >
                         <RotateCcw className="h-3.5 w-3.5" aria-hidden /> Undo
                       </button>
                     ) : (
                       <>
-                        <span className="text-xs text-slate-500" aria-hidden>
+                        <span className="text-right text-xs text-slate-500" aria-hidden>
                           —
                         </span>
                         {/* An em dash is a typographic placeholder, not information;
@@ -310,7 +474,8 @@ export function ManifestList({ rows }: { rows: ManifestRow[] }) {
                   </div>
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>

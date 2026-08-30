@@ -9,14 +9,15 @@
 import { revalidatePath } from 'next/cache';
 import { cookies } from 'next/headers';
 import { z } from 'zod';
-import { ProvisionError } from '@marina/database';
-import { getOperatorContext } from '../../lib/session';
+import { adminPrisma, ProvisionError } from '@marina/database';
+import { getOperatorContext, type OperatorContext } from '../../lib/session';
 import {
   assertPlatformAdmin,
   provisionClient,
   updateOperatorRecord,
   ACTIVE_OPERATOR_COOKIE,
 } from '../../lib/platform';
+import { ALL_STAGES } from './_components/onboarding-stages';
 
 export interface PlatformResult {
   ok: boolean;
@@ -27,9 +28,10 @@ export interface PlatformResult {
   id?: string;
 }
 
-async function requirePlatform() {
+async function requirePlatform(): Promise<OperatorContext> {
   const ctx = await getOperatorContext();
   assertPlatformAdmin(ctx.auth.userId);
+  return ctx;
 }
 
 function zodErrors(error: z.ZodError): Record<string, string> {
@@ -176,4 +178,199 @@ export async function openClientAction(operatorId: string): Promise<void> {
 /** Return to the platform view (clears the active cookie). */
 export async function exitClientAction(): Promise<void> {
   cookies().delete(ACTIVE_OPERATOR_COOKIE);
+}
+
+// ---------------------------------------------------------------------------
+// Onboarding cockpit — stage, contacts, and the notes log
+//
+// OperatorOnboarding and OperatorNote are PLATFORM data: the agency's private
+// record of how a rollout is going. They sit outside tenant RLS on purpose, so
+// they are only ever touched here, through adminPrisma, behind requirePlatform().
+// Nothing in the tenant app may read or write them.
+// ---------------------------------------------------------------------------
+
+/** Who the note is from. In dev this is the shim id; in prod, the Clerk user id. */
+function authorFrom(ctx: OperatorContext): string {
+  return ctx.auth.userId || 'platform';
+}
+
+/**
+ * A date input gives "2026-09-14" with no timezone. Storing that at UTC midnight
+ * makes it render as the 13th for anyone west of Greenwich — including this
+ * marina — so we anchor it at midday UTC, which lands on the same calendar day
+ * everywhere the product is used.
+ */
+function parseDateInput(value: string): Date {
+  return new Date(`${value}T12:00:00.000Z`);
+}
+
+const stageSchema = z.enum(ALL_STAGES);
+
+/**
+ * Move a client along the pipeline. One click, no save button — this is the control
+ * the owner touches most, and a two-step save is how a stage silently goes stale.
+ */
+export async function setStageAction(operatorId: string, stage: string): Promise<PlatformResult> {
+  await requirePlatform();
+
+  const parsed = stageSchema.safeParse(stage);
+  if (!parsed.success) {
+    return { ok: false, message: 'That is not a stage we track.' };
+  }
+  const next = parsed.data;
+
+  const existing = await adminPrisma.operatorOnboarding.findUnique({
+    where: { operator_id: operatorId },
+    select: { went_live_on: true },
+  });
+
+  // Stamp the go-live date the first time they reach LIVE and never overwrite it:
+  // it is a historical fact, so bouncing back to TESTING to fix something must not
+  // rewrite when this client actually started taking money.
+  const wentLiveOn =
+    next === 'LIVE' && !existing?.went_live_on ? new Date() : existing?.went_live_on ?? null;
+
+  await adminPrisma.operatorOnboarding.upsert({
+    where: { operator_id: operatorId },
+    create: { operator_id: operatorId, stage: next, went_live_on: wentLiveOn },
+    update: { stage: next, went_live_on: wentLiveOn },
+  });
+
+  revalidatePath('/platform');
+  revalidatePath(`/platform/${operatorId}`);
+  return { ok: true, id: operatorId, message: 'Stage updated.' };
+}
+
+const detailsSchema = z.object({
+  owner: z.string().trim().max(120),
+  contact_name: z.string().trim().max(120),
+  contact_email: z
+    .union([z.literal(''), z.string().trim().toLowerCase().email('Use a valid email address')])
+    .default(''),
+  contact_phone: z.string().trim().max(32),
+  target_live_on: z
+    .union([
+      z.literal(''),
+      z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use a date like 2026-09-14'),
+    ])
+    .default(''),
+});
+
+/** Save the platform owner, the client-side contact, and the date we are working to. */
+export async function saveOnboardingDetailsAction(
+  operatorId: string,
+  _prev: PlatformResult | null,
+  formData: FormData,
+): Promise<PlatformResult> {
+  await requirePlatform();
+
+  const parsed = detailsSchema.safeParse({
+    owner: formData.get('owner') ?? '',
+    contact_name: formData.get('contact_name') ?? '',
+    contact_email: formData.get('contact_email') ?? '',
+    contact_phone: formData.get('contact_phone') ?? '',
+    target_live_on: formData.get('target_live_on') ?? '',
+  });
+  if (!parsed.success) {
+    return { ok: false, errors: zodErrors(parsed.error) };
+  }
+  const d = parsed.data;
+
+  const data = {
+    owner: d.owner || null,
+    contact_name: d.contact_name || null,
+    contact_email: d.contact_email || null,
+    contact_phone: d.contact_phone || null,
+    target_live_on: d.target_live_on ? parseDateInput(d.target_live_on) : null,
+  };
+
+  await adminPrisma.operatorOnboarding.upsert({
+    where: { operator_id: operatorId },
+    create: { operator_id: operatorId, ...data },
+    update: data,
+  });
+
+  revalidatePath('/platform');
+  revalidatePath(`/platform/${operatorId}`);
+  return { ok: true, id: operatorId, message: 'Saved.' };
+}
+
+const noteSchema = z.object({
+  body: z.string().trim().min(1, 'Write what happened before adding the note').max(2000),
+  is_blocker: z.boolean(),
+});
+
+/**
+ * Add a dated note. Marking it as the blocker clears the previous one in the same
+ * transaction: "what is blocking this client" is a single answer, and two of them
+ * is the same as none.
+ */
+export async function addNoteAction(
+  operatorId: string,
+  _prev: PlatformResult | null,
+  formData: FormData,
+): Promise<PlatformResult> {
+  const ctx = await requirePlatform();
+
+  const parsed = noteSchema.safeParse({
+    body: formData.get('body') ?? '',
+    is_blocker: formData.get('is_blocker') === 'on' || formData.get('is_blocker') === 'true',
+  });
+  if (!parsed.success) {
+    return { ok: false, errors: zodErrors(parsed.error) };
+  }
+  const d = parsed.data;
+
+  await adminPrisma.$transaction(async (tx) => {
+    if (d.is_blocker) {
+      await tx.operatorNote.updateMany({
+        where: { operator_id: operatorId, is_blocker: true },
+        data: { is_blocker: false },
+      });
+    }
+    await tx.operatorNote.create({
+      data: {
+        operator_id: operatorId,
+        author: authorFrom(ctx),
+        body: d.body,
+        is_blocker: d.is_blocker,
+      },
+    });
+  });
+
+  revalidatePath('/platform');
+  revalidatePath(`/platform/${operatorId}`);
+  return { ok: true, id: operatorId, message: 'Note added.' };
+}
+
+/** Promote an existing note to the current blocker, or clear the blocker flag. */
+export async function setNoteBlockerAction(
+  operatorId: string,
+  noteId: string,
+  isBlocker: boolean,
+): Promise<PlatformResult> {
+  await requirePlatform();
+
+  // Scoping the update by operator_id as well as id is what stops a note id from
+  // one client being flipped while a different client's page is open.
+  const updated = await adminPrisma.$transaction(async (tx) => {
+    if (isBlocker) {
+      await tx.operatorNote.updateMany({
+        where: { operator_id: operatorId, is_blocker: true },
+        data: { is_blocker: false },
+      });
+    }
+    return tx.operatorNote.updateMany({
+      where: { id: noteId, operator_id: operatorId },
+      data: { is_blocker: isBlocker },
+    });
+  });
+
+  if (updated.count === 0) {
+    return { ok: false, message: 'That note is no longer here — reload the page.' };
+  }
+
+  revalidatePath('/platform');
+  revalidatePath(`/platform/${operatorId}`);
+  return { ok: true, id: operatorId, message: isBlocker ? 'Marked as the blocker.' : 'Blocker cleared.' };
 }

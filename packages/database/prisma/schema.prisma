@@ -225,6 +225,8 @@ model Operator {
   waivers      Waiver[]
   integrations Integration[]
   sandbox_messages SandboxMessage[]
+  onboarding       OperatorOnboarding?
+  onboarding_notes OperatorNote[]
   sandbox_payment_attempts SandboxPaymentAttempt[]
   gift_cards   GiftCard[]
   gift_certificates GiftCertificate[]
@@ -1613,4 +1615,60 @@ model GLAccount {
   @@unique([operator_id, code])
   @@unique([operator_id, id])
   @@index([operator_id])
+}
+
+// ===========================================================================
+// Platform onboarding (NOT tenant data)
+// ===========================================================================
+//
+// These belong to US, not to the operator: they are how the platform team tracks
+// bringing a new client live. Deliberately OUTSIDE the tenant RLS policy set — the
+// whole point is a cross-client view, and they are reached only through adminPrisma
+// behind the PLATFORM_ADMIN_AUTH_IDS gate (see apps/admin/lib/platform.ts).
+//
+// Readiness itself is NOT stored here. Whether a client has activities, rates,
+// timeslots or a waiver is derived from their real data on read, so this table can
+// never disagree with reality. Only the things a human knows live here.
+
+enum OnboardingStage {
+  LEAD
+  PROVISIONED
+  CONFIGURING
+  TESTING
+  LIVE
+  CHURNED
+}
+
+model OperatorOnboarding {
+  id          String          @id @default(cuid())
+  operator_id String          @unique
+  operator    Operator        @relation(fields: [operator_id], references: [id], onDelete: Cascade)
+  stage       OnboardingStage @default(PROVISIONED)
+  /// Who at the platform owns getting this client live.
+  owner       String?
+  /// Primary contact at the client.
+  contact_name  String?
+  contact_email String?
+  contact_phone String?
+  /// The date we are working towards, so a stalled client is visible.
+  target_live_on DateTime?
+  went_live_on   DateTime?
+  created_at  DateTime        @default(now())
+  updated_at  DateTime        @updatedAt
+
+  @@index([stage])
+}
+
+/// A dated note on a client: what was said on a call, what we are waiting for.
+model OperatorNote {
+  id          String   @id @default(cuid())
+  operator_id String
+  operator    Operator @relation(fields: [operator_id], references: [id], onDelete: Cascade)
+  author      String
+  body        String
+  /// True while this is the thing blocking the client going live.
+  is_blocker  Boolean  @default(false)
+  created_at  DateTime @default(now())
+
+  @@index([operator_id, created_at])
 }

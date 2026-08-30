@@ -134,7 +134,16 @@ needs a terminal to test a feature.
 generate the Prisma client, apply migrations, seed if empty, then run api + web + admin
 concurrently and print a table of URLs. One command, cold machine, zero accounts.
 
-Add `pnpm verify` = typecheck + lint + all tests + E2E. That is the gate for §3.6.
+`pnpm verify` = typecheck + all tests + build. Two honest caveats, because a gate
+that lies is worse than no gate:
+
+- **Lint is NOT in it.** `apps/web` and `apps/admin` declare `next lint`, but the repo
+  has no ESLint config anywhere, so that command drops into an interactive setup
+  prompt and would hang a non-interactive run. Configuring it is open work; until
+  then, do not claim lint as a gate.
+- **E2E is NOT in it** and cannot be, because Playwright needs a running stack.
+  `pnpm exec playwright test` is a separate step, and the performance specs must run
+  against a production build (see docs/TESTING.md).
 
 ### 4.4 Realistic data
 

@@ -11,7 +11,19 @@ import type { ManifestRow } from './types';
  * visual Timeline (Gantt). Both read the same rows; the toggle is view-only client
  * state so switching never refetches.
  */
-export function ManifestViews({ rows }: { rows: ManifestRow[] }) {
+export function ManifestViews({
+  rows,
+  timeZone,
+  isoDate,
+}: {
+  rows: ManifestRow[];
+  /** Operator IANA timezone. The list measures "overdue" against this clock, not the
+   *  browser's — staff travel, and a laptop set to Denver must not mark a Sonoma boat
+   *  late by an hour. */
+  timeZone: string;
+  /** The day on screen, YYYY-MM-DD, so yesterday's manifest is history and not alarm. */
+  isoDate: string;
+}) {
   const [view, setView] = useState<'list' | 'timeline'>('list');
 
   return (
@@ -32,7 +44,11 @@ export function ManifestViews({ rows }: { rows: ManifestRow[] }) {
         </TabButton>
       </div>
 
-      {view === 'list' ? <ManifestList rows={rows} /> : <GanttManifest rows={rows} />}
+      {view === 'list' ? (
+        <ManifestList rows={rows} timeZone={timeZone} isoDate={isoDate} />
+      ) : (
+        <GanttManifest rows={rows} />
+      )}
     </div>
   );
 }
