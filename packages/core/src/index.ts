@@ -29,6 +29,42 @@ export {
   type EffectivePriceResult,
 } from './pricing.js';
 
+// Dynamic pricing: seasonal / weekend / time-of-day / lead-time / demand rules, and
+// the signed price quote that guarantees the number a guest is shown is the number
+// they are charged.
+export {
+  PRICING_RULE_KINDS,
+  PRICING_RULE_KIND_LABEL,
+  DEFAULT_WEEKEND_DAYS,
+  DEFAULT_PRICE_GUARDRAILS,
+  PRICE_QUOTE_TTL_SECONDS,
+  ruleInScope,
+  ruleScopeTier,
+  ruleMatches,
+  isRuleCandidate,
+  selectRules,
+  guardrailBounds,
+  resolveDynamicPrice,
+  describeAdjustment,
+  quoteFingerprint,
+  reconcileQuote,
+  type PricingRuleKind,
+  type PricingAdjustmentType,
+  type DynamicPricingRule,
+  type PricingContext,
+  type PriceGuardrails,
+  type SuppressionReason,
+  type SuppressedRule,
+  type RuleSelection,
+  type AppliedRule,
+  type ClampReason,
+  type DynamicPriceResult,
+  type QuoteFingerprintInput,
+  type QuoteStatus,
+  type QuoteReconciliation,
+} from './pricing-rules.js';
+
+
 export {
   computeSlotStatus,
   generateTimeslots,

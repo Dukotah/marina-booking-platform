@@ -19,13 +19,13 @@ import {
   computeSlotStatus,
   generateOrderNumber,
   resolveDepositPercent,
-  resolveEffectivePrice,
   type BookingInput,
   type PricingFee,
   type PricingPromo,
 } from '@marina/core';
 import { withTenant } from '@marina/database';
 import { createPayment, arePaymentsEnabled } from './stripe.js';
+import { reconcileSlotPrice } from './pricing-rules.js';
 import {
   activityResourcePools,
   bookingWindow,
@@ -433,50 +433,28 @@ async function createBookingAttempt(
       promoCodeId = promoRow.id;
     }
 
-    // --- Dynamic pricing (Upmarket §1 #6-C): compose the operator's active pricing
-    //     rules over the rate's base price for THIS slot's date/demand. Rules scoped
-    //     to this rate, this activity, or the whole operator (both scopes null) apply.
-    //     Composes with calculatePricing: the resolved per-unit price becomes the line
-    //     item price. No rules => the base price passes through unchanged. ---
-    const ruleRows = await tx.pricingRule.findMany({
-      where: {
-        is_active: true,
-        OR: [
-          { rate_id: rate.id },
-          { rate_id: null, activity_id: activity.id },
-          { rate_id: null, activity_id: null },
-        ],
-      },
-      select: {
-        kind: true,
-        adjustment_type: true,
-        adjustment_value: true,
-        priority: true,
-        starts_on: true,
-        ends_on: true,
-        weekdays: true,
-        demand_threshold: true,
-        created_at: true,
-      },
-      orderBy: [{ priority: 'asc' }, { created_at: 'asc' }],
+    // --- Dynamic pricing: resolve this slot's effective per-unit price from the
+    //     operator's rules, then reconcile it against the signed quote the guest is
+    //     holding, so the price shown at checkout is the price actually charged. ---
+    const priced = await reconcileSlotPrice(tx, operatorId, {
+      activityId: activity.id,
+      rateId: rate.id,
+      basePriceCents: rate.price_cents,
+      slotStart: timeslot.datetime,
+      capacityTotal: timeslot.capacity_total,
+      capacityBooked: timeslot.capacity_booked,
+      timeslotId: timeslot.id,
+      quantity: input.quantity,
+      quoteToken: input.priceQuoteToken ?? null,
     });
-    const bookedRatio =
-      timeslot.capacity_total > 0 ? timeslot.capacity_booked / timeslot.capacity_total : 0;
-    const dynamic = resolveEffectivePrice(
-      rate.price_cents,
-      ruleRows.map((r) => ({
-        kind: r.kind,
-        adjustmentType: r.adjustment_type,
-        adjustmentValue: r.adjustment_value,
-        priority: r.priority,
-        startsOn: r.starts_on,
-        endsOn: r.ends_on,
-        weekdays: r.weekdays,
-        demandThreshold: r.demand_threshold,
-      })),
-      { date: timeslot.datetime, bookedRatio },
-    );
-    const dynamicUnitPriceCents = dynamic.priceCents;
+    if (priced.requiresGuestConfirmation) {
+      throw new BookingError(
+        'PRICE_CHANGED',
+        'The price for this trip changed while you were checking out. Please review the new total.',
+        409,
+      );
+    }
+    const dynamicUnitPriceCents = priced.unitPriceCents;
 
     // --- Upsert the customer by (operator, email). ---
     const customer = await tx.customer.upsert({

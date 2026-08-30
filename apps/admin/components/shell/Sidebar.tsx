@@ -16,6 +16,7 @@ import {
   Settings,
   ShieldCheck,
   Gift,
+  Ticket,
   FlaskConical,
   type LucideIcon,
 } from 'lucide-react';
@@ -42,6 +43,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Customers', href: '/customers', icon: Users },
   { label: 'POS', href: '/pos', icon: ScanLine },
   { label: 'Gift Certificates', href: '/gift-certificates', icon: Gift },
+  { label: 'Memberships', href: '/memberships', icon: Ticket },
   { label: 'Reports', href: '/reports', icon: BarChart3 },
   { label: 'Locations', href: '/reports/locations', icon: Building2 },
   { label: 'Staff', href: '/staff', icon: UserCog },

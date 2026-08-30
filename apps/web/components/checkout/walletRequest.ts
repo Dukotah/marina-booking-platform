@@ -32,11 +32,15 @@
  *     "no express button" and leave the card path untouched.
  */
 
-import {
-  loadStripe,
-  type Stripe,
-  type PaymentRequestPaymentMethodEvent,
-} from '@stripe/stripe-js';
+// loadStripe comes from the '/pure' entry on purpose. The default entry injects
+// <script src="js.stripe.com/v3"> from MODULE SCOPE the microtask after import, so
+// merely importing it downloads Stripe on every checkout - including local runs and
+// any operator with no Stripe key, where the `configured` guard below is false and
+// makes no difference because the request has already been queued. '/pure' exports
+// the same function with no module-scope side effect; the script loads when (and
+// only when) loadStripe is actually called.
+import { loadStripe } from '@stripe/stripe-js/pure';
+import type { Stripe, PaymentRequestPaymentMethodEvent } from '@stripe/stripe-js';
 import type { PricingResult } from '@marina/core';
 import type { WalletConfig } from '@/app/checkout/wallet-config';
 

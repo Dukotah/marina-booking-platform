@@ -69,6 +69,12 @@ export const bookingInputSchema = z.object({
   promoCode: z.string().trim().min(1).max(64).optional(),
   /** Optional gratuity in integer cents. */
   tipCents: z.number().int().nonnegative().optional(),
+  /**
+   * Signed price quote from POST /api/pricing-rules/quote. Pins the price the guest
+   * was actually shown, so a rule changing mid-checkout cannot charge them a number
+   * they never saw.
+   */
+  priceQuoteToken: z.string().trim().max(4096).optional(),
   /** "How did you hear about us?" — the chosen option label, snapshotted onto the order. */
   heardAboutUs: z.string().trim().max(120).optional(),
   /** Affiliate/referral code entered at checkout; resolved to an Affiliate for attribution. */

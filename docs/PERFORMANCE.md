@@ -4,8 +4,10 @@
 > differentiator, because both incumbents' flows are dated and heavy."
 > — `docs/LOCAL-FIRST-BUILD.md` §2
 
-§6 turns that sentence into a number: **a first-time guest books in under 30 seconds on a
-throttled mobile connection, measured by an automated test, not by feel.** The test is
+The contract's §6 turns that sentence into a number: **a first-time guest books in under
+30 seconds on a throttled mobile connection, measured by an automated test, not by
+feel.** (Section numbers in this document refer to this document; references to the
+contract say so.) The test is
 `e2e/specs/mobile.funnel.spec.ts` running under the `mobile-throttled` Playwright project:
 a Pixel 7 viewport with touch emulation, DevTools' Slow 4G profile driven over CDP
 (400 ms RTT, 400 kbps each way) and a 4× CPU slowdown, which is roughly a mid-range
@@ -183,6 +185,15 @@ cached by day key for the session, and a later month fetches only the days it is
 
 ## 3. The budget currently measures webpack-dev, not the product
 
+> **Resolved 2026-08-29 — read this section as history, not as current state.** The stack
+> the suite runs against is now a production build (`next build` then `next start`), which
+> is exactly the fix this section asks for. The 1 943 kB dev bundle below is gone: the
+> activity route now transfers **130.2 kB** of JavaScript, and the whole booking funnel is
+> re-measured against production in §6. What remains true and worth keeping is the
+> reasoning — a budget pointed at a dev server measures webpack, and the arithmetic here
+> is why. Note that it is resolved by *how the stack is started*, not yet guaranteed by
+> `playwright.config.ts`; a run against `pnpm dev:local` would still measure webpack.
+
 **The `mobile-throttled` project cannot pass while it points at `next dev`, and no change
 to the application can make it pass.** This is arithmetic, not opinion:
 
@@ -323,6 +334,180 @@ resolved and there is a production build to measure.
 - **One writer per attribute.** A pre-hydration driver and React must never both be
   painting the same group: the driver hands over on `data-hydrated`, and it hands over
   only *after* the component has adopted whatever the guest already chose.
-- Lighthouse mobile performance 95+ and accessibility 100 (§6) are **not yet enforced in
-  CI**. That gate is still open and depends on §3 as well — there is no point Lighthouse-ing
-  a dev server.
+- **Measure transfer size, never file size.** A guest pays for gzipped bytes off the
+  wire. `_next/static` compresses to roughly a third, so a budget written against
+  `ls -l` is a budget against a number nobody experiences.
+- **A number nobody can read is not a measurement.** Every figure this suite produces is
+  printed to stdout as well as annotated, so the person who ran it sees what the numbers
+  are and not merely that nothing moved.
+- **Third-party bytes are a separate budget, and it is zero.** On the local-first stack
+  the booking funnel must reach no vendor at all (`docs/LOCAL-FIRST-BUILD.md` §0). See §7.
+- The contract's Lighthouse bar (mobile performance 95+, accessibility 100) is now
+  enforced by measurement rather than by score: `e2e/specs/performance.spec.ts` for the
+  performance half (§6), `e2e/specs/accessibility.spec.ts` at zero serious/critical for
+  the accessibility half. Lighthouse itself is not installed and cannot be, so the score
+  is not produced; the inputs it scores are.
+
+---
+
+## 6. The enforced budget, and the baseline it was set from
+
+`e2e/specs/performance.spec.ts` is the gate. It replaces "there is one timed test and
+nothing watching page weight" with explicit numbers per route, so the next feature that
+ships 200 KB of client JavaScript to checkout fails a test instead of quietly costing a
+guest on rural LTE thirty seconds.
+
+**Lighthouse is not installed and §0 of the contract forbids installing it.** What
+Lighthouse would have measured is available anyway from the DevTools protocol Playwright
+already holds open: transfer size per response, largest contentful paint, cumulative
+layout shift. The score is not reproduced; the inputs it scores are asserted directly,
+which is the half a budget can actually be written against.
+
+### 6.1 Method
+
+Stated plainly, because a performance number whose method is unclear is worth nothing.
+
+- **Against a production build.** `next start` from `next build`, which is what the stack
+  now runs. This resolves the blocker §3 was written about.
+- **Pixel 7 emulation** (`test.use`), because the guest in the contract is on a phone.
+- **Cold cache, every time.** The recorder sends CDP `Network.setCacheDisabled`, so the
+  second run of the day measures the same first visit as the first run.
+- **Transfer bytes**, from `Network.loadingFinished.encodedDataLength` — gzipped, headers
+  included. The same figure as DevTools' "Transferred" column.
+- **Counted up to the `load` event only.** Next's router prefetches sibling routes once
+  it is idle; billing those to this route would mean adding a link to the catalog could
+  fail the checkout budget.
+- **First and third party are counted separately**, because they are governed
+  differently (§7).
+- The throttled measurement warms the route **unthrottled** first, then applies Slow 4G
+  (400 ms RTT, 400 kbps) plus 4x CPU through `e2e/helpers/network.ts`. Same profile and
+  same helper as `mobile.funnel.spec.ts` — not a fork.
+
+### 6.2 Measured baseline — 2026-08-29, production build
+
+Transfer bytes, gzipped, cold cache, Pixel 7. Byte figures were identical to the decimal
+across nine consecutive runs; paint figures are given as the observed range over those
+runs, on a laptop that was also running two other agents' builds.
+
+| Route | our JS | CSS | HTML | our total | requests | FCP = LCP | CLS | third party |
+|---|---|---|---|---|---|---|---|---|
+| `/` catalog | 126.8 KB | 7.8 KB | 9.4 KB | **144.0 KB** | 11 | 108–224 ms | 0.000 | none |
+| `/activities/[id]` | 130.2 KB | 7.8 KB | 8.6 KB | **146.6 KB** | 13 | 144–200 ms | 0.000 | none |
+| `/checkout` | 168.2 KB | 7.8 KB | 7.4 KB | **183.8 KB** | 16–17 | 88–232 ms | 0.000 | **240–251 KB** (§7) |
+
+Two things worth noticing in that table. FCP and LCP are the same instant on all three
+routes — the largest element is in the first paint, which is what server rendering is
+for — and CLS is a true zero, because the funnel ships no web fonts, no above-the-fold
+images, and skeletons sized to the content they stand in for (§2.4).
+
+Other measurements:
+
+| | measured | budget |
+|---|---|---|
+| First tap on the rate picker, Slow 4G + 4x CPU | painted 0.6–0.8 s, **selected 0.8–1.1 s** | 3.0 s |
+| `apps/web/public/embed.js`, on disk | **45.6 KB** | 50 KB |
+| `apps/web/public/embed.js`, on the wire (gzip) | **13.6 KB** | 15 KB |
+
+The ~1 s is the §2.3 design paying off and is worth reading twice: the guest's first tap
+takes effect roughly **forty seconds** earlier than React could reach the page on the
+profile §3 measured, because the rate group works before hydration. The HTML document is
+8.6 KB and carries the rate cards, so at 51.2 kB/s the control is on screen after one
+round trip and one small body — the 130 KB of route JavaScript is not on the critical
+path to the guest's first choice at all.
+
+The embed loader is checked two ways on purpose. The wire number is what an operator's
+visitor waits for; the disk number is what their browser parses on the main thread before
+their own page can finish. The spec also asserts that the server actually negotiated
+gzip, because a loader served uncompressed costs them 3.4x what we think it does.
+
+### 6.3 The budgets
+
+| Route | our JS | CSS | our total | third party | LCP | CLS |
+|---|---|---|---|---|---|---|
+| `/` | 145 KB | 12 KB | 165 KB | 0 | 1 000 ms | 0.02 |
+| `/activities/[id]` | 150 KB | 12 KB | 168 KB | 0 | 1 000 ms | 0.02 |
+| `/checkout` | 195 KB | 12 KB | 210 KB | 0 | 1 000 ms | 0.02 |
+
+Byte budgets are the measurement plus ~15 %: room for a normal feature, not for a
+library. The LCP budget is deliberately looser than the measurement warrants — it is
+taken on a laptop that is also running Postgres, the API and whatever else is open, and
+it wandered 88–232 ms across those runs for reasons that have nothing to do with the
+product. It is there to
+catch a route that stops rendering its hero on the server, not to police tens of
+milliseconds; the measurement with teeth on a bad connection is the 3 s first-interaction
+budget. Every budget carries its measured value in a trailing comment in the spec. If you
+move one, move the comment and this table in the same edit.
+
+`E2E_TTI_BUDGET_MS` exists for investigation only, on the same terms as
+`E2E_FUNNEL_BUDGET_MS` (§5): never set it in CI.
+
+---
+
+## 7. Open finding: checkout downloads 240 KB of Stripe.js it never uses
+
+**This is the one budget that is red, and it should stay red until the code changes.**
+
+Measured on the production build with `SANDBOX=local` and no Stripe key configured:
+
+```
+checkout (/checkout) third-party transfer: 240.1 KB against a 0.0 KB budget (+240.1 KB).
+    Loaded from https://js.stripe.com:
+         240.1 KB  js.stripe.com/v3
+```
+
+That is **more than the entire rest of the checkout page** — 240 KB against the 184 KB of
+everything we serve — fetched from a vendor CDN on a stack that has no Stripe account,
+renders the sandbox card form, and never calls Stripe at all. On Slow 4G those bytes are
+about 4.7 seconds of wire time on the most abandonment-sensitive page in the funnel.
+
+**Cause, confirmed in the installed package.** `@stripe/stripe-js@5.10.0`'s main entry
+injects the script from module scope, one microtask after import (`dist/index.mjs`, last
+lines):
+
+```js
+Promise.resolve().then(function () { return getStripePromise(); })
+```
+
+`getStripePromise()` appends `<script src="https://js.stripe.com/v3">` to the document.
+The fetch is therefore caused by the *import*, not by `loadStripe()`. `PaymentSection.tsx`
+guards the call correctly — `stripe.configured && stripe.publishableKey` is false locally
+— and it makes no difference, because the module has already queued the download.
+
+**Fix.** Stripe ships a subpath for exactly this, exporting the same `loadStripe` with no
+module-scope side effect:
+
+```ts
+// apps/web/components/checkout/PaymentSection.tsx
+import { loadStripe } from '@stripe/stripe-js/pure';
+import type { Stripe } from '@stripe/stripe-js';   // types only; erased at build
+
+// apps/web/components/checkout/walletRequest.ts — the same swap
+```
+
+Two files, one import line each. `@stripe/react-stripe-js` does not import
+`@stripe/stripe-js` at runtime, so nothing else pulls the eager module back in. A dynamic
+`import('@stripe/stripe-js')` inside the `configured` branch would work equally well; the
+subpath is smaller and is what Stripe documents.
+
+This is a §0 problem before it is a performance problem: "the owner must be able to
+exercise 100% of this product on his own machine without creating an account with
+anybody" is not satisfied by a checkout page that cannot finish loading without reaching
+js.stripe.com. It is also why the third-party budget is zero rather than "small" — after
+the fix this suite, which only ever runs `SANDBOX=local`, should see no vendor request on
+the booking path at all. An operator who later configures a real Stripe key in cloud mode
+is a different environment and a different measurement.
+
+Neither file is inside the ownership of the pass that found this, so it is recorded here
+rather than fixed.
+
+### 7.1 What the production build says about §4
+
+§4 lists roughly 700 KB of ledger and validation code (`zod`,
+`@marina/core/accounting`, `@noble/hashes`) reaching the activity route through the
+`@marina/core` barrel — measured against a **dev** bundle, which does not tree-shake.
+Against the production build the activity route's entire JavaScript is 130.2 KB
+transferred, so most of that is already being shaken out, and the narrow-subpath change
+§4 proposes is worth far less than its table suggests. It is still the right shape — a
+currency formatter should not be able to drag accounting code into a guest's browser —
+but it is now a tidiness argument rather than a performance one, and §4's numbers should
+not be quoted as if they described what ships.
