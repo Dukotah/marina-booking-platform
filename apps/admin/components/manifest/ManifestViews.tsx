@@ -1,15 +1,17 @@
 'use client';
 
 import { useState } from 'react';
-import { List, GanttChartSquare } from 'lucide-react';
+import { CalendarDays, List, GanttChartSquare } from 'lucide-react';
+import { DaySchedule } from './DaySchedule';
 import { GanttManifest } from './GanttManifest';
 import { ManifestList } from './ManifestList';
 import type { ManifestRow } from './types';
 
 /**
- * Toggle between the dense operational List (default — the daily driver) and the
- * visual Timeline (Gantt). Both read the same rows; the toggle is view-only client
- * state so switching never refetches.
+ * Toggle between the roomy Day schedule (default — every timeslot as a time-ordered
+ * card the operator reads at a glance), the dense operational List, and the visual
+ * Timeline (Gantt). All read the same rows; the toggle is view-only client state so
+ * switching never refetches.
  */
 export function ManifestViews({
   rows,
@@ -24,18 +26,21 @@ export function ManifestViews({
   /** The day on screen, YYYY-MM-DD, so yesterday's manifest is history and not alarm. */
   isoDate: string;
 }) {
-  const [view, setView] = useState<'list' | 'timeline'>('list');
+  const [view, setView] = useState<'day' | 'list' | 'timeline'>('day');
 
   return (
     <div>
       {/* role="group" + the per-button pressed state: which view is showing was
-          conveyed only by the dark fill, so a screen-reader user heard two identical
+          conveyed only by the dark fill, so a screen-reader user heard identical
           unrelated buttons and no current state. (1.4.1, 4.1.2) */}
       <div
         role="group"
         aria-label="Manifest view"
         className="mb-4 inline-flex rounded-lg border border-slate-200 bg-white p-0.5 shadow-sm"
       >
+        <TabButton active={view === 'day'} onClick={() => setView('day')}>
+          <CalendarDays className="h-4 w-4" aria-hidden /> Day
+        </TabButton>
         <TabButton active={view === 'list'} onClick={() => setView('list')}>
           <List className="h-4 w-4" aria-hidden /> List
         </TabButton>
@@ -44,7 +49,9 @@ export function ManifestViews({
         </TabButton>
       </div>
 
-      {view === 'list' ? (
+      {view === 'day' ? (
+        <DaySchedule rows={rows} timeZone={timeZone} isoDate={isoDate} />
+      ) : view === 'list' ? (
         <ManifestList rows={rows} timeZone={timeZone} isoDate={isoDate} />
       ) : (
         <GanttManifest rows={rows} />

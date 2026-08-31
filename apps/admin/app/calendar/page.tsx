@@ -1,21 +1,28 @@
+import Link from 'next/link';
+import { CalendarDays, CalendarRange } from 'lucide-react';
 import { AdminShell, PageHeader } from '../../components/shell';
 import { WeekCalendar } from '../../components/manifest/WeekCalendar';
+import { DaySchedule } from '../../components/manifest/DaySchedule';
 import { DateNav } from '../../components/manifest/DateNav';
 import { getOperatorContext, getTenantDb } from '../../lib/session';
 import { normalizeIsoDate, weekStartIso, addIsoDays } from '../../components/manifest/tz';
 import { loadWeek } from './data';
-import { formatDate } from '../../lib/format';
+import { loadManifest } from '../manifest/data';
+import { formatDate, formatShortDate } from '../../lib/format';
+import { cn } from '../../lib/cn';
 
 export const dynamic = 'force-dynamic';
 
 interface CalendarPageProps {
-  searchParams: { date?: string };
+  searchParams: { date?: string; view?: string };
 }
 
 /**
- * Week calendar — a real seven-column grid of bookings (not a flat strip). Each day
- * is a column over a shared time axis; bookings are color-coded blocks that deep-link
- * to their order. Navigation steps a week at a time via `?date=YYYY-MM-DD`.
+ * Calendar — two coordinated views, matching how FareHarbor/Peek run a day:
+ *   Day  → every timeslot for one day as a roomy, time-ordered card (the working view).
+ *   Week → a seven-column grid for spatial overview.
+ * The view is `?view=day|week`; date navigation preserves it. Week is the default so
+ * "Calendar" stays the overview, with Day one tap away (and the Manifest is day-first).
  */
 export default async function CalendarPage({ searchParams }: CalendarPageProps) {
   const { operatorId } = await getOperatorContext();
@@ -27,12 +34,29 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
   const timeZone = operator?.timezone ?? 'America/Los_Angeles';
 
   const isoDate = normalizeIsoDate(searchParams.date, timeZone);
+  const view = searchParams.view === 'day' ? 'day' : 'week';
+
+  if (view === 'day') {
+    const { rows } = await loadManifest(isoDate);
+    const dayLabel = formatShortDate(`${isoDate}T12:00:00`); // "Thu, Aug 28"
+    return (
+      <AdminShell>
+        <PageHeader
+          title="Calendar"
+          description="Every timeslot for the day, in order — the whole day at a glance."
+          actions={<DateNav date={isoDate} stepDays={1} label={dayLabel} />}
+        />
+        <ViewToggle view="day" isoDate={isoDate} />
+        <div className="mt-5">
+          <DaySchedule rows={rows} timeZone={timeZone} isoDate={isoDate} showCheckIn={false} />
+        </div>
+      </AdminShell>
+    );
+  }
+
   const startIso = weekStartIso(isoDate);
   const endIso = addIsoDays(startIso, 6);
-
   const { days, events, totalBookings } = await loadWeek(startIso);
-
-  // "Jun 2 – 8, 2026" style range label.
   const label = formatWeekRange(startIso, endIso);
 
   return (
@@ -42,13 +66,40 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
         description="A real week grid of every booking — color-coded by activity."
         actions={<DateNav date={isoDate} stepDays={7} label={label} />}
       />
-
-      <div className="mb-5 flex flex-wrap gap-3">
+      <ViewToggle view="week" isoDate={isoDate} />
+      <div className="mb-5 mt-5 flex flex-wrap gap-3">
         <SummaryChip label="This week" value={`${totalBookings} bookings`} />
       </div>
-
       <WeekCalendar days={days} events={events} />
     </AdminShell>
+  );
+}
+
+/** Day / Week tabs. Server-rendered links that preserve the selected date. */
+function ViewToggle({ view, isoDate }: { view: 'day' | 'week'; isoDate: string }) {
+  const base =
+    'inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors';
+  return (
+    <div
+      role="group"
+      aria-label="Calendar view"
+      className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5 shadow-sm"
+    >
+      <Link
+        href={`/calendar?view=day&date=${isoDate}`}
+        aria-current={view === 'day' ? 'page' : undefined}
+        className={cn(base, view === 'day' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100')}
+      >
+        <CalendarDays className="h-4 w-4" aria-hidden /> Day
+      </Link>
+      <Link
+        href={`/calendar?view=week&date=${isoDate}`}
+        aria-current={view === 'week' ? 'page' : undefined}
+        className={cn(base, view === 'week' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100')}
+      >
+        <CalendarRange className="h-4 w-4" aria-hidden /> Week
+      </Link>
+    </div>
   );
 }
 

@@ -141,6 +141,7 @@ export async function loadManifest(isoDate: string): Promise<ManifestData> {
           orderItemId: item.id,
           orderId: item.order.id,
           orderNumber: item.order.order_number,
+          timeslotId: slot.id,
           customerName,
           rateName: item.rate?.name_external || item.rate?.name_internal || 'Rate',
           quantity: item.quantity,

@@ -11,6 +11,8 @@ export interface ManifestBooking {
   orderItemId: string;
   orderId: string;
   orderNumber: string;
+  /** The timeslot this booking sits in — lets the day view group guests by departure. */
+  timeslotId: string;
   customerName: string;
   /** Rate label, e.g. "Half Day". */
   rateName: string;
