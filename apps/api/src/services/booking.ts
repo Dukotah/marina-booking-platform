@@ -349,6 +349,15 @@ async function createBookingAttempt(
     if (timeslot.status === 'CANCELLED') {
       throw new BookingError('TIMESLOT_CANCELLED', 'This timeslot has been cancelled', 409);
     }
+    // Customers may only book slots still in the future. Staff keep the flexibility
+    // to record a day-of walk-up on a slot that has already started.
+    if (channel === 'CUSTOMER' && timeslot.datetime.getTime() <= Date.now()) {
+      throw new BookingError(
+        'TIMESLOT_PAST',
+        'This timeslot has already started and can no longer be booked online',
+        409,
+      );
+    }
     const remaining = timeslot.capacity_total - timeslot.capacity_booked;
     if (input.quantity > remaining) {
       throw new BookingError(
@@ -519,7 +528,10 @@ async function createBookingAttempt(
     );
     const depositCents =
       depositPercent > 0 ? computeDepositCents(pricing.totalCents, depositPercent) : 0;
-    const takeDeposit = depositCents > 0 && depositCents < pricing.totalCents;
+    // Any configured deposit > 0 collects upfront — including the edge where the
+    // deposit rounds up to the full total (e.g. a 99–100% deposit), which must still
+    // charge, not silently collect nothing. balance_due below correctly nets to 0.
+    const takeDeposit = depositCents > 0 && depositCents <= pricing.totalCents;
 
     // --- Generate a per-location, per-day sequential order number. The sequence
     //     counts orders already numbered for THIS slot-day prefix (not orders
@@ -624,12 +636,19 @@ async function createBookingAttempt(
       });
     }
 
-    // --- Bump promo redemption count when one was applied. ---
+    // --- Bump promo redemption count when one was applied. Atomic guarded update:
+    //     the increment only lands while the code is still under its limit, so two
+    //     concurrent bookings can't both push a limited promo past max_redemptions
+    //     (the loser matches 0 rows and the whole booking rolls back). ---
     if (promoCodeId) {
-      await tx.promoCode.update({
-        where: { id: promoCodeId },
-        data: { times_redeemed: { increment: 1 } },
-      });
+      const bumped = await tx.$executeRaw`
+        UPDATE "PromoCode"
+        SET times_redeemed = times_redeemed + 1
+        WHERE id = ${promoCodeId}
+          AND (max_redemptions IS NULL OR times_redeemed < max_redemptions)`;
+      if (bumped === 0) {
+        throw new BookingError('PROMO_LIMIT_REACHED', 'This promo code has reached its redemption limit', 409);
+      }
     }
 
     // --- Punch-card memberships: spend one use per seat booked. No-op for
@@ -882,6 +901,14 @@ export async function rescheduleBooking(
     }
     if (newSlot.status === 'CANCELLED') {
       throw new BookingError('TIMESLOT_CANCELLED', 'That timeslot has been cancelled', 409);
+    }
+    // Customers can't self-reschedule onto a slot that has already started.
+    if (channel === 'CUSTOMER' && newSlot.datetime.getTime() <= Date.now()) {
+      throw new BookingError(
+        'TIMESLOT_PAST',
+        'That timeslot has already started and can no longer be booked online',
+        409,
+      );
     }
     const remaining = newSlot.capacity_total - newSlot.capacity_booked;
     if (item.quantity > remaining) {

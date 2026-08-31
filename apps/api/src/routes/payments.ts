@@ -282,6 +282,7 @@ async function recordSettledCharge(
   amountCents: number,
   result: StripePaymentResult,
   audit: { actor: AuditActor; authenticated3ds: boolean },
+  idempotencyKey?: string | null,
 ): Promise<SettledCharge> {
   const amountPaidCents = order.amount_paid_cents + amountCents;
   const balanceDueCents = order.total_cents - amountPaidCents;
@@ -300,6 +301,9 @@ async function recordSettledCharge(
         cardholder_name: result.cardholderName,
         processor: 'STRIPE',
         processor_transaction_id: result.paymentId,
+        // Persist the idempotency key so the unique (operator_id, idempotency_key)
+        // index actually guards against a retried charge being double-recorded.
+        idempotency_key: idempotencyKey ?? null,
       },
     });
 
@@ -403,6 +407,39 @@ payments.post('/charge', async (c) => {
     );
   }
 
+  // Idempotent retry: when the client supplies a stable key and we've already
+  // recorded a charge under it, return that payment instead of charging the card a
+  // second time (double-click / network-retry protection). Defense-in-depth behind
+  // the unique (operator_id, idempotency_key) index recordSettledCharge now writes.
+  const idempotencyKey = parsed.data.idempotencyKey ?? createId();
+  if (parsed.data.idempotencyKey) {
+    const existing = await c.var.db.payment.findFirst({
+      where: { idempotency_key: parsed.data.idempotencyKey },
+    });
+    if (existing) {
+      const fresh = await c.var.db.order.findUnique({ where: { id: existing.order_id } });
+      return c.json(
+        {
+          payment: {
+            id: existing.id,
+            status: existing.status,
+            amountCents: existing.amount_cents,
+            cardBrand: existing.card_brand,
+            cardLastFour: existing.card_last_four,
+            processorTransactionId: existing.processor_transaction_id,
+            receiptUrl: null,
+          },
+          order: {
+            id: order.id,
+            amountPaidCents: fresh?.amount_paid_cents ?? order.amount_paid_cents,
+            balanceDueCents: fresh?.balance_due_cents ?? order.balance_due_cents,
+          },
+        },
+        201,
+      );
+    }
+  }
+
   // Charge Square OUTSIDE the DB transaction (external network call).
   let result;
   try {
@@ -410,7 +447,7 @@ payments.post('/charge', async (c) => {
       orderId: order.id,
       sourceId,
       amountCents,
-      idempotencyKey: parsed.data.idempotencyKey ?? createId(),
+      idempotencyKey,
       // Saves the local simulator a cross-tenant order lookup.
       operatorId: c.var.operatorId,
     });
@@ -479,12 +516,19 @@ payments.post('/charge', async (c) => {
     return stripeErrorResponse(c, err);
   }
 
-  const settled = await recordSettledCharge(c.var.operatorId, order, amountCents, result, {
-    // Checkout is unauthenticated by design, so the strongest attribution we can
-    // honestly make is the order's own customer; the IP is what corroborates it.
-    actor: customerActor(order.customer_id, getClientIp((h) => c.req.header(h))),
-    authenticated3ds: false,
-  });
+  const settled = await recordSettledCharge(
+    c.var.operatorId,
+    order,
+    amountCents,
+    result,
+    {
+      // Checkout is unauthenticated by design, so the strongest attribution we can
+      // honestly make is the order's own customer; the IP is what corroborates it.
+      actor: customerActor(order.customer_id, getClientIp((h) => c.req.header(h))),
+      authenticated3ds: false,
+    },
+    idempotencyKey,
+  );
 
   return c.json(
     {
@@ -702,14 +746,26 @@ payments.post('/:id/refund', requireStaff, async (c) => {
     return stripeErrorResponse(c, err);
   }
 
-  const newRefunded = payment.refunded_cents + amountCents;
-  const newStatus = newRefunded >= payment.amount_cents ? 'REFUNDED' : 'PARTIAL_REFUND';
-
-  // Roll the order balance back. Load inside the tx for a consistent read.
+  // Roll the order balance back. Guard against a concurrent refund via an atomic
+  // compare-and-swap: the increment only lands while enough refundable headroom
+  // remains, so two refunds can't both compute from the same stale refunded_cents
+  // and over-refund the ledger past what the card actually captured.
+  let refundRaceLost = false;
   const updated = await withTenant(c.var.operatorId, async (tx) => {
+    const cas = await tx.payment.updateMany({
+      where: { id: payment.id, refunded_cents: { lte: payment.amount_cents - amountCents } },
+      data: { refunded_cents: { increment: amountCents } },
+    });
+    if (cas.count === 0) {
+      refundRaceLost = true;
+      return null;
+    }
+    const reread = await tx.payment.findUniqueOrThrow({ where: { id: payment.id } });
     const updatedPayment = await tx.payment.update({
       where: { id: payment.id },
-      data: { refunded_cents: newRefunded, status: newStatus },
+      data: {
+        status: reread.refunded_cents >= payment.amount_cents ? 'REFUNDED' : 'PARTIAL_REFUND',
+      },
     });
 
     const order = await tx.order.findUnique({ where: { id: payment.order_id } });
@@ -770,6 +826,13 @@ payments.post('/:id/refund', requireStaff, async (c) => {
     return { updatedPayment, orderSummary, orderBefore };
   });
 
+  if (refundRaceLost || !updated) {
+    // A concurrent refund consumed the remaining refundable amount between our
+    // pre-check and the ledger write. Report a conflict rather than record an
+    // over-refund (Stripe itself also caps refunds at the captured total).
+    return c.json({ error: 'Refund exceeds the refundable amount', code: 'REFUND_CONFLICT' }, 409);
+  }
+
   await recordAudit({
     operatorId: c.var.operatorId,
     actor: staffActor(c.var.auth, getClientIp((h) => c.req.header(h))),
@@ -792,7 +855,7 @@ payments.post('/:id/refund', requireStaff, async (c) => {
       refunded_now_cents: amountCents,
       // A partial refund and a final one are different events to a reconciler,
       // and the amounts alone do not say which this was.
-      partial: newStatus === 'PARTIAL_REFUND',
+      partial: updated.updatedPayment.status === 'PARTIAL_REFUND',
       payment_amount_cents: payment.amount_cents,
       order_id: payment.order_id,
       order_number: updated.orderBefore?.orderNumber ?? null,

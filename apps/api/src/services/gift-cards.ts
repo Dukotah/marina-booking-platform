@@ -204,6 +204,22 @@ export async function redeemGiftCard(
       throw new GiftCardError('NOTHING_TO_APPLY', 'This order has no outstanding balance to cover.');
     }
 
+    // Atomically claim the funds FIRST: the decrement only lands while the card
+    // still holds at least `applied`, so two concurrent redeems can't both spend
+    // the same balance. The loser matches 0 rows and is rejected before any Payment
+    // is written, so the card can never be over-drawn.
+    const claim = await tx.giftCard.updateMany({
+      where: { id: card.id, status: { not: 'REDEEMED' }, balance_cents: { gte: applied } },
+      data: { balance_cents: { decrement: applied } },
+    });
+    if (claim.count === 0) {
+      throw new GiftCardError('INSUFFICIENT_BALANCE', 'This gift card balance changed — please try again.');
+    }
+    const afterClaim = await tx.giftCard.findUniqueOrThrow({ where: { id: card.id } });
+    if (afterClaim.balance_cents <= 0 && afterClaim.status !== 'REDEEMED') {
+      await tx.giftCard.update({ where: { id: card.id }, data: { status: 'REDEEMED' } });
+    }
+
     const payment = await tx.payment.create({
       data: {
         operator_id: operatorId,
@@ -213,13 +229,6 @@ export async function redeemGiftCard(
         amount_cents: applied,
         gift_card_id: card.id,
       },
-    });
-
-    const newCardBalance = card.balance_cents - applied;
-    const newCardStatus = newCardBalance <= 0 ? 'REDEEMED' : 'ACTIVE';
-    await tx.giftCard.update({
-      where: { id: card.id },
-      data: { balance_cents: newCardBalance, status: newCardStatus },
     });
 
     const newAmountPaid = order.amount_paid_cents + applied;
@@ -240,7 +249,7 @@ export async function redeemGiftCard(
           paymentId: payment.id,
           giftCardId: card.id,
           appliedCents: applied,
-          cardBalanceCents: newCardBalance,
+          cardBalanceCents: afterClaim.balance_cents,
         } as Prisma.InputJsonValue,
       },
     });
@@ -249,8 +258,8 @@ export async function redeemGiftCard(
       giftCardId: card.id,
       code: card.code,
       appliedCents: applied,
-      cardBalanceCents: newCardBalance,
-      cardStatus: newCardStatus,
+      cardBalanceCents: afterClaim.balance_cents,
+      cardStatus: afterClaim.balance_cents <= 0 ? 'REDEEMED' : 'ACTIVE',
       orderAmountPaidCents: newAmountPaid,
       orderBalanceDueCents: newBalanceDue,
     };

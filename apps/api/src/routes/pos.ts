@@ -399,19 +399,32 @@ pos.post('/sale', async (c) => {
             status: 'UPCOMING',
           },
         });
-        await tx.timeslot.update({
-          where: { id: b.timeslotId },
-          data: { capacity_booked: { increment: b.quantity } },
-        });
+        // Atomic guarded increment: capacity is re-checked against the CURRENT row
+        // inside the transaction, closing the TOCTOU window between the pre-check
+        // above and this write. A concurrent sale that filled the slot makes this
+        // match 0 rows, rolling the whole sale back instead of overbooking.
+        const bumped = await tx.$executeRaw`
+          UPDATE "Timeslot"
+          SET capacity_booked = capacity_booked + ${b.quantity}
+          WHERE id = ${b.timeslotId}
+            AND capacity_booked + ${b.quantity} <= capacity_total`;
+        if (bumped === 0) {
+          throw new SaleError(409, `Timeslot ${b.timeslotId} has insufficient capacity`);
+        }
       }
 
-      // Merchandise inventory decrements (only when stock is tracked).
+      // Merchandise inventory decrements (only when stock is tracked). Guarded so
+      // concurrent sales can't drive on_hand_qty negative.
       for (const m of resolvedMerch) {
         if (m.onHandQty !== null) {
-          await tx.merchandiseItem.update({
-            where: { id: m.line.merchandiseId },
-            data: { on_hand_qty: { decrement: m.line.quantity } },
-          });
+          const decremented = await tx.$executeRaw`
+            UPDATE "MerchandiseItem"
+            SET on_hand_qty = on_hand_qty - ${m.line.quantity}
+            WHERE id = ${m.line.merchandiseId}
+              AND on_hand_qty >= ${m.line.quantity}`;
+          if (decremented === 0) {
+            throw new SaleError(409, `Insufficient stock for ${m.name}`);
+          }
         }
       }
 

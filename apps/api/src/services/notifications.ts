@@ -252,7 +252,7 @@ export async function sendBookingConfirmation(input: {
     const element = BookingConfirmation({
       ...brand,
       orderNumber: order.order_number,
-      customerName: order.customer.first_name || fullName(order.customer.first_name, order.customer.last_name),
+      customerName: fullName(order.customer.first_name, order.customer.last_name) || order.customer.first_name || 'Guest',
       activityName: facts.activityName,
       dateLabel: facts.dateLabel,
       timeLabel: facts.timeLabel,
@@ -279,7 +279,7 @@ export async function sendBookingConfirmation(input: {
         date: facts.dateLabel,
         time: facts.timeLabel,
         brand_name: brand.brandName,
-        customer_name: order.customer.first_name || fullName(order.customer.first_name, order.customer.last_name),
+        customer_name: fullName(order.customer.first_name, order.customer.last_name) || order.customer.first_name || 'Guest',
       },
     });
 
@@ -411,7 +411,7 @@ export async function sendReminder(input: {
     const element = BookingReminder({
       ...brand,
       orderNumber: order.order_number,
-      customerName: order.customer.first_name || fullName(order.customer.first_name, order.customer.last_name),
+      customerName: fullName(order.customer.first_name, order.customer.last_name) || order.customer.first_name || 'Guest',
       activityName: facts.activityName,
       dateLabel: facts.dateLabel,
       timeLabel: facts.timeLabel,
@@ -488,7 +488,7 @@ export async function sendRefundReceipt(input: {
     const element = RefundReceipt({
       ...brand,
       orderNumber: order.order_number,
-      customerName: order.customer.first_name || fullName(order.customer.first_name, order.customer.last_name),
+      customerName: fullName(order.customer.first_name, order.customer.last_name) || order.customer.first_name || 'Guest',
       refundedCents,
       reason: input.reason ?? 'Refund processed',
       originalTotalCents: order.total_cents,
@@ -640,6 +640,38 @@ export async function runDueReminders(
   let noop = 0;
   let smsDelivered = 0;
   for (const orderId of dueIds) {
+    // CLAIM this order's reminder BEFORE sending. A partial unique index on
+    // OrderEvent(operator_id, order_id) WHERE type='REMINDER_SENT' lets only one
+    // concurrent sweep insert this row; a second sweep loses with P2002 and skips,
+    // so an order is never reminded twice even if two cron triggers overlap.
+    let claimId: string;
+    try {
+      const claim = await db.orderEvent.create({
+        data: {
+          operator_id: operatorId,
+          order_id: orderId,
+          type: REMINDER_EVENT_TYPE,
+          description: 'Pre-arrival reminder processing…',
+          actor: opts.actor ?? 'system',
+          metadata: { delivered: false } as Prisma.InputJsonValue,
+        },
+        select: { id: true },
+      });
+      claimId = claim.id;
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        // Another sweep already claimed this order's reminder — skip it.
+        continue;
+      }
+      // A claim failure must not crash the whole sweep — log and move on.
+      await captureError(err, {
+        operatorId,
+        route: 'notifications.runDueReminders',
+        extra: { phase: 'claim', order_id: orderId },
+      });
+      continue;
+    }
+
     // Send both channels on the same pass. Each is gated independently by its own
     // provider config (Resend for email, Twilio for SMS) and never throws.
     let email: NotificationResult;
@@ -673,24 +705,30 @@ export async function runDueReminders(
 
     const channels = [email.sent ? 'email' : null, sms.sent ? 'SMS' : null].filter(Boolean);
 
-    // Stamp the audit event once (covers both channels) so this order isn't
-    // reconsidered next run — keeps the sweep idempotent even in dev with no keys.
-    await db.orderEvent.create({
-      data: {
-        operator_id: operatorId,
-        order_id: orderId,
-        type: REMINDER_EVENT_TYPE,
-        description: anySent
-          ? `Pre-arrival reminder sent (${channels.join(' + ')})`
-          : `Pre-arrival reminder processed (not delivered: email ${email.skippedReason ?? 'n/a'}; sms ${sms.skippedReason ?? 'n/a'})`,
-        actor: opts.actor ?? 'system',
-        metadata: {
-          delivered: anySent,
-          email: { delivered: email.sent, providerId: email.id ?? null, reason: email.skippedReason ?? null },
-          sms: { delivered: sms.sent, providerId: sms.id ?? null, reason: sms.skippedReason ?? null },
-        } as Prisma.InputJsonValue,
-      },
-    });
+    // Update the claim with the actual outcome (both channels covered by one event).
+    // Guarded so a DB hiccup here can't abort the remaining orders — the claim above
+    // already prevents a re-send.
+    try {
+      await db.orderEvent.update({
+        where: { id: claimId },
+        data: {
+          description: anySent
+            ? `Pre-arrival reminder sent (${channels.join(' + ')})`
+            : `Pre-arrival reminder processed (not delivered: email ${email.skippedReason ?? 'n/a'}; sms ${sms.skippedReason ?? 'n/a'})`,
+          metadata: {
+            delivered: anySent,
+            email: { delivered: email.sent, providerId: email.id ?? null, reason: email.skippedReason ?? null },
+            sms: { delivered: sms.sent, providerId: sms.id ?? null, reason: sms.skippedReason ?? null },
+          } as Prisma.InputJsonValue,
+        },
+      });
+    } catch (err) {
+      await captureError(err, {
+        operatorId,
+        route: 'notifications.runDueReminders',
+        extra: { phase: 'stamp', order_id: orderId },
+      });
+    }
   }
 
   return { operatorId, due: dueIds.length, delivered, noop, smsDelivered };
@@ -712,7 +750,13 @@ export async function runAllDueReminders(opts: {
 
   const perOperator: ReminderRunResult[] = [];
   for (const op of operators) {
-    perOperator.push(await runDueReminders(op.id, opts));
+    // Isolate operators: one operator's failure must not stop reminders for the rest.
+    try {
+      perOperator.push(await runDueReminders(op.id, opts));
+    } catch (err) {
+      await captureError(err, { operatorId: op.id, route: 'notifications.runAllDueReminders' });
+      perOperator.push({ operatorId: op.id, due: 0, delivered: 0, noop: 0, smsDelivered: 0 });
+    }
   }
 
   return {

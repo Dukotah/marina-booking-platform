@@ -309,11 +309,33 @@ export async function refundPaymentAction(input: {
 
   try {
     await withTenant(ctx.operatorId, async (tx) => {
+      // Serialize concurrent refunds of the same payment: lock the row first so the
+      // refundable-amount check reads a value no other refund can change under us.
+      await tx.$queryRaw`SELECT id FROM "Payment" WHERE id = ${input.paymentId} FOR UPDATE`;
+
       const payment = await tx.payment.findFirst({
         where: { id: input.paymentId },
         include: { order: { select: { id: true, order_number: true, total_cents: true, amount_paid_cents: true } } },
       });
       if (!payment) throw new ActionError('Payment not found.');
+
+      // A card refund moves real money and must go through the payments API (which
+      // owns the Stripe SDK) — recording it here without calling Stripe would claim
+      // money was returned when it wasn't. Only enforce when a real processor is
+      // configured; in dev/demo (fake payments) there is nothing to call, so a
+      // ledger-only refund is correct and must not be blocked.
+      const realPaymentsConfigured =
+        !!process.env.STRIPE_SECRET_KEY && process.env.DEV_FAKE_PAYMENTS !== 'true';
+      if (
+        realPaymentsConfigured &&
+        payment.method === 'CARD' &&
+        payment.processor === 'STRIPE' &&
+        !payment.is_manually_keyed
+      ) {
+        throw new ActionError(
+          'Card refunds must be issued through the payments endpoint (which calls Stripe) first, then recorded here.',
+        );
+      }
 
       const refundable = payment.amount_cents - payment.refunded_cents;
       if (refundable <= 0) throw new ActionError('This payment has already been fully refunded.');

@@ -236,6 +236,17 @@ export async function redeemGiftCertificate(
       throw new GiftCertificateError('NOTHING_TO_APPLY', 'This order has no outstanding balance to cover.');
     }
 
+    // Atomically claim the certificate (single-use): only the redeem that flips it
+    // from ACTIVE wins. A concurrent second redeem matches 0 rows and is rejected
+    // here, BEFORE any Payment is written, so a cert can never be double-spent.
+    const claim = await tx.giftCertificate.updateMany({
+      where: { id: cert.id, status: 'ACTIVE' },
+      data: { status: 'REDEEMED', redeemed_order_id: order.id, redeemed_at: new Date() },
+    });
+    if (claim.count === 0) {
+      throw new GiftCertificateError('ALREADY_REDEEMED', 'This gift certificate has already been redeemed.');
+    }
+
     const payment = await tx.payment.create({
       data: {
         operator_id: operatorId,
@@ -244,11 +255,6 @@ export async function redeemGiftCertificate(
         status: 'PAID',
         amount_cents: applied,
       },
-    });
-
-    await tx.giftCertificate.update({
-      where: { id: cert.id },
-      data: { status: 'REDEEMED', redeemed_order_id: order.id, redeemed_at: new Date() },
     });
 
     const newAmountPaid = order.amount_paid_cents + applied;
