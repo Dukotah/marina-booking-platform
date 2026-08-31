@@ -56,7 +56,7 @@ import {
   sandboxPaymentsEnabled,
   type SandboxChallengeRequired,
 } from '../services/payments-sandbox.js';
-import { cancelBooking, BookingError } from '../services/booking.js';
+import { cancelBooking, BookingError, isUniqueViolation } from '../services/booking.js';
 import {
   evaluateApproval,
   loadApprovalPolicy,
@@ -267,27 +267,19 @@ interface SettledCharge {
 }
 
 /**
- * Record an already-settled charge against the order, atomically.
- *
- * Both the straight-success path and the 3DS-completed path call this and nothing
- * else, which is what makes a challenged booking indistinguishable from an
- * unchallenged one: identical Payment row, identical balance arithmetic, identical
- * audit event. Anything that differed between the two would be a bug the ledger
- * eventually has to answer for. The `payment.capture` audit row is written here for
- * that same reason — recording it in each route would let the two drift.
+ * The atomic settle-charge write: Payment row + order ledger + PAYMENT event. Split
+ * out so the caller can catch a unique-key (P2002) conflict around the whole write.
  */
-async function recordSettledCharge(
+async function recordPaymentRow(
   operatorId: string,
   order: SettleableOrder,
   amountCents: number,
+  amountPaidCents: number,
+  balanceDueCents: number,
   result: StripePaymentResult,
-  audit: { actor: AuditActor; authenticated3ds: boolean },
   idempotencyKey?: string | null,
-): Promise<SettledCharge> {
-  const amountPaidCents = order.amount_paid_cents + amountCents;
-  const balanceDueCents = order.total_cents - amountPaidCents;
-
-  const payment = await withTenant(operatorId, async (tx) => {
+) {
+  return withTenant(operatorId, async (tx) => {
     const created = await tx.payment.create({
       data: {
         id: createId(),
@@ -331,6 +323,71 @@ async function recordSettledCharge(
 
     return created;
   });
+}
+
+/**
+ * Record an already-settled charge against the order, atomically.
+ *
+ * Both the straight-success path and the 3DS-completed path call this and nothing
+ * else, which is what makes a challenged booking indistinguishable from an
+ * unchallenged one: identical Payment row, identical balance arithmetic, identical
+ * audit event. Anything that differed between the two would be a bug the ledger
+ * eventually has to answer for. The `payment.capture` audit row is written here for
+ * that same reason — recording it in each route would let the two drift.
+ */
+async function recordSettledCharge(
+  operatorId: string,
+  order: SettleableOrder,
+  amountCents: number,
+  result: StripePaymentResult,
+  audit: { actor: AuditActor; authenticated3ds: boolean },
+  idempotencyKey?: string | null,
+): Promise<SettledCharge> {
+  const amountPaidCents = order.amount_paid_cents + amountCents;
+  const balanceDueCents = order.total_cents - amountPaidCents;
+
+  let payment: Awaited<ReturnType<typeof recordPaymentRow>>;
+  try {
+    payment = await recordPaymentRow(
+      operatorId,
+      order,
+      amountCents,
+      amountPaidCents,
+      balanceDueCents,
+      result,
+      idempotencyKey,
+    );
+  } catch (err) {
+    // A concurrent or retried charge under the SAME idempotency key already recorded
+    // this payment (unique operator_id+idempotency_key). Stripe dedups the charge by
+    // that same key, so no money moved twice — return the already-recorded payment
+    // instead of failing the retry with a 500. This closes the double-submit race the
+    // replay pre-check above narrows but can't fully eliminate.
+    if (idempotencyKey && isUniqueViolation(err)) {
+      const recovered = await withTenant(operatorId, async (tx) => {
+        const existing = await tx.payment.findFirst({ where: { idempotency_key: idempotencyKey } });
+        if (!existing) return null;
+        const freshOrder = await tx.order.findUnique({ where: { id: existing.order_id } });
+        return { existing, freshOrder };
+      });
+      if (recovered?.existing) {
+        const { existing, freshOrder } = recovered;
+        return {
+          payment: {
+            id: existing.id,
+            status: existing.status,
+            amountCents: existing.amount_cents,
+            cardBrand: existing.card_brand,
+            cardLastFour: existing.card_last_four,
+            processorTransactionId: existing.processor_transaction_id,
+          },
+          amountPaidCents: freshOrder?.amount_paid_cents ?? amountPaidCents,
+          balanceDueCents: freshOrder?.balance_due_cents ?? balanceDueCents,
+        };
+      }
+    }
+    throw err;
+  }
 
   // After the transaction, never inside it: a failed audit insert would abort the
   // whole tx and take the guest's settled payment with it (services/audit.ts).

@@ -133,7 +133,10 @@ export async function loadManifest(isoDate: string): Promise<ManifestData> {
       });
       for (const item of slot.order_items) {
         const durationMin = item.rate?.duration_minutes ?? 240;
-        const endMin = Math.min(startMin + durationMin, 24 * 60);
+        const rawEnd = startMin + durationMin;
+        const endMin = Math.min(rawEnd, 24 * 60);
+        const endsNextDay = rawEnd > 24 * 60;
+        const returnMin = rawEnd % (24 * 60);
         const cust = item.order.customer;
         const customerName = `${cust.first_name} ${cust.last_name}`.trim() || 'Guest';
 
@@ -148,6 +151,8 @@ export async function loadManifest(isoDate: string): Promise<ManifestData> {
           status: item.status,
           startMin,
           endMin,
+          returnMin,
+          endsNextDay,
           startISO: slot.datetime.toISOString(),
           waiverSigned: item.waiver_signed,
           balanceDueCents: item.order.balance_due_cents,

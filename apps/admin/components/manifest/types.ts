@@ -20,8 +20,14 @@ export interface ManifestBooking {
   status: OrderItemStatus;
   /** Minutes since midnight for the slot start. */
   startMin: number;
-  /** Minutes since midnight for the derived slot end (start + rate duration). */
+  /** Minutes since midnight for the derived slot end (start + rate duration),
+   *  clamped to 24:00 for same-day timeline positioning. */
   endMin: number;
+  /** Wall-clock return time in minutes since midnight — the honest end even for a
+   *  rate that runs past midnight (a 24h overnight from 8am returns 8am → 480). */
+  returnMin: number;
+  /** True when the rate duration runs past midnight into the next day. */
+  endsNextDay: boolean;
   /** ISO start time for tooltips/labels (operator-local wall clock as rendered). */
   startISO: string;
   waiverSigned: boolean;

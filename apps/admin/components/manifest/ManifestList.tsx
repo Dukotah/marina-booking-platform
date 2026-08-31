@@ -12,8 +12,6 @@ import {
   undoNoShowOrderItem,
 } from '../../app/manifest/actions';
 
-const MINUTES_PER_DAY = 24 * 60;
-
 /** "8:00 AM" from minutes-since-midnight (already operator-local). */
 function timeLabel(startMin: number): string {
   const h24 = Math.floor(startMin / 60);
@@ -24,14 +22,13 @@ function timeLabel(startMin: number): string {
 }
 
 /**
- * "2:00 PM" for a trip's return.
- *
- * `endMin` is clamped to 24*60 by the loader, and 1440 through `timeLabel` would come
- * out as "12:00 PM" — the wrong half of the day on the row that says when a boat is
- * due back. Wrapping the clock first turns it into midnight, which is what it is.
+ * "2:00 PM", or "8:00 AM (next day)" for a rate that runs past midnight (e.g. a 24h
+ * overnight rental). `returnMin` is the honest wall-clock return; `endsNextDay` says
+ * whether it lands on tomorrow — the old code clamped to midnight and printed a
+ * misleading "12:00 AM" for every overnight trip.
  */
-function returnLabel(endMin: number): string {
-  return timeLabel(endMin % MINUTES_PER_DAY);
+function returnLabel(it: ManifestListItem): string {
+  return `${timeLabel(it.returnMin)}${it.endsNextDay ? ' (next day)' : ''}`;
 }
 
 /** "25 min" / "1 hr 05 min" — how late a boat is, said the way a dock says it. */
@@ -53,7 +50,7 @@ function lateLabel(minutes: number): string {
  */
 function bookingLabel(it: ManifestListItem): string {
   return `${it.customerName}, ${it.activityName} at ${timeLabel(it.startMin)}, back by ${returnLabel(
-    it.endMin,
+    it,
   )}`;
 }
 
@@ -289,7 +286,7 @@ export function ManifestList({
                   <div className="whitespace-nowrap text-xs text-slate-600">
                     back by{' '}
                     <span className="font-semibold tabular-nums text-slate-700">
-                      {returnLabel(it.endMin)}
+                      {returnLabel(it)}
                     </span>
                   </div>
                   {late !== null ? (

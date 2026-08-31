@@ -14,8 +14,6 @@ import {
   undoNoShowOrderItem,
 } from '../../app/manifest/actions';
 
-const MINUTES_PER_DAY = 24 * 60;
-
 /** "9:00 AM" from minutes-since-midnight (already operator-local). */
 function timeLabel(startMin: number): string {
   const h24 = Math.floor(startMin / 60);
@@ -23,11 +21,6 @@ function timeLabel(startMin: number): string {
   const period = h24 >= 12 ? 'PM' : 'AM';
   const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
   return `${h12}:${String(m).padStart(2, '0')} ${period}`;
-}
-
-/** Return time; wraps 24:00 back to midnight so a boat due back at day's end reads right. */
-function returnLabel(endMin: number): string {
-  return timeLabel(endMin % MINUTES_PER_DAY);
 }
 
 function lateLabel(minutes: number): string {
@@ -48,8 +41,11 @@ interface Departure {
   activityName: string;
   color: string;
   startMin: number;
-  /** Latest return across the slot's bookings, or null when the slot is empty. */
-  endMin: number | null;
+  /** Wall-clock return (minutes since midnight) of the latest-ending booking, or
+   *  null when the slot is empty. */
+  returnMin: number | null;
+  /** True when that latest booking runs past midnight into the next day. */
+  endsNextDay: boolean;
   capacityBooked: number;
   capacityTotal: number;
   guides: { id: string; name: string }[];
@@ -116,14 +112,18 @@ export function DaySchedule({
       }
       for (const slot of row.slots) {
         const bookings = (byId.get(slot.timeslotId) ?? []).slice().sort((a, b) => a.startMin - b.startMin);
-        const endMin = bookings.length ? Math.max(...bookings.map((b) => b.endMin)) : null;
+        // Latest end across the slot's bookings, measured on an absolute scale so an
+        // overnight rate (returns next day) sorts after a same-day one.
+        const ends = bookings.map((b) => (b.endsNextDay ? b.returnMin + 24 * 60 : b.returnMin));
+        const maxEnd = ends.length ? Math.max(...ends) : null;
         out.push({
           key: slot.timeslotId,
           activityId: row.activityId,
           activityName: row.activityName,
           color: row.color,
           startMin: slot.startMin,
-          endMin,
+          returnMin: maxEnd !== null ? maxEnd % (24 * 60) : null,
+          endsNextDay: maxEnd !== null && maxEnd >= 24 * 60,
           capacityBooked: slot.capacityBooked,
           capacityTotal: slot.capacityTotal,
           guides: slot.guides.map((g) => ({ id: g.assignmentId, name: g.guideName || g.guideEmail })),
@@ -292,11 +292,12 @@ function DepartureCard({
             </span>
             <div>
               <div className="text-base font-semibold text-slate-900">{d.activityName}</div>
-              {d.endMin !== null ? (
+              {d.returnMin !== null ? (
                 <div className="text-sm text-slate-600">
                   back by{' '}
                   <span className="font-semibold tabular-nums text-slate-700">
-                    {returnLabel(d.endMin)}
+                    {timeLabel(d.returnMin)}
+                    {d.endsNextDay ? ' (next day)' : ''}
                   </span>
                 </div>
               ) : null}
