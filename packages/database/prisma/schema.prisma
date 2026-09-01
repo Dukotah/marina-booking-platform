@@ -582,6 +582,7 @@ model Order {
   payments Payment[]
   notes    Note[]
   history  OrderEvent[]
+  charges  OrderCharge[]
   channel_bookings ChannelBooking[]
 
   @@unique([operator_id, id])
@@ -833,6 +834,27 @@ model OrderEvent {
   actor       String?
   metadata    Json?
   created_at  DateTime @default(now())
+
+  @@index([operator_id])
+  @@index([order_id])
+}
+
+/// An ad-hoc charge added to an existing order AFTER booking — most often fuel used,
+/// added from the manifest when the boat returns, but also cleaning/damage/late fees.
+/// The amount is added to the order's total + balance_due; settlement then runs
+/// through the normal collectBalance path (cash or card).
+model OrderCharge {
+  id           String   @id @default(cuid())
+  operator_id  String
+  order_id     String
+  order        Order    @relation(fields: [operator_id, order_id], references: [operator_id, id], onDelete: Cascade)
+  /// FUEL | CLEANING | DAMAGE | LATE | OTHER — kept as a free string like OrderEvent.type.
+  category     String
+  /// Staff-entered note shown on the receipt/manifest, e.g. "Fuel — half tank".
+  label        String
+  amount_cents Int
+  created_by   String?
+  created_at   DateTime @default(now())
 
   @@index([operator_id])
   @@index([order_id])

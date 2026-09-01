@@ -461,6 +461,105 @@ export async function collectBalanceAction(input: {
   }
 }
 
+/** The post-trip charge kinds the manifest offers. Free string in the DB (like
+ *  OrderEvent.type), validated to this set at the boundary. */
+const CHARGE_CATEGORIES = ['FUEL', 'CLEANING', 'DAMAGE', 'LATE', 'OTHER'] as const;
+
+function defaultChargeLabel(category: string): string {
+  switch (category) {
+    case 'FUEL':
+      return 'Fuel';
+    case 'CLEANING':
+      return 'Cleaning';
+    case 'DAMAGE':
+      return 'Damage';
+    case 'LATE':
+      return 'Late return';
+    default:
+      return 'Charge';
+  }
+}
+
+/**
+ * Add an ad-hoc charge (fuel, cleaning, damage, late fee) to an existing order — the
+ * post-trip "charge the boat for the fuel it used" flow run from the manifest when a
+ * boat returns. Records an OrderCharge line and adds the amount to the order's total
+ * + balance_due; the staff then settle that new balance with cash or card via
+ * collectBalanceAction. Direct DB write per D-007 (no processor involved here).
+ */
+export async function addOrderChargeAction(input: {
+  orderId: string;
+  category: string;
+  label?: string;
+  amountCents: number;
+}): Promise<ActionResult> {
+  const auth = await authorize('order:write', 'You do not have permission to add charges.');
+  if ('denied' in auth) return auth.denied;
+  const { ctx } = auth;
+
+  const amountCents = Math.trunc(input.amountCents);
+  if (!Number.isFinite(amountCents) || amountCents <= 0) {
+    return fail('Enter a charge amount greater than zero.');
+  }
+  if (amountCents > 1_000_000) {
+    return fail('That charge looks too large — enter dollars, not cents.');
+  }
+  const category = (CHARGE_CATEGORIES as readonly string[]).includes(input.category)
+    ? input.category
+    : 'OTHER';
+  const label = cleanReason(input.label) ?? defaultChargeLabel(category);
+
+  try {
+    await withTenant(ctx.operatorId, async (tx) => {
+      const order = await tx.order.findFirst({
+        where: { id: input.orderId },
+        select: { id: true, order_number: true, total_cents: true, balance_due_cents: true },
+      });
+      if (!order) throw new ActionError('Order not found.');
+
+      await tx.orderCharge.create({
+        data: {
+          id: createId(),
+          operator_id: ctx.operatorId,
+          order_id: order.id,
+          category,
+          label,
+          amount_cents: amountCents,
+          created_by: ctx.auth.userId,
+        },
+      });
+
+      await tx.order.update({
+        where: { id: order.id },
+        data: {
+          total_cents: order.total_cents + amountCents,
+          balance_due_cents: order.balance_due_cents + amountCents,
+        },
+      });
+
+      await tx.orderEvent.create({
+        data: {
+          id: createId(),
+          operator_id: ctx.operatorId,
+          order_id: order.id,
+          type: 'CHARGE_ADDED',
+          description: `Added ${label} charge of $${(amountCents / 100).toFixed(2)}`,
+          actor: ctx.auth.userId,
+          metadata: { category, label, amountCents } as Prisma.InputJsonValue,
+        },
+      });
+    });
+  } catch (err) {
+    if (err instanceof ActionError) return fail(err.message);
+    console.error('[orders] addOrderChargeAction failed:', err);
+    return fail('Could not add the charge. Please try again.');
+  }
+
+  revalidateOrder(input.orderId);
+  revalidatePath('/manifest');
+  return ok(`Added ${label} — $${(amountCents / 100).toFixed(2)}. Collect it below.`);
+}
+
 /** Internal control-flow error mapped to a user-facing message inside actions. */
 class ActionError extends Error {
   constructor(message: string) {

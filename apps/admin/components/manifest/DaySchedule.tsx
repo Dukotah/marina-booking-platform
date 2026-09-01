@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
-import { AlertTriangle, Check, UserX, RotateCcw, Phone, Users, Ship } from 'lucide-react';
+import { AlertTriangle, Check, UserX, RotateCcw, Phone, Users, Ship, Plus } from 'lucide-react';
 import { formatUSD } from '../../lib/format';
 import { cn } from '../../lib/cn';
 import { localMinutesOfDay, todayIsoIn } from './tz';
@@ -13,6 +13,7 @@ import {
   markNoShowOrderItem,
   undoNoShowOrderItem,
 } from '../../app/manifest/actions';
+import { addOrderChargeAction, collectBalanceAction } from '../../app/orders/actions';
 
 /** "9:00 AM" from minutes-since-midnight (already operator-local). */
 function timeLabel(startMin: number): string {
@@ -155,13 +156,17 @@ export function DaySchedule({
     return late > 0 ? late : null;
   }
 
-  function run(id: string, success: string, action: () => Promise<{ ok: boolean; error?: string }>) {
+  function run(
+    id: string,
+    success: string,
+    action: () => Promise<{ ok: boolean; error?: string; message?: string }>,
+  ) {
     setError(null);
     setAnnouncement('');
     startTransition(async () => {
       const res = await action();
       if (!res.ok) {
-        setError(res.error ?? 'Could not update the booking.');
+        setError(res.error ?? res.message ?? 'Could not update the booking.');
         return;
       }
       setAnnouncement(success);
@@ -342,7 +347,7 @@ function DepartureCard({
               <li
                 key={b.orderItemId}
                 className={cn(
-                  'flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3 sm:px-5',
+                  'px-4 py-3 sm:px-5',
                   late !== null
                     ? 'bg-rose-50/60'
                     : b.status === 'CHECKED_IN'
@@ -352,6 +357,7 @@ function DepartureCard({
                         : '',
                 )}
               >
+                <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="text-base font-medium text-slate-900">{b.customerName}</span>
@@ -464,6 +470,15 @@ function DepartureCard({
                 ) : (
                   <StatusPill status={b.status} />
                 )}
+                </div>
+                {showCheckIn ? (
+                  <BookingCharge
+                    orderId={b.orderId}
+                    balanceDueCents={b.balanceDueCents}
+                    run={run}
+                    isPending={isPending}
+                  />
+                ) : null}
               </li>
             );
           })}
@@ -483,4 +498,148 @@ function StatusPill({ status }: { status: ManifestBooking['status'] }) {
   };
   const s = map[status] ?? { label: status, cls: 'bg-slate-100 text-slate-600' };
   return <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${s.cls}`}>{s.label}</span>;
+}
+
+/**
+ * Post-trip charging on a reservation: add a fuel/cleaning/damage/late charge (the
+ * boat came back, tank's half empty), which lands on the order's balance, then settle
+ * that balance with cash or card right here. This is the manifest's real job once the
+ * "utilization" novelty wears off — running the dock when boats return.
+ */
+function BookingCharge({
+  orderId,
+  balanceDueCents,
+  run,
+  isPending,
+}: {
+  orderId: string;
+  balanceDueCents: number;
+  run: (
+    id: string,
+    success: string,
+    action: () => Promise<{ ok: boolean; error?: string; message?: string }>,
+  ) => void;
+  isPending: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [amount, setAmount] = useState('');
+  const [category, setCategory] = useState('FUEL');
+  const [note, setNote] = useState('');
+
+  function submit() {
+    const dollars = parseFloat(amount);
+    if (!Number.isFinite(dollars) || dollars <= 0) return;
+    const cents = Math.round(dollars * 100);
+    run(orderId, `Added ${category.toLowerCase()} charge of $${dollars.toFixed(2)}.`, () =>
+      addOrderChargeAction({ orderId, category, label: note.trim() || undefined, amountCents: cents }),
+    );
+    setOpen(false);
+    setAmount('');
+    setNote('');
+    setCategory('FUEL');
+  }
+
+  return (
+    <div className="mt-2 border-t border-slate-100 pt-2">
+      {balanceDueCents > 0 ? (
+        <div className="mb-2 flex flex-wrap items-center gap-2 text-sm">
+          <span className="font-semibold tabular-nums text-rose-700">
+            {formatUSD(balanceDueCents)} to collect
+          </span>
+          <button
+            type="button"
+            disabled={isPending}
+            onClick={() =>
+              run(orderId, 'Marked paid in cash.', () => collectBalanceAction({ orderId, method: 'CASH' }))
+            }
+            className="inline-flex min-h-9 items-center rounded-md border border-slate-300 px-2.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          >
+            Mark paid (cash)
+          </button>
+          <button
+            type="button"
+            disabled={isPending}
+            onClick={() =>
+              run(orderId, 'Charged the card on file.', () => collectBalanceAction({ orderId, method: 'CARD' }))
+            }
+            className="inline-flex min-h-9 items-center rounded-md bg-slate-900 px-2.5 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
+          >
+            Charge card
+          </button>
+        </div>
+      ) : null}
+
+      {open ? (
+        <div className="flex flex-wrap items-end gap-2">
+          <label className="text-xs font-medium text-slate-600">
+            Amount
+            <div className="mt-0.5 flex items-center rounded-md border border-slate-300 bg-white px-2">
+              <span className="text-slate-500">$</span>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                placeholder="0.00"
+                aria-label="Charge amount in dollars"
+                className="w-20 border-0 py-1.5 text-sm focus:outline-none focus:ring-0"
+                autoFocus
+              />
+            </div>
+          </label>
+          <label className="text-xs font-medium text-slate-600">
+            For
+            <select
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              aria-label="Charge category"
+              className="mt-0.5 block rounded-md border border-slate-300 bg-white py-1.5 pl-2 pr-7 text-sm"
+            >
+              <option value="FUEL">Fuel</option>
+              <option value="CLEANING">Cleaning</option>
+              <option value="DAMAGE">Damage</option>
+              <option value="LATE">Late return</option>
+              <option value="OTHER">Other</option>
+            </select>
+          </label>
+          <label className="min-w-[8rem] flex-1 text-xs font-medium text-slate-600">
+            Note (optional)
+            <input
+              type="text"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="e.g. half tank"
+              aria-label="Charge note"
+              className="mt-0.5 block w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm"
+            />
+          </label>
+          <div className="flex gap-1.5">
+            <button
+              type="button"
+              disabled={isPending || !amount.trim()}
+              onClick={submit}
+              className="inline-flex min-h-9 items-center rounded-md bg-emerald-700 px-3 text-sm font-semibold text-white hover:bg-emerald-800 disabled:opacity-50"
+            >
+              Add
+            </button>
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              className="inline-flex min-h-9 items-center rounded-md border border-slate-300 px-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100"
+        >
+          <Plus className="h-3.5 w-3.5" aria-hidden /> Add fuel / charge
+        </button>
+      )}
+    </div>
+  );
 }

@@ -1,6 +1,5 @@
 import { AdminShell, PageHeader } from '../../components/shell';
 import { ManifestViews } from '../../components/manifest/ManifestViews';
-import { ManifestUtilization } from '../../components/manifest/ManifestUtilization';
 import { GuideScheduler } from '../../components/manifest/GuideScheduler';
 import { DateNav } from '../../components/manifest/DateNav';
 import {
@@ -53,39 +52,42 @@ export default async function ManifestPage({ searchParams }: ManifestPageProps) 
     <AdminShell>
       <PageHeader
         title="Manifest"
-        description="Your whole day at a glance — color-coded by activity, with one-tap check-in."
+        description="Run the dock — check guests in, mark returns, and charge fuel or extras to a booking when the boat comes back."
         actions={<DateNav date={isoDate} stepDays={1} label={label} />}
       />
 
       <div className="mb-5 flex flex-wrap gap-3">
-        <SummaryChip label="Activities" value={String(rows.length)} />
         <SummaryChip label="Bookings" value={String(totalBookings)} />
         <SummaryChip
           label="Checked in"
           value={`${checkedIn}/${totalBookings}`}
           tone={checkedIn > 0 ? 'emerald' : 'slate'}
         />
+        <SummaryChip label="Activities" value={String(rows.length)} />
         <SummaryChip
-          label="Utilization"
+          label="Capacity"
           value={`${capacityBooked}/${capacityTotal} · ${utilizationPct}%`}
           tone={utilizationPct >= 80 ? 'emerald' : 'slate'}
         />
       </div>
 
-      <ManifestUtilization rows={rows} />
-
-      <FleetStatus
-        resources={fleet}
-        canManage={canManageFleet}
-        defaultFromISO={isoDate}
-        todayISO={todayIsoIn(timeZone)}
-      />
-
-      <GuideScheduler rows={rows} roster={roster} />
-
+      {/* The day's departures + per-booking ops (check-in, returns, fuel/charges) —
+          the real work of the manifest. Utilization is now a summary chip above,
+          not the hero it used to be. */}
       <ManifestViews rows={rows} timeZone={timeZone} isoDate={isoDate} />
 
       <Legend />
+
+      {/* Secondary day-of ops, kept but demoted below the schedule. */}
+      <div className="mt-8 space-y-6">
+        <FleetStatus
+          resources={fleet}
+          canManage={canManageFleet}
+          defaultFromISO={isoDate}
+          todayISO={todayIsoIn(timeZone)}
+        />
+        <GuideScheduler rows={rows} roster={roster} />
+      </div>
     </AdminShell>
   );
 }
