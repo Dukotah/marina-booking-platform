@@ -753,8 +753,14 @@ export function CheckoutClient({
                 className="w-full"
                 loading={submitting}
                 // Reserve mode never needs online payment configured — it takes no
-                // card here — so the config guard only gates the card path.
-                disabled={submitDisabled}
+                // card here — so the config guard only gates the card path. The
+                // `submitting` disable is the in-flight double-submit guard: a
+                // second click (double-tap, slow connection) must not re-enter the
+                // handler while the first request is still in the air. The API's
+                // idempotency key already collapses a replay to one order, but the
+                // button never even letting a second submit fire is the first line
+                // of defence and gives the guest immediate feedback.
+                disabled={submitDisabled || submitting}
               >
                 {submitLabel}
               </Button>
@@ -800,7 +806,10 @@ export function CheckoutClient({
             size="lg"
             className="w-full"
             loading={submitting}
-            disabled={submitDisabled}
+            // Same in-flight double-submit guard as the in-flow button above:
+            // this mobile bar submits the same form, so it must lock the moment a
+            // submit is in the air too.
+            disabled={submitDisabled || submitting}
             tabIndex={-1}
           >
             <span className="flex w-full items-center justify-between gap-3">
