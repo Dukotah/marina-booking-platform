@@ -135,7 +135,7 @@ function SandboxSheet({
       <div
         role="dialog"
         aria-modal="true"
-        aria-label={`${request.label} (sandbox)`}
+        aria-label={request.label}
         className="w-full max-w-sm rounded-t-2xl bg-white p-5 shadow-xl sm:rounded-2xl"
         onKeyDown={(e) => {
           if (e.key === 'Escape') onChoose({ action: 'cancel' });
@@ -143,9 +143,6 @@ function SandboxSheet({
       >
         <div className="flex items-center justify-between">
           <p className="text-sm font-semibold text-slate-900">{request.label}</p>
-          <span className="rounded bg-violet-100 px-1.5 py-0.5 text-xs font-medium text-violet-700">
-            Sandbox
-          </span>
         </div>
 
         <dl className="mt-4 space-y-1.5">
@@ -361,12 +358,6 @@ export function WalletExpress({
         )}
         {busy ? 'Completing your booking…' : driver.label}
       </button>
-
-      {config.mode === 'sandbox' && (
-        <p className="text-center text-xs text-slate-400">
-          Sandbox wallet — settled by the local payment simulator, no real card.
-        </p>
-      )}
 
       {blocked && (
         <p id="wallet-blocked" className="text-center text-xs text-slate-500">
