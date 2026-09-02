@@ -5,7 +5,7 @@
  *
  * All money is integer cents.
  */
-import type { ActivityCategory } from '@/lib/api';
+import type { ActivityCategory, ActivityFee } from '@/lib/api';
 
 /** The fully-resolved, validated booking selection passed to the client form. */
 export interface CheckoutSelection {
@@ -18,6 +18,13 @@ export interface CheckoutSelection {
   waiverRequired: boolean;
   minParticipants: number;
   maxParticipants: number;
+  /**
+   * Fees the API will apply at booking (tax + processing + any surcharges), so
+   * checkout can show the SAME total the confirmation will — not a pre-tax
+   * estimate. Empty when the API did not supply them (older API); the breakdown
+   * then falls back to an explicit "estimated" label.
+   */
+  fees: ActivityFee[];
   rate: {
     id: string;
     name: string;

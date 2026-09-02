@@ -368,20 +368,21 @@ export function CheckoutClient({
     return subtotalCents - discountCents;
   }, [selection.rate.priceCents, quantity, promo]);
 
-  // Client-side estimate of the amount the guest will owe at the marina in reserve
-  // mode. Taxes/fees are added authoritatively by the API at booking time and shown
-  // on the confirmation, so this is the "estimated total" figure — labelled as such.
+  // The amount the guest will owe at the marina in reserve mode. The API supplies
+  // the operator's fees (tax + processing + surcharges) with the selection, so this
+  // runs the SAME `calculatePricing` the booking runs and matches the confirmation
+  // total to the cent — this figure is what the submit button commits the guest to.
   const reserveDueCents = useMemo(() => {
     const { totalCents } = calculatePricing({
       items: [{ unitPriceCents: selection.rate.priceCents, quantity }],
-      fees: [],
+      fees: selection.fees,
       promo: promo
         ? { discountType: promo.discountType, discountValue: promo.discountValue }
         : null,
       tipCents,
     });
     return totalCents;
-  }, [selection.rate.priceCents, quantity, promo, tipCents]);
+  }, [selection.rate.priceCents, selection.fees, quantity, promo, tipCents]);
 
   // A failed validation pass is silent to a screen reader unless something moves
   // focus — the guest would otherwise press "Complete booking" and hear nothing.
@@ -713,6 +714,7 @@ export function CheckoutClient({
                         quantity={quantity}
                         promo={promo}
                         tipCents={tipCents}
+                        fees={selection.fees}
                       />
                     </div>
                   </CardContent>

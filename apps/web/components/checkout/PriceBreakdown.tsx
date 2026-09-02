@@ -8,12 +8,19 @@
  * math matches the platform contract exactly (integer cents throughout).
  *
  * Taxes and processing fees are operator-configured and authoritatively applied
- * by the API at booking time; they are not exposed to the customer catalog, so
- * we label the customer-visible figure as an estimate and note that taxes/fees
- * are added at payment. The confirmation page shows the final, authoritative
- * totals returned by the API.
+ * by the API at booking time. The API now supplies those fee specs to the
+ * checkout (via the activity detail), so we feed them into the same
+ * `calculatePricing` the booking uses and show the tax + processing lines and a
+ * total that matches the confirmation to the cent — the number on the submit
+ * button is the number the guest is committing to.
+ *
+ * If the API did not supply fees (older API), `fees` is empty: the tax/processing
+ * lines simply don't render and the total is labelled an estimate, with the
+ * "taxes/fees added at payment" note. The confirmation page always shows the
+ * final, authoritative totals returned by the API.
  */
 import { calculatePricing, formatUSD } from '@marina/core';
+import type { ActivityFee } from '@/lib/api';
 import type { AppliedPromo } from './types';
 
 interface PriceBreakdownProps {
@@ -21,6 +28,12 @@ interface PriceBreakdownProps {
   quantity: number;
   promo: AppliedPromo | null;
   tipCents: number;
+  /**
+   * Operator fees (tax + processing + surcharges) the API will apply. When
+   * supplied, the breakdown shows the real total; when empty, it falls back to a
+   * pre-fee estimate with a disclaimer.
+   */
+  fees: ActivityFee[];
 }
 
 function Row({
@@ -52,15 +65,21 @@ export function PriceBreakdown({
   quantity,
   promo,
   tipCents,
+  fees,
 }: PriceBreakdownProps) {
   const pricing = calculatePricing({
     items: [{ unitPriceCents, quantity }],
-    fees: [],
+    fees,
     promo: promo
       ? { discountType: promo.discountType, discountValue: promo.discountValue }
       : null,
     tipCents,
   });
+
+  // When the API supplied fees we can show the real total the confirmation will
+  // show; only then are the tax/processing lines meaningful. Without them we fall
+  // back to the pre-fee "estimated total" and keep the disclaimer.
+  const hasFees = fees.length > 0;
 
   return (
     <div className="space-y-2">
@@ -74,16 +93,28 @@ export function PriceBreakdown({
           value={`−${formatUSD(pricing.discountCents)}`}
         />
       )}
+      {pricing.taxCents > 0 && (
+        <Row label="Tax" value={formatUSD(pricing.taxCents)} muted />
+      )}
+      {pricing.processingFeeCents > 0 && (
+        <Row label="Processing fee" value={formatUSD(pricing.processingFeeCents)} muted />
+      )}
       {pricing.tipCents > 0 && (
         <Row label="Tip" value={formatUSD(pricing.tipCents)} />
       )}
 
       <div className="my-2 border-t border-slate-200" />
 
-      <Row label="Estimated total" value={formatUSD(pricing.totalCents)} emphasis />
-      <p className="pt-1 text-xs text-slate-400">
-        Applicable taxes and processing fees are calculated and added at payment.
-      </p>
+      <Row
+        label={hasFees ? 'Total' : 'Estimated total'}
+        value={formatUSD(pricing.totalCents)}
+        emphasis
+      />
+      {!hasFees && (
+        <p className="pt-1 text-xs text-slate-400">
+          Applicable taxes and processing fees are calculated and added at payment.
+        </p>
+      )}
     </div>
   );
 }

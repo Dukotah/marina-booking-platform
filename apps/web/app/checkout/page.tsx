@@ -132,6 +132,10 @@ export default async function CheckoutPage({ searchParams }: CheckoutPageProps) 
     waiverRequired: activity.waiverRequired,
     minParticipants: activity.minParticipants,
     maxParticipants: activity.maxParticipants,
+    // The tax + processing + surcharge fees the API will apply, so the checkout
+    // total the guest commits to equals the confirmation total. Absent on older
+    // API responses => no fees passed => breakdown labels the figure an estimate.
+    fees: activity.fees ?? [],
     rate: {
       id: rate.id,
       name: rate.name,

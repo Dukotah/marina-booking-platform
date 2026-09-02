@@ -110,6 +110,22 @@ activities.get('/:id', async (c) => {
         null,
       ));
 
+  // Applicable fees (tax + processing + any surcharges) so checkout can show the
+  // guest the SAME authoritative total the booking will compute — the customer app
+  // commits them to a number on the submit button, and that number must equal what
+  // the confirmation later shows. This is the exact query the booking service runs
+  // (services/booking.ts): enabled fees scoped to this activity or the whole
+  // operator (activity_id null). Fee names/types drive the tax/processing split in
+  // @marina/core `calculatePricing`, so we pass name/type/value straight through.
+  const feeRows = await c.var.db.fee.findMany({
+    where: {
+      enabled: true,
+      OR: [{ activity_id: row.id }, { activity_id: null }],
+    },
+    select: { name: true, type: true, value: true },
+    orderBy: { name: 'asc' },
+  });
+
   return c.json({
     activity: {
       id: row.id,
@@ -124,6 +140,12 @@ activities.get('/:id', async (c) => {
       selfRescheduleHours: row.self_reschedule_hours,
       hidePrice: row.hide_price,
       fromPriceCents,
+      // Integer-cents-safe fee specs for honest client-side total estimation.
+      fees: feeRows.map((f) => ({
+        name: f.name,
+        type: f.type,
+        value: f.value,
+      })),
       rates: row.rates.map((r) => ({
         id: r.id,
         name: r.name_external,

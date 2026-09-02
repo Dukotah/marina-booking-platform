@@ -118,6 +118,18 @@ export interface ActivityUpsell {
   priceCents: number;
 }
 
+/**
+ * An operator fee applied at booking time (tax, processing, or a surcharge).
+ * Mirrors @marina/core's `PricingFee` so checkout can compute the SAME
+ * authoritative total the API will charge. PERCENT `value` is a percentage
+ * (9.25 = 9.25%); FLAT `value` is integer cents.
+ */
+export interface ActivityFee {
+  name: string;
+  type: 'PERCENT' | 'FLAT';
+  value: number;
+}
+
 /** Full detail for a single activity's booking page. */
 export interface ActivityDetail extends CatalogActivity {
   minParticipants: number;
@@ -125,6 +137,12 @@ export interface ActivityDetail extends CatalogActivity {
   selfRescheduleHours: number;
   /** Optional checkout add-ons; absent on older API responses. */
   upsells?: ActivityUpsell[];
+  /**
+   * Fees the API will apply at booking (tax + processing + any surcharges). Used
+   * to show an accurate total at checkout that matches the confirmation. Absent on
+   * older API responses — treat as no fees (an estimate) in that case.
+   */
+  fees?: ActivityFee[];
 }
 
 /** One line within a Package bundle. */
