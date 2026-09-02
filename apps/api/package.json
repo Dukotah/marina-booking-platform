@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx watch --clear-screen=false --include \"src/**\" --exclude \"../../.sandbox/**\" --exclude \"**/*.log\" src/index.ts",
     "build": "tsc --noEmit && node build.mjs",
     "start": "node dist/index.js",
     "test": "vitest run",

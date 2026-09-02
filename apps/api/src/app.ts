@@ -4,6 +4,7 @@ import { logger } from 'hono/logger';
 import { AuthorizationError } from '@marina/auth';
 import type { Env } from './context.js';
 import { captureHonoError } from './services/errors.js';
+import { trackInFlight } from './services/lifecycle.js';
 import { tenantMiddleware } from './middleware/tenant.js';
 import { activities } from './routes/activities.js';
 import { availability } from './routes/availability.js';
@@ -68,6 +69,9 @@ function isLocalhostOrigin(origin: string): boolean {
   return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
 }
 
+// Outermost: count in-flight requests so a shutdown signal (e.g. tsx watch
+// restart) can drain them before exit rather than killing one mid-transaction.
+app.use('*', trackInFlight);
 app.use('*', logger());
 app.use(
   '*',
