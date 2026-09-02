@@ -2,10 +2,14 @@
  * White-label brand resolution for the customer portal.
  *
  * The portal must render as the OPERATOR's brand, never the platform's. Brand
- * data ultimately comes from the resolved tenant (Operator: name_external,
- * brand_color, logos). Until a public operator endpoint is wired, this reads
- * from environment so the value is still tenant-configurable per deployment and
- * never hardcodes a specific marina's branding.
+ * data comes from the resolved tenant (Operator: name_external, brand_color,
+ * logos), fetched via `GET /operator/public` in getBrandAsync() — the source of
+ * truth. Environment (BRAND_*) is only a fallback for missing fields / a failed
+ * fetch / DEMO_MODE (see getBrand). Nothing hardcodes a specific marina.
+ *
+ * Server components and generateMetadata should call getBrandAsync(); the
+ * synchronous getBrand() remains for the fallback + Next files that cannot be
+ * async (e.g. not-found.tsx).
  *
  * The resolved brand color is applied to the `--brand-color` CSS variable (see
  * globals.css and tailwind.config.ts `brand`), so all brand-colored UI follows
@@ -24,6 +28,7 @@
  */
 
 import { DEMO_MODE } from './demo/config';
+import { getOperatorPublic, isApiError } from './api';
 
 export interface Brand {
   /** Customer-facing operator name (Operator.name_external). */
@@ -75,8 +80,11 @@ function safeColor(value: string | undefined | null): string {
 }
 
 /**
- * Resolve the active tenant's brand. Currently env-backed (stubbed) but shaped
- * so it can be swapped for a fetched operator endpoint without touching callers.
+ * Synchronous brand resolution from environment (BRAND_*) with a neutral/demo
+ * base. This is the FALLBACK path: it never touches the network, so it is used
+ * in DEMO_MODE (no API) and whenever the operator fetch in getBrandAsync() fails.
+ * BRAND_* env is the per-deploy fallback; the operator record (see
+ * getBrandAsync) is the source of truth and wins when present.
  */
 export function getBrand(): Brand {
   return {
@@ -86,6 +94,49 @@ export function getBrand(): Brand {
     logoDarkUrl: clean(process.env.BRAND_LOGO_DARK_URL) ?? BASE_BRAND.logoDarkUrl,
     tagline: clean(process.env.BRAND_TAGLINE) ?? BASE_BRAND.tagline,
   };
+}
+
+/**
+ * Resolve the active tenant's brand from the OPERATOR RECORD — the source of
+ * truth — via `GET /operator/public`. This is what makes the portal render as
+ * Lake Sonoma Marina: its name, brand color and logos come from the DB, per
+ * tenant, so a second operator on the same deployment gets its own brand.
+ *
+ * Precedence, field by field: OPERATOR RECORD > env (BRAND_*) > neutral/demo
+ * base. The operator record wins because it is the tenant's own configured
+ * branding; env is only the FALLBACK for a field the record leaves empty (and
+ * for tagline, which the public endpoint does not carry at all). On any API
+ * failure — or in DEMO_MODE, where there is no API — it degrades wholesale to
+ * getBrand() so the portal still themes rather than failing. Server-only (uses
+ * the API fetch client); call it from server components / generateMetadata.
+ */
+export async function getBrandAsync(): Promise<Brand> {
+  const envBrand = getBrand();
+  if (DEMO_MODE) return envBrand;
+
+  try {
+    const op = await getOperatorPublic();
+    return {
+      // Operator record first, then env fallback, then base.
+      name: clean(op.name) ?? clean(process.env.BRAND_NAME) ?? BASE_BRAND.name,
+      // safeColor validates the hex and falls back to the base color for a
+      // malformed value; a valid operator color always wins over env.
+      color: /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(op.brand_color?.trim() ?? '')
+        ? safeColor(op.brand_color)
+        : safeColor(process.env.BRAND_COLOR),
+      logoLightUrl:
+        clean(op.logo_light_url) ?? clean(process.env.BRAND_LOGO_LIGHT_URL) ?? BASE_BRAND.logoLightUrl,
+      logoDarkUrl:
+        clean(op.logo_dark_url) ?? clean(process.env.BRAND_LOGO_DARK_URL) ?? BASE_BRAND.logoDarkUrl,
+      // The public endpoint has no tagline, so it stays env/base-driven.
+      tagline: clean(process.env.BRAND_TAGLINE) ?? BASE_BRAND.tagline,
+    };
+  } catch (err) {
+    // Missing tenant, API down, malformed payload — theme from env/base instead
+    // of failing the page. Re-surface truly unexpected (non-API) errors in dev.
+    if (!isApiError(err)) console.error('Unexpected operator brand load error:', err);
+    return envBrand;
+  }
 }
 
 /* -------------------------------------------------------------------------

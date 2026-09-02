@@ -420,6 +420,31 @@ export async function request<T>(path: string, opts: RequestOptions = {}): Promi
 // Public API
 // ---------------------------------------------------------------------------
 
+/**
+ * Public white-label branding for the resolved tenant, from `GET /operator/public`.
+ * Presentation-only (name, brand color, logos, timezone, contact) — never internal
+ * names, billing, or policy. Consumed by lib/brand to theme the portal from the DB.
+ */
+export interface OperatorPublic {
+  slug: string;
+  name: string;
+  brand_color: string;
+  logo_dark_url: string | null;
+  logo_light_url: string | null;
+  timezone: string;
+  website: string | null;
+  phone: string | null;
+}
+
+/**
+ * Fetch the tenant's public branding. Cached briefly per request-window so the
+ * header/footer/metadata of a single page don't each trigger a round-trip.
+ * Never used in DEMO_MODE (no API); callers fall back to env/demo brand there.
+ */
+export async function getOperatorPublic(): Promise<OperatorPublic> {
+  return request<OperatorPublic>('/api/operator/public', { revalidate: 60 });
+}
+
 /** The full bookable catalog (active, online-visible activities) for the tenant. */
 export async function getCatalog(): Promise<CatalogActivity[]> {
   if (DEMO_MODE) return getDemoCatalog();

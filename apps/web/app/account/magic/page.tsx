@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { getBrand, brandStyle } from '@/lib/brand';
+import { getBrandAsync, brandStyle } from '@/lib/brand';
 import { DEMO_MODE } from '@/lib/demo/config';
 import SiteHeader from '@/components/layout/SiteHeader';
 import SiteFooter from '@/components/layout/SiteFooter';
@@ -110,8 +110,8 @@ async function completeSignIn(formData: FormData): Promise<void> {
   redirect(destination);
 }
 
-function Shell({ children }: { children: React.ReactNode }) {
-  const brand = getBrand();
+async function Shell({ children }: { children: React.ReactNode }) {
+  const brand = await getBrandAsync();
   return (
     <div style={brandStyle(brand)} className="flex min-h-screen flex-col">
       <SiteHeader />
@@ -155,8 +155,8 @@ interface SearchParams {
   empty?: string;
 }
 
-export default function MagicLinkPage({ searchParams }: { searchParams: SearchParams }) {
-  const brand = getBrand();
+export default async function MagicLinkPage({ searchParams }: { searchParams: SearchParams }) {
+  const brand = await getBrandAsync();
 
   if (DEMO_MODE) {
     return (

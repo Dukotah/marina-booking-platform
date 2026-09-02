@@ -3,11 +3,12 @@
  *
  * Shows the OPERATOR's brand and a dynamic copyright — no platform branding,
  * no "Powered by" line (a deliberate differentiator vs. the legacy incumbent).
- * Brand data comes from getBrand(); the brand color is set locally so the
+ * Brand data comes from getBrandAsync() (the operator record, env/base
+ * fallback); the brand color is set locally so the
  * footer is self-contained.
  */
 import Link from 'next/link';
-import { getBrand, brandStyle } from '@/lib/brand';
+import { getBrandAsync, brandStyle } from '@/lib/brand';
 
 interface FooterLink {
   label: string;
@@ -21,8 +22,8 @@ const LINKS: FooterLink[] = [
   { label: 'Privacy', href: '/privacy' },
 ];
 
-export function SiteFooter() {
-  const brand = getBrand();
+export async function SiteFooter() {
+  const brand = await getBrandAsync();
   const year = new Date().getFullYear();
 
   return (

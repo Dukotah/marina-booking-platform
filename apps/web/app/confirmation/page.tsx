@@ -17,7 +17,7 @@ import type { Metadata } from 'next';
 import { formatLongDate, formatTime } from '@/lib/format';
 import { getOrder } from '@/lib/orders';
 import { isApiError, type OrderSummary } from '@/lib/api';
-import { getBrand, brandStyle } from '@/lib/brand';
+import { getBrandAsync, brandStyle } from '@/lib/brand';
 import SiteHeader from '@/components/layout/SiteHeader';
 import SiteFooter from '@/components/layout/SiteFooter';
 import { QrPlaceholder } from './components/QrPlaceholder';
@@ -25,10 +25,16 @@ import { PriceBreakdown } from './components/PriceBreakdown';
 import { CheckInInstructions, CancellationPolicy } from './components/InfoPanels';
 import { OrderNotFound } from './components/OrderNotFound';
 
-export const metadata: Metadata = {
-  title: 'Booking confirmed',
-  robots: { index: false, follow: false },
-};
+// Title carries the operator brand (e.g. "Booking confirmed · Lake Sonoma
+// Marina") so the tab reads as the operator on the confirmation screen too,
+// resolved from the operator record with env/base fallback.
+export async function generateMetadata(): Promise<Metadata> {
+  const brand = await getBrandAsync();
+  return {
+    title: `Booking confirmed · ${brand.name}`,
+    robots: { index: false, follow: false },
+  };
+}
 
 // Orders are never cached — always reflect the latest payment/status.
 export const dynamic = 'force-dynamic';
@@ -59,8 +65,8 @@ const STATUS_STYLES: Record<OrderSummary['status'], string> = {
   NO_SHOW: 'bg-amber-50 text-amber-700 ring-amber-600/20',
 };
 
-function Shell({ children }: { children: React.ReactNode }) {
-  const brand = getBrand();
+async function Shell({ children }: { children: React.ReactNode }) {
+  const brand = await getBrandAsync();
   return (
     <div style={brandStyle(brand)} className="flex min-h-screen flex-col">
       <SiteHeader />
@@ -78,7 +84,7 @@ export default async function ConfirmationPage({
 }) {
   const params = await Promise.resolve(searchParams);
   const orderNumber = firstParam(params.order) ?? firstParam(params.orderNumber);
-  const brand = getBrand();
+  const brand = await getBrandAsync();
 
   if (!orderNumber) {
     return (

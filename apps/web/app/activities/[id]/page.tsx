@@ -9,7 +9,7 @@ import {
   type ActivityDetail,
   type AvailabilityRangeDay,
 } from '@/lib/api';
-import { getBrand, brandStyle, onBrandForeground } from '@/lib/brand';
+import { getBrandAsync, brandStyle, onBrandForeground } from '@/lib/brand';
 import { formatUSD } from '@/lib/format';
 import { BookingWidget } from '@/components/activity/BookingWidget';
 
@@ -142,7 +142,7 @@ async function loadActivity(id: string): Promise<ActivityDetail | null> {
 }
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
-  const brand = getBrand();
+  const brand = await getBrandAsync();
   try {
     const activity = await getActivity(params.id);
     return {
@@ -182,7 +182,7 @@ export default async function ActivityDetailPage({ params }: PageProps) {
 
   const initialRange = await loadStripRange(activity.id);
 
-  const brand = getBrand();
+  const brand = await getBrandAsync();
   const accent = activity.color;
   const categoryLabel = CATEGORY_LABELS[activity.category];
 

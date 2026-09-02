@@ -2,7 +2,8 @@
  * White-label site header for the customer booking portal.
  *
  * Renders the OPERATOR's brand only (logo or name + tagline) — never any
- * platform branding. Brand data comes from getBrand(); the brand color drives
+ * platform branding. Brand data comes from getBrandAsync() (the operator record,
+ * env/base fallback); the brand color drives
  * the logo accent and CTA via the `--brand-color` variable, which this header
  * also sets locally so it works even if a parent layout hasn't set it. The CTA
  * label color comes from lib/brand's onBrandForeground() rather than a
@@ -12,7 +13,7 @@
  * a CSS-only collapse so it stays fast and avoids hydration cost.
  */
 import Link from 'next/link';
-import { getBrand, brandStyle, onBrandForeground, type Brand } from '@/lib/brand';
+import { getBrandAsync, brandStyle, onBrandForeground, type Brand } from '@/lib/brand';
 import { DEMO_MODE } from '@/lib/demo/config';
 
 /**
@@ -79,8 +80,8 @@ function BrandMark({ brand }: { brand: Brand }) {
   );
 }
 
-export function SiteHeader() {
-  const brand = getBrand();
+export async function SiteHeader() {
+  const brand = await getBrandAsync();
   const ctaForeground = onBrandForeground(brand.color);
 
   return (

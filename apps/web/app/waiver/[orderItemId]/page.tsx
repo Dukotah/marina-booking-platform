@@ -12,7 +12,7 @@
  * operator's own clause text.
  */
 import type { Metadata } from 'next';
-import { getBrand, brandStyle } from '@/lib/brand';
+import { getBrandAsync, brandStyle } from '@/lib/brand';
 import SiteHeader from '@/components/layout/SiteHeader';
 import SiteFooter from '@/components/layout/SiteFooter';
 import { WaiverSigner } from '@/components/waiver/WaiverSigner';
@@ -24,14 +24,14 @@ export const metadata: Metadata = {
 
 export const dynamic = 'force-dynamic';
 
-export default function WaiverPage({
+export default async function WaiverPage({
   params,
   searchParams,
 }: {
   params: { orderItemId: string };
   searchParams: Record<string, string | string[] | undefined>;
 }) {
-  const brand = getBrand();
+  const brand = await getBrandAsync();
   const activityId =
     typeof searchParams.activity === 'string' ? searchParams.activity : undefined;
 

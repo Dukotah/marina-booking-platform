@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import { getBrand, brandStyle } from '@/lib/brand';
+import { getBrandAsync, brandStyle } from '@/lib/brand';
 import SiteHeader from '@/components/layout/SiteHeader';
 import SiteFooter from '@/components/layout/SiteFooter';
 
@@ -13,8 +13,8 @@ export const metadata: Metadata = {
  * intentionally plain and operator-agnostic; the operator name comes from tenant
  * brand data. Swap in the operator's reviewed legal copy before go-live.
  */
-export default function TermsPage() {
-  const brand = getBrand();
+export default async function TermsPage() {
+  const brand = await getBrandAsync();
   const year = new Date().getFullYear();
 
   return (

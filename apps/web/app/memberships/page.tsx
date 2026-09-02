@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { getBrand, brandStyle } from '@/lib/brand';
+import { getBrandAsync, brandStyle } from '@/lib/brand';
 import SiteHeader from '@/components/layout/SiteHeader';
 import SiteFooter from '@/components/layout/SiteFooter';
 import { getStripeConfig } from '@/app/checkout/stripe-config';
@@ -34,7 +34,7 @@ export const dynamic = 'force-dynamic';
  * the operator selling nothing, and the ordinary case. None of them is a crash.
  */
 export default async function MembershipsPage() {
-  const brand = getBrand();
+  const brand = await getBrandAsync();
   const stripe = getStripeConfig();
 
   const [{ offers, failed }, { signedIn, holdings }] = await Promise.all([

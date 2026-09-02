@@ -11,7 +11,7 @@
  */
 import Link from 'next/link';
 import { getActivity, getAvailability, isApiError } from '@/lib/api';
-import { getBrand } from '@/lib/brand';
+import { getBrandAsync } from '@/lib/brand';
 import { getStripeConfig } from './stripe-config';
 import { getWalletConfig } from './wallet-config';
 import { CheckoutClient } from '@/components/checkout/CheckoutClient';
@@ -145,8 +145,9 @@ export default async function CheckoutPage({ searchParams }: CheckoutPageProps) 
   };
 
   const stripe = getStripeConfig();
-  const wallet = getWalletConfig();
-  const brand = getBrand();
+  const brand = await getBrandAsync();
+  // Wallet-pay sheet shows the operator as the merchant, not the env-default brand.
+  const wallet = getWalletConfig(brand.name);
 
   return (
     <main id="main-content" tabIndex={-1} className="mx-auto w-full max-w-5xl px-4 py-6 sm:py-10">

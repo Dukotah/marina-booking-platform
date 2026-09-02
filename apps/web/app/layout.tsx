@@ -1,12 +1,13 @@
 import type { Metadata } from 'next';
 import './globals.css';
-import { getBrand } from '@/lib/brand';
+import { getBrandAsync } from '@/lib/brand';
 
 // White-label the browser title/description from the resolved tenant brand,
 // so the tab reads as the operator (e.g. "Lake Sonoma Marina"), never a
 // generic platform name. Per-request so multi-tenant deploys resolve correctly.
-export function generateMetadata(): Metadata {
-  const brand = getBrand();
+// Brand is fetched from the operator record (getBrandAsync), env/base fallback.
+export async function generateMetadata(): Promise<Metadata> {
+  const brand = await getBrandAsync();
   return {
     title: brand.tagline ? `${brand.name} — ${brand.tagline}` : brand.name,
     description:

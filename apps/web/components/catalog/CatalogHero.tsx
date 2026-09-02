@@ -6,16 +6,22 @@
  * color drives a soft gradient backdrop and the accent rule. Server component
  * (no interactivity).
  */
-import { getBrand } from '@/lib/brand';
+import { getBrandAsync, type Brand } from '@/lib/brand';
 import { readableTextOn } from './color';
 
 interface CatalogHeroProps {
   /** Number of bookable activities, shown as a confidence signal when > 0. */
   activityCount: number;
+  /**
+   * Resolved operator brand. Passed by the page (which already fetched it) so the
+   * hero headline is the operator's name without a second round-trip; falls back
+   * to a fresh fetch if a caller omits it.
+   */
+  brand?: Brand;
 }
 
-export function CatalogHero({ activityCount }: CatalogHeroProps) {
-  const brand = getBrand();
+export async function CatalogHero({ activityCount, brand: brandProp }: CatalogHeroProps) {
+  const brand = brandProp ?? (await getBrandAsync());
   const onBrand = readableTextOn(brand.color);
 
   return (

@@ -17,7 +17,7 @@
 
 import { getActivity, getCatalog, isApiError, type CatalogActivity } from '@/lib/api';
 import { getOrder } from '@/lib/orders';
-import { getBrand, brandStyle } from '@/lib/brand';
+import { getBrandAsync, brandStyle } from '@/lib/brand';
 import CheckoutPage from '@/app/checkout/page';
 import { EmbedRouterProvider } from '@/components/embed/EmbedRouterProvider';
 import { EmbedSession } from '@/components/embed/EmbedSession';
@@ -167,7 +167,7 @@ export default async function EmbedPage({ searchParams }: EmbedPageProps) {
     accent: params.accent,
   };
 
-  const brand = getBrand();
+  const brand = await getBrandAsync();
   // `data-color` on the script tag lets an operator match the widget to their own
   // site without touching their tenant branding.
   const accent = params.accent || brand.color;

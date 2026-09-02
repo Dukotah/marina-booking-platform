@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { getBrand, brandStyle } from '@/lib/brand';
+import { getBrandAsync, brandStyle } from '@/lib/brand';
 import SiteHeader from '@/components/layout/SiteHeader';
 import SiteFooter from '@/components/layout/SiteFooter';
 import { LookupForm } from './lookup-form';
@@ -22,8 +22,8 @@ export const dynamic = 'force-dynamic';
  * Fully white-label — the operator name/brand come from tenant brand data, never
  * platform or marina-specific branding.
  */
-export default function AccountPage() {
-  const brand = getBrand();
+export default async function AccountPage() {
+  const brand = await getBrandAsync();
 
   return (
     <div style={brandStyle(brand)} className="flex min-h-screen flex-col">

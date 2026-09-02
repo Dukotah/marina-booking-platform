@@ -13,7 +13,7 @@
 import { getCatalog, isApiError, type CatalogActivity } from '@/lib/api';
 import { SiteHeader } from '@/components/layout/SiteHeader';
 import { SiteFooter } from '@/components/layout/SiteFooter';
-import { brandStyle } from '@/lib/brand';
+import { brandStyle, getBrandAsync } from '@/lib/brand';
 import { CatalogHero } from '@/components/catalog/CatalogHero';
 import { CatalogBrowser } from '@/components/catalog/CatalogBrowser';
 import { CatalogNotice } from '@/components/catalog/CatalogNotice';
@@ -24,6 +24,8 @@ export const dynamic = 'force-dynamic';
 export default async function HomePage() {
   let activities: CatalogActivity[] = [];
   let loadFailed = false;
+
+  const brand = await getBrandAsync();
 
   try {
     activities = await getCatalog();
@@ -38,11 +40,11 @@ export default async function HomePage() {
   }
 
   return (
-    <div style={brandStyle()} className="flex min-h-screen flex-col">
+    <div style={brandStyle(brand)} className="flex min-h-screen flex-col">
       <SiteHeader />
 
       <main id="main-content" tabIndex={-1} className="flex-1">
-        <CatalogHero activityCount={loadFailed ? 0 : activities.length} />
+        <CatalogHero activityCount={loadFailed ? 0 : activities.length} brand={brand} />
 
         <div className="mx-auto max-w-6xl px-4 py-10 sm:py-12">
           {loadFailed ? (

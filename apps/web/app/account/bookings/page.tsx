@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { getBrand, brandStyle } from '@/lib/brand';
+import { getBrandAsync, brandStyle } from '@/lib/brand';
 import { formatUSD, formatLongDate, formatTime, formatDateTime } from '@/lib/format';
 import { getOrder } from '@/lib/orders';
 import { isApiError, type OrderSummary, type OrderLineItem } from '@/lib/api';
@@ -16,8 +16,8 @@ export const metadata: Metadata = {
 // Orders are never cached — always reflect the latest payment/status.
 export const dynamic = 'force-dynamic';
 
-function Shell({ children }: { children: React.ReactNode }) {
-  const brand = getBrand();
+async function Shell({ children }: { children: React.ReactNode }) {
+  const brand = await getBrandAsync();
   return (
     <div style={brandStyle(brand)} className="flex min-h-screen flex-col">
       <SiteHeader />
@@ -69,7 +69,7 @@ export default async function BookingsPage({
 }: {
   searchParams: SearchParams;
 }) {
-  const brand = getBrand();
+  const brand = await getBrandAsync();
   const orderNumber = searchParams.order?.trim().toUpperCase() ?? '';
   const email = searchParams.email ? normalizeEmail(searchParams.email) : '';
 
