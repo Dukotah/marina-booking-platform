@@ -14,7 +14,6 @@
  * called in that state. No secrets touch the browser: only the publishable key.
  */
 import { forwardRef, useImperativeHandle, useMemo, useState } from 'react';
-import { FlaskConical } from 'lucide-react';
 // loadStripe comes from the '/pure' entry on purpose. The default entry injects
 // <script src="js.stripe.com/v3"> from MODULE SCOPE the microtask after import, so
 // merely importing it downloads Stripe on every checkout - including local runs and
@@ -138,12 +137,14 @@ const CardForm = forwardRef<PaymentSectionHandle, { testMode: boolean }>(
 );
 
 /**
- * Dev fake-payments panel — no real card field. Exposes the same imperative
- * handle as the live form, returning a placeholder source the API's fake-payments
- * mode accepts. Only rendered when stripe.fakeMode is on (local dev).
+ * No-card reservation panel — booking without online card entry. Exposes the same
+ * imperative handle as the live form, returning a placeholder source the API's
+ * no-card path accepts, and presents the flow to the guest as a reserve-now,
+ * pay-at-the-marina booking. Customer-facing copy NEVER mentions dev/simulated/
+ * fake/test payments. Rendered when online card capture isn't wired for this site.
  */
-const FakePaymentForm = forwardRef<PaymentSectionHandle>(
-  function FakePaymentForm(_props, ref) {
+const ReserveAtMarinaForm = forwardRef<PaymentSectionHandle>(
+  function ReserveAtMarinaForm(_props, ref) {
     useImperativeHandle(
       ref,
       () => ({
@@ -153,14 +154,14 @@ const FakePaymentForm = forwardRef<PaymentSectionHandle>(
       [],
     );
     return (
-      <div className="rounded-lg border border-violet-300 bg-violet-50 p-4">
+      <div className="rounded-lg border border-sky-300 bg-sky-50 p-4">
         <div className="flex items-start gap-3">
-          <FlaskConical className="mt-0.5 h-5 w-5 shrink-0 text-violet-600" aria-hidden />
+          <CreditCard className="mt-0.5 h-5 w-5 shrink-0 text-sky-600" aria-hidden />
           <div className="space-y-1 text-sm">
-            <p className="font-semibold text-violet-900">Dev mode — payment simulated</p>
-            <p className="text-violet-800">
-              No Stripe key is configured, so this booking will be completed with a
-              simulated charge. No real card is processed.
+            <p className="font-semibold text-sky-900">Reserve now, pay at the marina</p>
+            <p className="text-sky-800">
+              No card needed to hold your spot. Complete your booking below and pay
+              when you arrive at the marina.
             </p>
           </div>
         </div>
@@ -177,9 +178,9 @@ export const PaymentSection = forwardRef<PaymentSectionHandle, PaymentSectionPro
       [stripe.configured, stripe.publishableKey],
     );
 
-    // --- Dev fake-payments: simulate without Stripe (local dogfooding). ----------
+    // --- No online card capture: reserve now, pay at the marina. -----------------
     if (!stripePromise && stripe.fakeMode) {
-      return <FakePaymentForm ref={ref} />;
+      return <ReserveAtMarinaForm ref={ref} />;
     }
 
     // --- Not configured: clear notice (no card field). The parent guards submit on
