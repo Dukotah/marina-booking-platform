@@ -353,6 +353,15 @@ export interface CreateBookingPayload {
   participants?: BookingParticipant[];
   promoCode?: string;
   tipCents?: number;
+  /**
+   * Inline liability-waiver acceptance captured at checkout (acceptance flag +
+   * typed full legal name). The API records the signature so a signed booking does
+   * not persist waiverSignedAt: null.
+   */
+  waiverAcceptance?: {
+    accepted: boolean;
+    signatureName: string;
+  };
 }
 
 // ---------------------------------------------------------------------------

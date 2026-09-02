@@ -75,6 +75,20 @@ export const bookingInputSchema = z.object({
    * they never saw.
    */
   priceQuoteToken: z.string().trim().max(4096).optional(),
+  /**
+   * Inline liability-waiver acceptance captured at checkout: the required
+   * acceptance flag and the typed full legal name that serves as the signature.
+   * When present and accepted with a non-empty signature, the booking records the
+   * signature (order item flagged waiver_signed + a WaiverSignature audit row) so
+   * the legal record is not lost. Optional so staff/API flows that sign the full
+   * clause-based waiver separately are unaffected.
+   */
+  waiverAcceptance: z
+    .object({
+      accepted: z.boolean(),
+      signatureName: z.string().trim().min(1, 'A signature is required').max(160),
+    })
+    .optional(),
   /** "How did you hear about us?" — the chosen option label, snapshotted onto the order. */
   heardAboutUs: z.string().trim().max(120).optional(),
   /** Affiliate/referral code entered at checkout; resolved to an Affiliate for attribution. */

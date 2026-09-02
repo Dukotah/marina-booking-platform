@@ -448,6 +448,16 @@ export function CheckoutClient({
           dob: p.dob || undefined,
           experience: p.experience || undefined,
         })),
+        // Forward the inline waiver signature so the API records it (and doesn't
+        // store waiverSignedAt: null on a booking the guest actually signed). Only
+        // sent when this activity required a waiver and the guest accepted + signed.
+        waiverAcceptance:
+          selection.waiverRequired && values.waiverAccepted && values.signatureName.trim()
+            ? {
+                accepted: values.waiverAccepted,
+                signatureName: values.signatureName.trim(),
+              }
+            : undefined,
         promoCode: promo?.code,
         tipCents: tipCents > 0 ? tipCents : undefined,
         // Reserve mode leaves paymentSourceId undefined; the action then skips the

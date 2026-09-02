@@ -88,6 +88,15 @@ export interface PlaceOrderInput {
   promoCode?: string;
   tipCents?: number;
   /**
+   * Inline liability-waiver acceptance from checkout (WaiverSection): the required
+   * acceptance flag and the typed full legal name. Forwarded so the API records the
+   * signature instead of storing waiverSignedAt: null on a booking the guest signed.
+   */
+  waiverAcceptance?: {
+    accepted: boolean;
+    signatureName: string;
+  };
+  /**
    * Tokenized payment source — a Stripe PaymentMethod id from Stripe Elements.
    * Omitted in reserve mode, where no card is taken online.
    */
@@ -120,6 +129,7 @@ export async function placeOrder(
     participants: input.participants,
     promoCode: input.promoCode,
     tipCents: input.tipCents,
+    waiverAcceptance: input.waiverAcceptance,
   });
 
   if (!parsed.success) {
@@ -154,6 +164,7 @@ export async function placeOrder(
     participants: data.participants,
     promoCode: data.promoCode,
     tipCents: data.tipCents,
+    waiverAcceptance: data.waiverAcceptance,
     idempotencyKey: input.idempotencyKey,
   };
 

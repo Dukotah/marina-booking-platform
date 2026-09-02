@@ -292,6 +292,7 @@ async function createBookingAttempt(
         min_participants: true,
         max_participants: true,
         deposit_percent: true,
+        waiver_required: true,
       },
     });
     if (!activity) {
@@ -640,6 +641,59 @@ async function createBookingAttempt(
         status: computeSlotStatus(timeslot.capacity_total, newBooked),
       },
     });
+
+    // --- Record the inline liability-waiver signature captured at checkout. ---
+    //     The customer app collects a required acceptance + a typed full legal name
+    //     (WaiverSection); those flow here so the signature is not silently dropped
+    //     (a liability gap). We flag the order item waiver_signed and, when the
+    //     operator has an active waiver, write a WaiverSignature audit row bound to
+    //     that waiver's current version with the typed name as the signature data.
+    //     A missing/empty acceptance is a no-op — staff/API flows that sign the full
+    //     clause-based waiver via /api/waivers/sign are unaffected.
+    const waiverAcceptance = input.waiverAcceptance;
+    if (
+      activity.waiver_required &&
+      waiverAcceptance?.accepted &&
+      waiverAcceptance.signatureName.trim().length > 0
+    ) {
+      const signedAt = new Date();
+      const signerName = waiverAcceptance.signatureName.trim();
+      const orderItemId = order.items[0]!.id;
+
+      await tx.orderItem.update({
+        where: { id: orderItemId },
+        data: { waiver_signed: true, waiver_signed_at: signedAt },
+      });
+      await tx.customer.update({
+        where: { id: customer.id },
+        data: { waiver_on_file: true },
+      });
+
+      // Bind the audit record to the operator's active waiver when one exists. The
+      // typed name is the signature (signature_data); acknowledgments stays null
+      // because the inline checkout waiver is a single-acceptance release, not the
+      // per-clause flow. Without an active waiver we still flag the item above, so
+      // the check-in manifest no longer shows "Waiver needed" for a guest who signed.
+      const activeWaiver = await tx.waiver.findFirst({
+        where: { is_active: true },
+        select: { id: true, version: true },
+      });
+      if (activeWaiver) {
+        await tx.waiverSignature.create({
+          data: {
+            operator_id: operatorId,
+            waiver_id: activeWaiver.id,
+            order_item_id: orderItemId,
+            customer_id: customer.id,
+            signer_name: signerName,
+            signed_at: signedAt,
+            signature_data: signerName,
+            ip_address: null,
+            waiver_version: activeWaiver.version,
+          },
+        });
+      }
+    }
 
     // --- Reserve the shared resources this booking consumes for its window. ---
     if (pools.length > 0) {
