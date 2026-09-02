@@ -31,7 +31,9 @@ import { OrderNotFound } from './components/OrderNotFound';
 export async function generateMetadata(): Promise<Metadata> {
   const brand = await getBrandAsync();
   return {
-    title: `Booking confirmed · ${brand.name}`,
+    // Already fully branded — opt out of the root title.template so the operator
+    // name is not appended twice.
+    title: { absolute: `Booking confirmed · ${brand.name}` },
     robots: { index: false, follow: false },
   };
 }

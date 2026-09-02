@@ -9,7 +9,15 @@ import { getBrandAsync } from '@/lib/brand';
 export async function generateMetadata(): Promise<Metadata> {
   const brand = await getBrandAsync();
   return {
-    title: brand.tagline ? `${brand.name} — ${brand.tagline}` : brand.name,
+    title: {
+      // The home/default tab title (used when a page sets no title of its own).
+      default: brand.tagline ? `${brand.name} — ${brand.tagline}` : brand.name,
+      // Any child page that sets a plain string title gets the operator name
+      // appended, so /terms, /privacy, /account, etc. read e.g. "Terms of Service
+      // · Lake Sonoma Marina" instead of an unbranded tab. Pages that build their
+      // own fully-branded title (activity, confirmation) opt out via title.absolute.
+      template: `%s · ${brand.name}`,
+    },
     description:
       brand.tagline ?? `Reserve boats, watercraft, and waterfront venues with ${brand.name}.`,
   };

@@ -146,13 +146,15 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   try {
     const activity = await getActivity(params.id);
     return {
-      title: `${activity.name} · ${brand.name}`,
+      // Already fully branded — opt out of the root title.template so the operator
+      // name is not appended twice.
+      title: { absolute: `${activity.name} · ${brand.name}` },
       description:
         activity.descriptionHtml?.replace(/<[^>]+>/g, '').slice(0, 160) ??
         `Book ${activity.name} with ${brand.name}.`,
     };
   } catch {
-    return { title: brand.name };
+    return { title: { absolute: brand.name } };
   }
 }
 
