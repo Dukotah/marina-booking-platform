@@ -332,17 +332,34 @@ async function createBookingAttempt(
       throw new BookingError('RATE_UNAVAILABLE', 'This rate is not available online', 409);
     }
 
-    // --- Load + lock-check the timeslot capacity. ---
-    const timeslot = await tx.timeslot.findFirst({
-      where: { id: input.timeslotId, activity_id: activity.id },
-      select: {
-        id: true,
-        datetime: true,
-        capacity_total: true,
-        capacity_booked: true,
-        status: true,
-      },
-    });
+    // --- Lock + load the timeslot capacity. ---
+    //
+    // Overbooking is a TOCTOU race: two concurrent submits for the last seat both
+    // read capacity_booked, both see room, and both write old+qty — selling 2 seats
+    // on a 1-capacity slot. READ COMMITTED does not protect against it because each
+    // tx reads a consistent snapshot taken before the other committed.
+    //
+    // The fix is a row lock. `SELECT ... FOR UPDATE` on this timeslot serialises
+    // every booking that touches it: the second submit blocks on the first's lock
+    // until it COMMITS, then reads the freshly-incremented capacity_booked and
+    // correctly fails the capacity check below. The lock is held to end-of-tx, so
+    // the whole check-then-increment is atomic per slot. We deliberately lock ONLY
+    // the timeslot row (not the read below via Prisma), so contention is scoped to
+    // the exact slot being sold and unrelated bookings never wait on each other.
+    const locked = await tx.$queryRaw<
+      Array<{
+        id: string;
+        datetime: Date;
+        capacity_total: number;
+        capacity_booked: number;
+        status: string;
+      }>
+    >`
+      SELECT id, datetime, capacity_total, capacity_booked, status
+      FROM "Timeslot"
+      WHERE id = ${input.timeslotId} AND activity_id = ${activity.id}
+      FOR UPDATE`;
+    const timeslot = locked[0];
     if (!timeslot) {
       throw new BookingError('TIMESLOT_NOT_FOUND', 'Timeslot not found for this activity', 404);
     }
