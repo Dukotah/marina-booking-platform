@@ -75,8 +75,17 @@ activities.get('/manage', requireStaff, async (c) => {
  */
 activities.get('/:id', async (c) => {
   const id = c.req.param('id');
+  // Resolve by internal id (cuid) OR by the stable catalog slug stored in
+  // config.slug. The slug path lets external surfaces (e.g. the marina's own
+  // marketing site) deep-link to an activity with a URL that never changes when
+  // the DB is reseeded — internal cuids are not stable across seeds, slugs are.
   const row = await c.var.db.activity.findFirst({
-    where: { id, status: 'ACTIVE', visible_online: true, hide_from_display: false },
+    where: {
+      status: 'ACTIVE',
+      visible_online: true,
+      hide_from_display: false,
+      OR: [{ id }, { config: { path: ['slug'], equals: id } }],
+    },
     include: {
       rates: {
         where: { is_active: true, internal_only: false },
