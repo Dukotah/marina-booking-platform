@@ -260,6 +260,9 @@ export async function sendBookingConfirmation(input: {
       locationLabel: facts.locationLabel,
       lineItems: priceLines(order),
       totalCents: order.total_cents,
+      // Reserve-now / pay-at-the-marina orders carry a full balance due; the email
+      // then states the amount owed on arrival and what to bring.
+      balanceDueCents: order.balance_due_cents,
       cancellationPolicy,
     });
 

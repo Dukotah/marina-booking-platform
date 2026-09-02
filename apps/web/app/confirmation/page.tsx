@@ -14,7 +14,7 @@
  * an unreachable API degrade to a friendly not-found state.
  */
 import type { Metadata } from 'next';
-import { formatLongDate, formatTime } from '@/lib/format';
+import { formatLongDate, formatTime, formatUSD } from '@/lib/format';
 import { getOrder } from '@/lib/orders';
 import { isApiError, type OrderSummary } from '@/lib/api';
 import { getBrandAsync, brandStyle } from '@/lib/brand';
@@ -129,6 +129,11 @@ export default async function ConfirmationPage({
 
   const guests = partySize(order);
   const isCancelled = order.status === 'CANCELLED';
+  // Reserve-now / pay-at-the-marina: nothing charged online, full amount owed on
+  // arrival. Drives the "what to bring / due at the marina" messaging below.
+  const isReserveOnly =
+    !isCancelled && order.amountPaidCents === 0 && order.balanceDueCents > 0;
+  const balanceDueLabel = isReserveOnly ? formatUSD(order.balanceDueCents) : undefined;
 
   return (
     <Shell>
@@ -162,7 +167,9 @@ export default async function ConfirmationPage({
           <p className="mt-2 text-slate-600">
             {isCancelled
               ? 'This reservation has been cancelled. Below is a record of the booking.'
-              : `Your reservation with ${brand.name} is confirmed. A copy has been sent to ${order.customerEmail}.`}
+              : isReserveOnly
+                ? `Your spot with ${brand.name} is reserved. Nothing was charged today — ${balanceDueLabel} is due when you arrive. A copy has been sent to ${order.customerEmail}.`
+                : `Your reservation with ${brand.name} is confirmed. A copy has been sent to ${order.customerEmail}.`}
           </p>
         </div>
 
@@ -232,7 +239,7 @@ export default async function ConfirmationPage({
 
         {/* Info panels */}
         <div className="mt-6 grid gap-6 sm:grid-cols-2">
-          <CheckInInstructions brandName={brand.name} />
+          <CheckInInstructions brandName={brand.name} balanceDueLabel={balanceDueLabel} />
           <CancellationPolicy brandName={brand.name} />
         </div>
 

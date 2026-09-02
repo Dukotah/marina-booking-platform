@@ -28,6 +28,11 @@ export interface BookingConfirmationProps extends BrandProps {
   lineItems: PriceLine[];
   /** Grand total in integer cents. */
   totalCents: number;
+  /**
+   * Amount still owed at the marina, in integer cents. When > 0 the email states
+   * the amount due on arrival and what to bring. Defaults to 0 (nothing owed).
+   */
+  balanceDueCents?: number;
   /** Cancellation policy text to display to the guest. */
   cancellationPolicy: string;
 }
@@ -99,6 +104,24 @@ const qrNote: React.CSSProperties = {
   textAlign: 'center',
 };
 
+const dueBox: React.CSSProperties = {
+  backgroundColor: '#fffbeb',
+  border: '1px solid #fde68a',
+  borderRadius: '8px',
+  color: '#92400e',
+  fontSize: '14px',
+  lineHeight: '20px',
+  margin: '16px 0',
+  padding: '16px',
+};
+
+const dueAmount: React.CSSProperties = {
+  color: '#92400e',
+  fontSize: '18px',
+  fontWeight: 700,
+  margin: '4px 0 8px',
+};
+
 const policyHeading: React.CSSProperties = {
   color: '#111827',
   fontSize: '15px',
@@ -126,8 +149,10 @@ export function BookingConfirmation({
   locationLabel,
   lineItems,
   totalCents,
+  balanceDueCents = 0,
   cancellationPolicy,
 }: BookingConfirmationProps): React.ReactElement {
+  const owesAtMarina = balanceDueCents > 0;
   return (
     <BrandLayout
       brandName={brandName}
@@ -137,8 +162,9 @@ export function BookingConfirmation({
     >
       <Heading style={heading}>You&apos;re booked!</Heading>
       <Text style={paragraph}>
-        Hi {customerName}, thanks for booking with {brandName}. Your reservation is
-        confirmed. Here are your details.
+        {owesAtMarina
+          ? `Hi ${customerName}, thanks for reserving with ${brandName}. Your spot is held — nothing was charged today, and you'll pay when you arrive. Here are your details.`
+          : `Hi ${customerName}, thanks for booking with ${brandName}. Your reservation is confirmed. Here are your details.`}
       </Text>
 
       <Section style={{ margin: '16px 0' }}>
@@ -200,6 +226,18 @@ export function BookingConfirmation({
           </Column>
         </Row>
       </Section>
+
+      {owesAtMarina && (
+        <Section style={dueBox}>
+          <Text style={{ ...label, color: '#92400e' }}>Due at the marina</Text>
+          <Text style={dueAmount}>{formatUSD(balanceDueCents)}</Text>
+          <Text style={{ margin: 0, color: '#92400e', fontSize: '13px', lineHeight: '20px' }}>
+            Nothing was charged today — your spot is reserved. Pay when you arrive.
+            Bring {formatUSD(balanceDueCents)} and a photo ID; cash and card are
+            accepted at check-in.
+          </Text>
+        </Section>
+      )}
 
       <Text style={qrNote}>
         Your check-in QR code will appear here in the confirmation on your device.

@@ -215,6 +215,16 @@ const CASES: Array<{ name: string; make: (filler: string) => React.ReactElement 
       }),
   },
   {
+    name: 'BookingConfirmation (reserve now, pay at the marina)',
+    make: (f) =>
+      BookingConfirmation({
+        ...CONFIRMATION_PROPS,
+        activityName: SEEDED_ACTIVITY + f,
+        // Nothing paid online; the full total is owed on arrival.
+        balanceDueCents: CONFIRMATION_PROPS.totalCents,
+      }),
+  },
+  {
     name: 'BookingReminder (full)',
     make: (f) => BookingReminder({ ...REMINDER_PROPS, activityName: SEEDED_ACTIVITY + f }),
   },
@@ -321,6 +331,27 @@ describe('render guard', () => {
     expect(findUnsafeControlChars(raw)).toHaveLength(0);
     expect(await renderEmail(element())).toBe(raw);
     expect(console.warn).not.toHaveBeenCalled();
+  });
+
+  it('states the amount due at the marina in a reserve-now confirmation', async () => {
+    const html = await renderEmail(
+      BookingConfirmation({ ...CONFIRMATION_PROPS, balanceDueCents: CONFIRMATION_PROPS.totalCents }),
+    );
+    const text = await renderEmailText(
+      BookingConfirmation({ ...CONFIRMATION_PROPS, balanceDueCents: CONFIRMATION_PROPS.totalCents }),
+    );
+    // The customer is told what is owed on arrival, and what to bring.
+    expect(html).toContain('Due at the marina');
+    expect(html).toContain('$485.00'); // CONFIRMATION_PROPS.totalCents = 48_500
+    expect(html).toContain('Pay when you arrive');
+    expect(text).toContain('Due at the marina');
+    // Never leaks dev/test/fake/simulated wording to the guest.
+    expect(html.toLowerCase()).not.toMatch(/\b(fake|simulated|sandbox|dev mode|test payment)\b/);
+  });
+
+  it('does not mention a marina balance in an ordinary paid confirmation', async () => {
+    const html = await renderEmail(BookingConfirmation(CONFIRMATION_PROPS));
+    expect(html).not.toContain('Due at the marina');
   });
 });
 

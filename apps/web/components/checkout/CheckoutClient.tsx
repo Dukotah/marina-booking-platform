@@ -25,9 +25,10 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation';
 import { FormProvider, useForm, type FieldErrors } from 'react-hook-form';
 import { AlertTriangle } from 'lucide-react';
-import { calculatePricing } from '@marina/core';
+import { calculatePricing, formatUSD } from '@marina/core';
 import { Button, Card, CardContent, CardHeader } from '@marina/ui';
 import type { StripeConfig } from '@/app/checkout/stripe-config';
+import type { PaymentMode } from '@/app/checkout/payment-mode';
 import type { WalletConfig } from '@/app/checkout/wallet-config';
 import { placeOrder } from '@/app/checkout/actions';
 import {
@@ -57,6 +58,12 @@ import type {
 interface CheckoutClientProps {
   selection: CheckoutSelection;
   stripe: StripeConfig;
+  /**
+   * How this site takes payment: 'card' collects a card online and charges it now;
+   * 'reserve' holds the spot with nothing charged online and the full amount left as
+   * balance due, paid on arrival at the marina.
+   */
+  paymentMode: PaymentMode;
   /** Express-wallet (Apple/Google Pay) seam config — gated behind a flag. */
   wallet: WalletConfig;
   /** Operator (white-label) name for the waiver copy. */
@@ -195,10 +202,14 @@ function Section({
 export function CheckoutClient({
   selection,
   stripe,
+  paymentMode,
   wallet,
   operatorName,
 }: CheckoutClientProps) {
   const router = useRouter();
+  // Reserve mode: hold the spot online, collect the balance at the marina — no
+  // card is taken here and submitPayment is never called.
+  const reserveMode = paymentMode === 'reserve';
 
   const [quantity, setQuantity] = useState(selection.quantity);
   const [promo, setPromo] = useState<AppliedPromo | null>(null);
@@ -357,6 +368,21 @@ export function CheckoutClient({
     return subtotalCents - discountCents;
   }, [selection.rate.priceCents, quantity, promo]);
 
+  // Client-side estimate of the amount the guest will owe at the marina in reserve
+  // mode. Taxes/fees are added authoritatively by the API at booking time and shown
+  // on the confirmation, so this is the "estimated total" figure — labelled as such.
+  const reserveDueCents = useMemo(() => {
+    const { totalCents } = calculatePricing({
+      items: [{ unitPriceCents: selection.rate.priceCents, quantity }],
+      fees: [],
+      promo: promo
+        ? { discountType: promo.discountType, discountValue: promo.discountValue }
+        : null,
+      tipCents,
+    });
+    return totalCents;
+  }, [selection.rate.priceCents, quantity, promo, tipCents]);
+
   // A failed validation pass is silent to a screen reader unless something moves
   // focus — the guest would otherwise press "Complete booking" and hear nothing.
   // The errors are taken from the argument rather than read back off `formState`
@@ -373,7 +399,9 @@ export function CheckoutClient({
     setSubmitError(null);
     setErrorSummary(null);
 
-    if (!stripe.configured && !stripe.fakeMode) {
+    // Reserve mode takes no card online — the balance is collected at the marina —
+    // so the "payments not configured" guard only applies to the card path.
+    if (!reserveMode && !stripe.configured && !stripe.fakeMode) {
       fail(
         'Online payments are not configured for this site yet, so this booking cannot be completed online. Please contact us to finish your reservation.',
       );
@@ -382,11 +410,16 @@ export function CheckoutClient({
 
     setSubmitting(true);
     try {
-      // Tokenize the card first — no order is created if the card is invalid.
-      const tokenResult = await paymentRef.current?.tokenize();
-      if (!tokenResult || !tokenResult.ok) {
-        fail(tokenResult?.error ?? 'Please enter your card details.');
-        return;
+      // Card path: tokenize first — no order is created if the card is invalid.
+      // Reserve path: no card is entered, so there is nothing to tokenize.
+      let paymentSourceId: string | undefined;
+      if (!reserveMode) {
+        const tokenResult = await paymentRef.current?.tokenize();
+        if (!tokenResult || !tokenResult.ok) {
+          fail(tokenResult?.error ?? 'Please enter your card details.');
+          return;
+        }
+        paymentSourceId = tokenResult.sourceId;
       }
 
       // One key per checkout attempt, created lazily and held for the life of this
@@ -416,7 +449,10 @@ export function CheckoutClient({
         })),
         promoCode: promo?.code,
         tipCents: tipCents > 0 ? tipCents : undefined,
-        paymentSourceId: tokenResult.sourceId,
+        // Reserve mode leaves paymentSourceId undefined; the action then skips the
+        // charge and the order keeps its full balance due for on-arrival payment.
+        paymentSourceId,
+        reserve: reserveMode,
         isReturningGuest: false,
       });
 
@@ -574,16 +610,26 @@ export function CheckoutClient({
               </Section>
             )}
 
-            <Section title="Payment" description="Secure card payment.">
+            <Section
+              title={reserveMode ? 'Reservation' : 'Payment'}
+              description={
+                reserveMode ? 'Pay when you arrive at the marina.' : 'Secure card payment.'
+              }
+            >
               {/* Express-wallet seam (Apple/Google Pay). Renders nothing unless
                   NEXT_PUBLIC_ENABLE_WALLET_PAY is on; onExpressPay left unwired
-                  until a real PaymentRequest integration is added. */}
-              {wallet.enabled && (
+                  until a real PaymentRequest integration is added. Card path only. */}
+              {!reserveMode && wallet.enabled && (
                 <div className="mb-4">
                   <WalletExpress enabled={wallet.enabled} />
                 </div>
               )}
-              <PaymentSection ref={paymentRef} stripe={stripe} />
+              <PaymentSection
+                ref={paymentRef}
+                stripe={stripe}
+                reserveMode={reserveMode}
+                dueAtMarinaCents={reserveDueCents}
+              />
             </Section>
           </div>
 
@@ -670,9 +716,17 @@ export function CheckoutClient({
                 size="lg"
                 className="w-full"
                 loading={submitting}
-                disabled={!stripe.configured && !stripe.fakeMode}
+                // Reserve mode never needs online payment configured — it takes no
+                // card here — so the config guard only gates the card path.
+                disabled={!reserveMode && !stripe.configured && !stripe.fakeMode}
               >
-                {submitting ? 'Processing…' : 'Complete booking'}
+                {submitting
+                  ? reserveMode
+                    ? 'Reserving…'
+                    : 'Processing…'
+                  : reserveMode
+                    ? 'Reserve my spot'
+                    : 'Complete booking'}
               </Button>
 
               {/*
@@ -681,12 +735,17 @@ export function CheckoutClient({
                 of a button that silently stops responding.
               */}
               <p role="status" className="sr-only">
-                {submitting ? 'Processing your booking. Please wait.' : ''}
+                {submitting
+                  ? reserveMode
+                    ? 'Reserving your spot. Please wait.'
+                    : 'Processing your booking. Please wait.'
+                  : ''}
               </p>
 
               <p className="text-center text-xs text-slate-500">
-                By completing this booking you agree to the terms and any
-                applicable cancellation policy.
+                {reserveMode
+                  ? 'By reserving you agree to the terms and any applicable cancellation policy.'
+                  : 'By completing this booking you agree to the terms and any applicable cancellation policy.'}
               </p>
             </div>
           </div>

@@ -30,6 +30,7 @@ import {
   useStripe,
 } from '@stripe/react-stripe-js';
 import { AlertTriangle, CreditCard, Lock } from 'lucide-react';
+import { formatUSD } from '@marina/core';
 import type { StripeConfig } from '@/app/checkout/stripe-config';
 
 /** What the parent can ask of this section. */
@@ -47,6 +48,14 @@ export interface PaymentSectionHandle {
 
 interface PaymentSectionProps {
   stripe: StripeConfig;
+  /**
+   * Reserve mode: hold the spot with no card taken online; the guest pays on
+   * arrival. When true this renders the "Reserve now, pay at the marina" panel
+   * regardless of Stripe wiring, and the parent never calls `tokenize`.
+   */
+  reserveMode?: boolean;
+  /** Estimated amount owed at the marina (integer cents), shown in reserve mode. */
+  dueAtMarinaCents?: number;
 }
 
 const CARD_ELEMENT_OPTIONS = {
@@ -143,13 +152,15 @@ const CardForm = forwardRef<PaymentSectionHandle, { testMode: boolean }>(
  * pay-at-the-marina booking. Customer-facing copy NEVER mentions dev/simulated/
  * fake/test payments. Rendered when online card capture isn't wired for this site.
  */
-const ReserveAtMarinaForm = forwardRef<PaymentSectionHandle>(
-  function ReserveAtMarinaForm(_props, ref) {
+const ReserveAtMarinaForm = forwardRef<PaymentSectionHandle, { dueCents?: number }>(
+  function ReserveAtMarinaForm({ dueCents }, ref) {
+    // No card is taken here — the parent skips tokenize entirely in reserve mode —
+    // but the handle is still satisfied so the ref contract holds.
     useImperativeHandle(
       ref,
       () => ({
         isReady: () => true,
-        tokenize: async () => ({ ok: true as const, sourceId: 'dev_pm_fake' }),
+        tokenize: async () => ({ ok: true as const, sourceId: '' }),
       }),
       [],
     );
@@ -157,11 +168,21 @@ const ReserveAtMarinaForm = forwardRef<PaymentSectionHandle>(
       <div className="rounded-lg border border-sky-300 bg-sky-50 p-4">
         <div className="flex items-start gap-3">
           <CreditCard className="mt-0.5 h-5 w-5 shrink-0 text-sky-600" aria-hidden />
-          <div className="space-y-1 text-sm">
+          <div className="space-y-2 text-sm">
             <p className="font-semibold text-sky-900">Reserve now, pay at the marina</p>
             <p className="text-sky-800">
-              No card needed to hold your spot. Complete your booking below and pay
-              when you arrive at the marina.
+              No card needed to hold your spot. Confirm your booking below and pay
+              when you arrive.
+            </p>
+            {typeof dueCents === 'number' && dueCents > 0 && (
+              <p className="flex items-baseline justify-between gap-4 rounded-md bg-white/70 px-3 py-2 font-medium text-sky-900">
+                <span>Due at the marina</span>
+                <span className="tabular-nums">{formatUSD(dueCents)}</span>
+              </p>
+            )}
+            <p className="text-xs text-sky-700">
+              Bring a photo ID and your order number. Cash and card are accepted at
+              check-in.
             </p>
           </div>
         </div>
@@ -171,16 +192,27 @@ const ReserveAtMarinaForm = forwardRef<PaymentSectionHandle>(
 );
 
 export const PaymentSection = forwardRef<PaymentSectionHandle, PaymentSectionProps>(
-  function PaymentSection({ stripe }, ref) {
+  function PaymentSection({ stripe, reserveMode, dueAtMarinaCents }, ref) {
     // Hooks must run unconditionally — build the Stripe instance (null if unconfigured).
     const stripePromise = useMemo<Promise<Stripe | null> | null>(
-      () => (stripe.configured && stripe.publishableKey ? loadStripe(stripe.publishableKey) : null),
-      [stripe.configured, stripe.publishableKey],
+      () =>
+        // Reserve mode never loads Stripe.js — no card is taken online.
+        !reserveMode && stripe.configured && stripe.publishableKey
+          ? loadStripe(stripe.publishableKey)
+          : null,
+      [reserveMode, stripe.configured, stripe.publishableKey],
     );
 
-    // --- No online card capture: reserve now, pay at the marina. -----------------
+    // --- Reserve mode: pay at the marina, no card online. This is a first-class,
+    // customer-presentable mode (PAYMENT_MODE=reserve), independent of Stripe wiring.
+    if (reserveMode) {
+      return <ReserveAtMarinaForm ref={ref} dueCents={dueAtMarinaCents} />;
+    }
+
+    // --- No online card capture but not reserve mode (local simulator with no key):
+    // still present it as reserve-now, pay-at-the-marina — never as a dev/fake charge.
     if (!stripePromise && stripe.fakeMode) {
-      return <ReserveAtMarinaForm ref={ref} />;
+      return <ReserveAtMarinaForm ref={ref} dueCents={dueAtMarinaCents} />;
     }
 
     // --- Not configured: clear notice (no card field). The parent guards submit on

@@ -48,7 +48,17 @@ function PanelIcon({ kind }: { kind: 'checkin' | 'policy' }) {
   );
 }
 
-export function CheckInInstructions({ brandName }: { brandName: string }) {
+export function CheckInInstructions({
+  brandName,
+  balanceDueLabel,
+}: {
+  brandName: string;
+  /**
+   * Formatted amount owed on arrival (e.g. "$120.00"), when the booking is a
+   * reserve-now / pay-at-the-marina order. Omitted when nothing is owed.
+   */
+  balanceDueLabel?: string;
+}) {
   return (
     <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
       <div className="mb-3 flex items-center gap-2 text-slate-900">
@@ -65,6 +75,15 @@ export function CheckInInstructions({ brandName }: { brandName: string }) {
           Arrive 15 minutes before your start time so the {brandName} team can get
           you checked in and on your way.
         </li>
+        {balanceDueLabel && (
+          <li className="flex gap-2">
+            <span aria-hidden className="text-slate-400">
+              •
+            </span>
+            Bring {balanceDueLabel} to pay at the marina — cash and card are
+            accepted at check-in.
+          </li>
+        )}
         <li className="flex gap-2">
           <span aria-hidden className="text-slate-400">
             •

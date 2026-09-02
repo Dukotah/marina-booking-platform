@@ -87,8 +87,17 @@ export interface PlaceOrderInput {
   }>;
   promoCode?: string;
   tipCents?: number;
-  /** Tokenized payment source — a Stripe PaymentMethod id from Stripe Elements. */
-  paymentSourceId: string;
+  /**
+   * Tokenized payment source — a Stripe PaymentMethod id from Stripe Elements.
+   * Omitted in reserve mode, where no card is taken online.
+   */
+  paymentSourceId?: string;
+  /**
+   * Reserve now, pay at the marina. When true, the order is created and left with
+   * its full balance due — no online charge is taken — so staff collect it on
+   * arrival via the existing check-in / collect-balance flow.
+   */
+  reserve?: boolean;
   heardAboutUs?: string;
   isReturningGuest?: boolean;
 }
@@ -122,7 +131,9 @@ export async function placeOrder(
     };
   }
 
-  if (!input.paymentSourceId) {
+  // Card mode requires a tokenized source before we create anything. Reserve mode
+  // takes no card online, so this guard does not apply there.
+  if (!input.reserve && !input.paymentSourceId) {
     return {
       ok: false,
       error: 'A payment method is required to complete your booking.',
@@ -159,9 +170,26 @@ export async function placeOrder(
     };
   }
 
+  // Reserve mode: the booking is complete the moment the order exists. No card is
+  // charged online — the order keeps its full balance due for on-arrival payment —
+  // so we skip submitPayment entirely and report the balance the guest will owe.
+  if (input.reserve) {
+    const payment: PaymentResult = {
+      paymentId: '',
+      // Not paid, not failed, no bank challenge — a reservation awaiting payment.
+      status: 'PRE_AUTHORIZED',
+      amountCents: 0,
+      balanceDueCents: order.balanceDueCents,
+      cardLastFour: null,
+      cardBrand: null,
+      receiptUrl: null,
+    };
+    return { ok: true, order, payment };
+  }
+
   let payment: PaymentResult;
   try {
-    payment = await submitPayment(order.id, input.paymentSourceId);
+    payment = await submitPayment(order.id, input.paymentSourceId!);
   } catch (err) {
     // The order exists but payment failed — surface a clear, recoverable message.
     return {

@@ -13,6 +13,7 @@ import Link from 'next/link';
 import { getActivity, getAvailability, isApiError } from '@/lib/api';
 import { getBrandAsync } from '@/lib/brand';
 import { getStripeConfig } from './stripe-config';
+import { getPaymentMode } from './payment-mode';
 import { getWalletConfig } from './wallet-config';
 import { CheckoutClient } from '@/components/checkout/CheckoutClient';
 import type { CheckoutSelection } from '@/components/checkout/types';
@@ -145,6 +146,7 @@ export default async function CheckoutPage({ searchParams }: CheckoutPageProps) 
   };
 
   const stripe = getStripeConfig();
+  const paymentMode = getPaymentMode();
   const brand = await getBrandAsync();
   // Wallet-pay sheet shows the operator as the merchant, not the env-default brand.
   const wallet = getWalletConfig(brand.name);
@@ -162,13 +164,16 @@ export default async function CheckoutPage({ searchParams }: CheckoutPageProps) 
           Checkout
         </h1>
         <p className="mt-1 text-sm text-slate-600">
-          Review your reservation, add guest details, and pay securely.
+          {paymentMode === 'reserve'
+            ? 'Review your reservation, add guest details, and reserve your spot. Pay when you arrive at the marina.'
+            : 'Review your reservation, add guest details, and pay securely.'}
         </p>
       </header>
 
       <CheckoutClient
         selection={selection}
         stripe={stripe}
+        paymentMode={paymentMode}
         wallet={wallet}
         operatorName={brand.name}
       />
