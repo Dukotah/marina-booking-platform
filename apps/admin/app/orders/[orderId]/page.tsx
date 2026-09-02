@@ -88,8 +88,14 @@ export default async function OrderDetailPage({
   await requirePermission('order:read');
   const [db, permissions] = await Promise.all([getTenantDb(), currentPermissions()]);
 
+  // Accept either the internal id (CUID2, the link the app generates) OR the
+  // human-readable order number (LSRA{YYMMDD}{NNN} / LSM-… — what a guest reads off
+  // a confirmation email or a staffer copies from a phone call and pastes into the
+  // URL bar). Matching both means a pasted order number lands on the order instead
+  // of a dead "Order not found". The lookup stays tenant-scoped through the RLS
+  // client, so a wrong-tenant id/number still 404s.
   const order = await db.order.findFirst({
-    where: { id: params.orderId },
+    where: { OR: [{ id: params.orderId }, { order_number: params.orderId }] },
     include: {
       customer: true,
       items: {
