@@ -1,0 +1,707 @@
+{
+  "_meta": {
+    "generated": "2026-09-01",
+    "source": "/mnt/c/Users/dukot/projects/LakeSonoma",
+    "branch": "main",
+    "singenuityBase": "https://book.singenuity.com/758",
+    "singenuityOperator": 758,
+    "priceSheet": "/forms/2026-price-sheet.png",
+    "priceUnit": "USD (amounts are whole dollars, NOT cents)",
+    "note": "All amounts in this file are USD whole dollars as stored in marina.ts. The tiers() helper stores them as raw numbers (e.g. 125 = $125). No cent conversion was applied."
+  },
+
+  "products": [
+    {
+      "singenuityId": 3624,
+      "singenuityDeepLink": "https://book.singenuity.com/758/activity/details/3624/date",
+      "slug": "pontoon-5-person",
+      "name": "5-Person Pontoon",
+      "category": "pontoon",
+      "categoryLabel": "Pontoon Boats",
+      "activities": ["cruising"],
+      "capacity": 5,
+      "featured": true,
+      "bookByPhone": false,
+      "priceTBD": false,
+      "pricing": [
+        { "label": "1 hour",  "amount": 125 },
+        { "label": "4 hours", "amount": 350 },
+        { "label": "8 hours", "amount": 625 },
+        { "label": "24 hours","amount": 1000 }
+      ],
+      "fromPrice": 125,
+      "deposit": null,
+      "addOns": ["Performance Water Ski","Knee Board","Wake Board","Tube"],
+      "notes": [
+        "No slides or barbecues offered",
+        "No towing allowed behind pontoon boats"
+      ],
+      "blurb": "Enjoy a leisurely float on Lake Sonoma with a fun pontoon boat rental — our most popular small-group boat, easy to drive and perfect for a relaxed cruise.",
+      "photos": {
+        "local": "/images/singenuity/3624.jpg",
+        "localAbsolute": "/mnt/c/Users/dukot/projects/LakeSonoma/public/images/singenuity/3624.jpg",
+        "cloudinary": "https://res.cloudinary.com/singenuity/w_800,h_600,c_fill/v1/prod/1560/758/entities/images/3624/original"
+      }
+    },
+    {
+      "singenuityId": 3633,
+      "singenuityDeepLink": "https://book.singenuity.com/758/activity/details/3633/date",
+      "slug": "pontoon-10-person",
+      "name": "10-Person Pontoon",
+      "category": "pontoon",
+      "categoryLabel": "Pontoon Boats",
+      "activities": ["cruising"],
+      "capacity": 10,
+      "featured": true,
+      "bookByPhone": false,
+      "priceTBD": false,
+      "pricing": [
+        { "label": "1 hour",  "amount": 135 },
+        { "label": "4 hours", "amount": 420 },
+        { "label": "8 hours", "amount": 750 },
+        { "label": "24 hours","amount": 1000 }
+      ],
+      "fromPrice": 135,
+      "deposit": null,
+      "addOns": ["Performance Water Ski","Knee Board","Wake Board","Tube"],
+      "notes": [
+        "No slides or barbecues offered",
+        "No towing allowed behind pontoon boats"
+      ],
+      "blurb": "A roomy pontoon with space for the whole crew to spread out and enjoy a day on the water.",
+      "photos": {
+        "local": "/images/singenuity/3633.jpg",
+        "localAbsolute": "/mnt/c/Users/dukot/projects/LakeSonoma/public/images/singenuity/3633.jpg",
+        "cloudinary": "https://res.cloudinary.com/singenuity/w_800,h_600,c_fill/v1/prod/1560/758/entities/images/3633/original"
+      }
+    },
+    {
+      "singenuityId": 3634,
+      "singenuityDeepLink": "https://book.singenuity.com/758/activity/details/3634/date",
+      "slug": "pontoon-12-person",
+      "name": "12-Person Pontoon",
+      "category": "pontoon",
+      "categoryLabel": "Pontoon Boats",
+      "activities": ["cruising"],
+      "capacity": 12,
+      "featured": false,
+      "bookByPhone": false,
+      "priceTBD": false,
+      "pricing": [
+        { "label": "1 hour",  "amount": 160 },
+        { "label": "4 hours", "amount": 520 },
+        { "label": "8 hours", "amount": 900 },
+        { "label": "24 hours","amount": 1300 }
+      ],
+      "fromPrice": 160,
+      "deposit": null,
+      "addOns": ["Performance Water Ski","Knee Board","Wake Board","Tube"],
+      "notes": [
+        "No slides or barbecues offered",
+        "No towing allowed behind pontoon boats"
+      ],
+      "blurb": "Our big-group pontoon for a fun time on Lake Sonoma with the whole family.",
+      "photos": {
+        "local": "/images/singenuity/3634.jpg",
+        "localAbsolute": "/mnt/c/Users/dukot/projects/LakeSonoma/public/images/singenuity/3634.jpg",
+        "cloudinary": "https://res.cloudinary.com/singenuity/w_800,h_600,c_fill/v1/prod/1560/758/entities/images/3634/original"
+      }
+    },
+    {
+      "singenuityId": 3635,
+      "singenuityDeepLink": "https://book.singenuity.com/758/activity/details/3635/date",
+      "slug": "pontoon-double-decker",
+      "name": "Double Decker Pontoon (12)",
+      "category": "pontoon",
+      "categoryLabel": "Pontoon Boats",
+      "activities": ["cruising"],
+      "capacity": 12,
+      "featured": true,
+      "bookByPhone": false,
+      "priceTBD": false,
+      "pricing": [
+        { "label": "1 hour",  "amount": 185 },
+        { "label": "4 hours", "amount": 585 },
+        { "label": "8 hours", "amount": 995 },
+        { "label": "24 hours","amount": 1300 }
+      ],
+      "fromPrice": 185,
+      "deposit": null,
+      "addOns": ["Performance Water Ski","Knee Board","Wake Board","Tube"],
+      "notes": [
+        "No slides or barbecues offered",
+        "No towing allowed behind pontoon boats"
+      ],
+      "blurb": "Two levels of fun — our double-decker pontoon is a Lake Sonoma favorite for groups up to 12, complete with a slide-friendly upper deck view.",
+      "photos": {
+        "local": "/images/singenuity/3635.jpg",
+        "localAbsolute": "/mnt/c/Users/dukot/projects/LakeSonoma/public/images/singenuity/3635.jpg",
+        "cloudinary": "https://res.cloudinary.com/singenuity/w_800,h_600,c_fill/v1/prod/1560/758/entities/images/3635/original"
+      }
+    },
+    {
+      "singenuityId": 3636,
+      "singenuityDeepLink": "https://book.singenuity.com/758/activity/details/3636/date",
+      "slug": "pontoon-premium-10",
+      "name": "Premium 10-Passenger Pontoon",
+      "category": "pontoon",
+      "categoryLabel": "Pontoon Boats",
+      "activities": ["cruising"],
+      "capacity": 10,
+      "featured": false,
+      "bookByPhone": false,
+      "priceTBD": false,
+      "pricing": [
+        { "label": "1 hour",  "amount": 200 },
+        { "label": "4 hours", "amount": 600 },
+        { "label": "8 hours", "amount": 1100 }
+      ],
+      "fromPrice": 200,
+      "deposit": null,
+      "addOns": ["Performance Water Ski","Knee Board","Wake Board","Tube"],
+      "notes": [
+        "No slides or barbecues offered",
+        "No towing allowed behind pontoon boats"
+      ],
+      "blurb": "A premium single-story pontoon with upgraded comfort for up to 10 guests.",
+      "photos": {
+        "local": "/images/singenuity/3636.jpg",
+        "localAbsolute": "/mnt/c/Users/dukot/projects/LakeSonoma/public/images/singenuity/3636.jpg",
+        "cloudinary": "https://res.cloudinary.com/singenuity/w_800,h_600,c_fill/v1/prod/1560/758/entities/images/3636/original"
+      }
+    },
+    {
+      "singenuityId": 0,
+      "singenuityDeepLink": null,
+      "slug": "quest-fishing-pontoon",
+      "name": "Quest Fishing Pontoon (3)",
+      "category": "pontoon",
+      "categoryLabel": "Pontoon Boats",
+      "activities": ["fishing", "cruising"],
+      "capacity": 3,
+      "featured": false,
+      "bookByPhone": true,
+      "priceTBD": false,
+      "pricing": [
+        { "label": "1 hour",  "amount": 100 },
+        { "label": "4 hours", "amount": 375 },
+        { "label": "8 hours", "amount": 600 }
+      ],
+      "fromPrice": 100,
+      "deposit": null,
+      "addOns": ["Performance Water Ski","Knee Board","Wake Board","Tube"],
+      "notes": [
+        "No slides or barbecues offered",
+        "No towing allowed behind pontoon boats",
+        "Call to book — no Singenuity deep-link available"
+      ],
+      "blurb": "A nimble fishing pontoon built for casting a line on Lake Sonoma — stable, easy to drive, and ideal for a small fishing party. Call the marina to reserve.",
+      "photos": {
+        "local": "/images/singenuity/3633.jpg",
+        "localAbsolute": "/mnt/c/Users/dukot/projects/LakeSonoma/public/images/singenuity/3633.jpg",
+        "note": "Stand-in photo (10-Person Pontoon); no dedicated Quest photo in repo"
+      }
+    },
+    {
+      "singenuityId": 3637,
+      "singenuityDeepLink": "https://book.singenuity.com/758/activity/details/3637/date",
+      "slug": "watersport-tubing",
+      "name": "Watersport / Tubing Boat (7)",
+      "category": "watersport",
+      "categoryLabel": "Watersport / Tubing",
+      "activities": ["watersports", "cruising"],
+      "capacity": 7,
+      "featured": true,
+      "bookByPhone": false,
+      "priceTBD": false,
+      "pricing": [
+        { "label": "1 hour",  "amount": 175 },
+        { "label": "4 hours", "amount": 600 },
+        { "label": "8 hours", "amount": 1000 }
+      ],
+      "fromPrice": 175,
+      "deposit": null,
+      "addOns": ["Performance Water Ski","Knee Board","Wake Board","Tube"],
+      "notes": [],
+      "blurb": "For some great tubing and watersports on Lake Sonoma, don't miss this boat that lets you enjoy the water for a half or a full day.",
+      "photos": {
+        "local": "/images/singenuity/3637.jpg",
+        "localAbsolute": "/mnt/c/Users/dukot/projects/LakeSonoma/public/images/singenuity/3637.jpg",
+        "cloudinary": "https://res.cloudinary.com/singenuity/w_800,h_600,c_fill/v1/prod/1560/758/entities/images/3637/original"
+      }
+    },
+    {
+      "singenuityId": 3627,
+      "singenuityDeepLink": "https://book.singenuity.com/758/activity/details/3627/date",
+      "slug": "premium-sport-boat",
+      "name": "Premium Sport Ski Boat (8)",
+      "category": "sport",
+      "categoryLabel": "Sport Boats",
+      "activities": ["watersports", "cruising"],
+      "capacity": 8,
+      "featured": false,
+      "bookByPhone": false,
+      "priceTBD": false,
+      "pricing": [
+        { "label": "1 hour",  "amount": 225 },
+        { "label": "4 hours", "amount": 700 },
+        { "label": "8 hours", "amount": 1300 }
+      ],
+      "fromPrice": 225,
+      "deposit": null,
+      "addOns": ["Performance Water Ski","Knee Board","Wake Board","Tube"],
+      "notes": [],
+      "blurb": "Enjoy a high-octane adventure over the waters of Lake Sonoma with our premium sport ski boat rental.",
+      "photos": {
+        "local": "/images/singenuity/3627.jpg",
+        "localAbsolute": "/mnt/c/Users/dukot/projects/LakeSonoma/public/images/singenuity/3627.jpg",
+        "cloudinary": "https://res.cloudinary.com/singenuity/w_800,h_600,c_fill/v1/prod/1560/758/entities/images/3627/original"
+      }
+    },
+    {
+      "singenuityId": 3641,
+      "singenuityDeepLink": "https://book.singenuity.com/758/activity/details/3641/date",
+      "slug": "logic-fishing-boat",
+      "name": "Logic Fishing Boat (3)",
+      "category": "fishing",
+      "categoryLabel": "Fishing Boats",
+      "activities": ["fishing"],
+      "capacity": 3,
+      "featured": true,
+      "bookByPhone": false,
+      "priceTBD": false,
+      "pricing": [
+        { "label": "1 hour",  "amount": 100 },
+        { "label": "4 hours", "amount": 340 },
+        { "label": "8 hours", "amount": 680 },
+        { "label": "24 hours","amount": 750 }
+      ],
+      "fromPrice": 100,
+      "deposit": null,
+      "addOns": [],
+      "notes": [],
+      "blurb": "Experience the best fishing on Lake Sonoma with hourly, half-day, full-day, or overnight rentals.",
+      "photos": {
+        "local": "/images/singenuity/3641.jpg",
+        "localAbsolute": "/mnt/c/Users/dukot/projects/LakeSonoma/public/images/singenuity/3641.jpg",
+        "cloudinary": "https://res.cloudinary.com/singenuity/w_800,h_600,c_fill/v1/prod/1560/758/entities/images/3641/original"
+      }
+    },
+    {
+      "singenuityId": 3643,
+      "singenuityDeepLink": "https://book.singenuity.com/758/activity/details/3643/date",
+      "slug": "jet-ski",
+      "name": "Wave Runner (Jet Ski)",
+      "category": "jetski",
+      "categoryLabel": "Wave Runners",
+      "activities": ["watersports"],
+      "capacity": 2,
+      "featured": true,
+      "bookByPhone": false,
+      "priceTBD": false,
+      "pricing": [
+        { "label": "1 hour", "amount": 150 }
+      ],
+      "fromPrice": 150,
+      "deposit": null,
+      "addOns": [],
+      "notes": [],
+      "blurb": "Have fun speeding over the waters of Lake Sonoma with an exciting Wave Runner (jet ski) rental, available by the hour.",
+      "photos": {
+        "local": "/images/singenuity/3643.jpg",
+        "localAbsolute": "/mnt/c/Users/dukot/projects/LakeSonoma/public/images/singenuity/3643.jpg",
+        "cloudinary": "https://res.cloudinary.com/singenuity/w_800,h_600,c_fill/v1/prod/1560/758/entities/images/3643/original"
+      }
+    },
+    {
+      "singenuityId": 3644,
+      "singenuityDeepLink": "https://book.singenuity.com/758/activity/details/3644/date",
+      "slug": "single-kayak",
+      "name": "Single Kayak",
+      "category": "paddle",
+      "categoryLabel": "Kayaks & Paddle Craft",
+      "activities": ["paddling"],
+      "capacity": 1,
+      "featured": false,
+      "bookByPhone": false,
+      "priceTBD": false,
+      "pricing": [
+        { "label": "1 hour",  "amount": 50 },
+        { "label": "4 hours", "amount": 150 },
+        { "label": "8 hours", "amount": 300 },
+        { "label": "24 hours","amount": 300 }
+      ],
+      "fromPrice": 50,
+      "deposit": null,
+      "addOns": [],
+      "notes": [],
+      "blurb": "Enjoy paddling on Lake Sonoma with a single kayak, available by the hour or for a half or full day.",
+      "photos": {
+        "local": "/images/singenuity/3644.jpg",
+        "localAbsolute": "/mnt/c/Users/dukot/projects/LakeSonoma/public/images/singenuity/3644.jpg",
+        "cloudinary": "https://res.cloudinary.com/singenuity/w_800,h_600,c_fill/v1/prod/1560/758/entities/images/3644/original"
+      }
+    },
+    {
+      "singenuityId": 3645,
+      "singenuityDeepLink": "https://book.singenuity.com/758/activity/details/3645/date",
+      "slug": "double-kayak",
+      "name": "Double Kayak",
+      "category": "paddle",
+      "categoryLabel": "Kayaks & Paddle Craft",
+      "activities": ["paddling"],
+      "capacity": 2,
+      "featured": false,
+      "bookByPhone": false,
+      "priceTBD": false,
+      "pricing": [
+        { "label": "1 hour",  "amount": 50 },
+        { "label": "4 hours", "amount": 175 },
+        { "label": "8 hours", "amount": 325 },
+        { "label": "24 hours","amount": 325 }
+      ],
+      "fromPrice": 50,
+      "deposit": null,
+      "addOns": [],
+      "notes": [],
+      "blurb": "Paddle together on Lake Sonoma in a roomy double kayak — by the hour or for a half or full day.",
+      "photos": {
+        "local": "/images/singenuity/3645.jpg",
+        "localAbsolute": "/mnt/c/Users/dukot/projects/LakeSonoma/public/images/singenuity/3645.jpg",
+        "cloudinary": "https://res.cloudinary.com/singenuity/w_800,h_600,c_fill/v1/prod/1560/758/entities/images/3645/original"
+      }
+    },
+    {
+      "singenuityId": 3648,
+      "singenuityDeepLink": "https://book.singenuity.com/758/activity/details/3648/date",
+      "slug": "paddle-board",
+      "name": "Paddle Board",
+      "category": "paddle",
+      "categoryLabel": "Kayaks & Paddle Craft",
+      "activities": ["paddling"],
+      "capacity": 1,
+      "featured": false,
+      "bookByPhone": false,
+      "priceTBD": false,
+      "pricing": [
+        { "label": "1 hour",  "amount": 50 },
+        { "label": "4 hours", "amount": 150 },
+        { "label": "8 hours", "amount": 300 },
+        { "label": "24 hours","amount": 300 }
+      ],
+      "fromPrice": 50,
+      "deposit": null,
+      "addOns": [],
+      "notes": [],
+      "blurb": "Experience the stunning scenery along the shore of Lake Sonoma with a stand-up paddle board rental.",
+      "photos": {
+        "local": "/images/singenuity/3648.jpg",
+        "localAbsolute": "/mnt/c/Users/dukot/projects/LakeSonoma/public/images/singenuity/3648.jpg",
+        "cloudinary": "https://res.cloudinary.com/singenuity/w_800,h_600,c_fill/v1/prod/1560/758/entities/images/3648/original"
+      }
+    },
+    {
+      "singenuityId": 3650,
+      "singenuityDeepLink": "https://book.singenuity.com/758/activity/details/3650/date",
+      "slug": "canoe",
+      "name": "Canoe",
+      "category": "paddle",
+      "categoryLabel": "Kayaks & Paddle Craft",
+      "activities": ["paddling"],
+      "capacity": 3,
+      "featured": false,
+      "bookByPhone": false,
+      "priceTBD": false,
+      "pricing": [
+        { "label": "1 hour",  "amount": 50 },
+        { "label": "4 hours", "amount": 150 },
+        { "label": "8 hours", "amount": 300 },
+        { "label": "24 hours","amount": 300 }
+      ],
+      "fromPrice": 50,
+      "deposit": null,
+      "addOns": [],
+      "notes": [],
+      "blurb": "Paddle along the shores of Lake Sonoma with a relaxing canoe rental.",
+      "photos": {
+        "local": "/images/singenuity/3650.jpg",
+        "localAbsolute": "/mnt/c/Users/dukot/projects/LakeSonoma/public/images/singenuity/3650.jpg",
+        "cloudinary": "https://res.cloudinary.com/singenuity/w_800,h_600,c_fill/v1/prod/1560/758/entities/images/3650/original"
+      }
+    },
+    {
+      "singenuityId": 3651,
+      "singenuityDeepLink": "https://book.singenuity.com/758/activity/details/3651/date",
+      "slug": "patio-grand",
+      "name": "Grand Patio",
+      "category": "patio",
+      "categoryLabel": "Patios & Day-Use",
+      "activities": ["patio"],
+      "capacity": null,
+      "featured": false,
+      "bookByPhone": false,
+      "priceTBD": true,
+      "pricing": [
+        { "label": "Per day", "amount": null }
+      ],
+      "fromPrice": null,
+      "deposit": null,
+      "addOns": [],
+      "notes": ["Contact marina for custom/group pricing"],
+      "blurb": "Our largest reservable patio for groups and gatherings on the water.",
+      "photos": {
+        "local": "/images/singenuity/3651.jpg",
+        "localAbsolute": "/mnt/c/Users/dukot/projects/LakeSonoma/public/images/singenuity/3651.jpg",
+        "cloudinary": "https://res.cloudinary.com/singenuity/w_800,h_600,c_fill/v1/prod/1560/758/entities/images/3651/original"
+      }
+    },
+    {
+      "singenuityId": 3652,
+      "singenuityDeepLink": "https://book.singenuity.com/758/activity/details/3652/date",
+      "slug": "patio-bar",
+      "name": "Bar Patio",
+      "category": "patio",
+      "categoryLabel": "Patios & Day-Use",
+      "activities": ["patio"],
+      "capacity": null,
+      "featured": false,
+      "bookByPhone": false,
+      "priceTBD": false,
+      "pricing": [
+        { "label": "Per day", "amount": 100 }
+      ],
+      "fromPrice": 100,
+      "deposit": null,
+      "addOns": [],
+      "notes": [],
+      "blurb": "Reserve a patio by the bar for an easy lakeside day-use spot.",
+      "photos": {
+        "local": "/images/singenuity/3652.jpg",
+        "localAbsolute": "/mnt/c/Users/dukot/projects/LakeSonoma/public/images/singenuity/3652.jpg",
+        "cloudinary": "https://res.cloudinary.com/singenuity/w_800,h_600,c_fill/v1/prod/1560/758/entities/images/3652/original"
+      }
+    },
+    {
+      "singenuityId": 3653,
+      "singenuityDeepLink": "https://book.singenuity.com/758/activity/details/3653/date",
+      "slug": "patio-scenic",
+      "name": "Scenic Patio",
+      "category": "patio",
+      "categoryLabel": "Patios & Day-Use",
+      "activities": ["patio"],
+      "capacity": null,
+      "featured": false,
+      "bookByPhone": false,
+      "priceTBD": false,
+      "pricing": [
+        { "label": "Per day", "amount": 100 }
+      ],
+      "fromPrice": 100,
+      "deposit": null,
+      "addOns": [],
+      "notes": [],
+      "blurb": "A scenic reserved patio with lake views.",
+      "photos": {
+        "local": "/images/singenuity/3653.jpg",
+        "localAbsolute": "/mnt/c/Users/dukot/projects/LakeSonoma/public/images/singenuity/3653.jpg",
+        "cloudinary": "https://res.cloudinary.com/singenuity/w_800,h_600,c_fill/v1/prod/1560/758/entities/images/3653/original"
+      }
+    },
+    {
+      "singenuityId": 3654,
+      "singenuityDeepLink": "https://book.singenuity.com/758/activity/details/3654/date",
+      "slug": "patio-bridge",
+      "name": "Bridge Patio",
+      "category": "patio",
+      "categoryLabel": "Patios & Day-Use",
+      "activities": ["patio"],
+      "capacity": null,
+      "featured": false,
+      "bookByPhone": false,
+      "priceTBD": false,
+      "pricing": [
+        { "label": "Per day", "amount": 100 }
+      ],
+      "fromPrice": 100,
+      "deposit": null,
+      "addOns": [],
+      "notes": [],
+      "blurb": "Reserved patio near the bridge — a shaded place to gather.",
+      "photos": {
+        "local": "/images/singenuity/3654.jpg",
+        "localAbsolute": "/mnt/c/Users/dukot/projects/LakeSonoma/public/images/singenuity/3654.jpg",
+        "cloudinary": "https://res.cloudinary.com/singenuity/w_800,h_600,c_fill/v1/prod/1560/758/entities/images/3654/original"
+      }
+    },
+    {
+      "singenuityId": 3655,
+      "singenuityDeepLink": "https://book.singenuity.com/758/activity/details/3655/date",
+      "slug": "patio-lakeside-5",
+      "name": "Lakeside Patio 5",
+      "category": "patio",
+      "categoryLabel": "Patios & Day-Use",
+      "activities": ["patio"],
+      "capacity": null,
+      "featured": false,
+      "bookByPhone": false,
+      "priceTBD": false,
+      "pricing": [
+        { "label": "Per day", "amount": 100 }
+      ],
+      "fromPrice": 100,
+      "deposit": null,
+      "addOns": [],
+      "notes": [],
+      "blurb": "Lakeside reserved patio for your day on the water.",
+      "photos": {
+        "local": "/images/singenuity/3655.jpg",
+        "localAbsolute": "/mnt/c/Users/dukot/projects/LakeSonoma/public/images/singenuity/3655.jpg",
+        "cloudinary": "https://res.cloudinary.com/singenuity/w_800,h_600,c_fill/v1/prod/1560/758/entities/images/3655/original"
+      }
+    },
+    {
+      "singenuityId": 3656,
+      "singenuityDeepLink": "https://book.singenuity.com/758/activity/details/3656/date",
+      "slug": "patio-lakeside-6",
+      "name": "Lakeside Patio 6",
+      "category": "patio",
+      "categoryLabel": "Patios & Day-Use",
+      "activities": ["patio"],
+      "capacity": null,
+      "featured": false,
+      "bookByPhone": false,
+      "priceTBD": false,
+      "pricing": [
+        { "label": "Per day", "amount": 100 }
+      ],
+      "fromPrice": 100,
+      "deposit": null,
+      "addOns": [],
+      "notes": [],
+      "blurb": "Lakeside reserved patio for your day on the water.",
+      "photos": {
+        "local": "/images/singenuity/3656.jpg",
+        "localAbsolute": "/mnt/c/Users/dukot/projects/LakeSonoma/public/images/singenuity/3656.jpg",
+        "cloudinary": "https://res.cloudinary.com/singenuity/w_800,h_600,c_fill/v1/prod/1560/758/entities/images/3656/original"
+      }
+    },
+    {
+      "singenuityId": 3657,
+      "singenuityDeepLink": "https://book.singenuity.com/758/activity/details/3657/date",
+      "slug": "patio-upper-lakeside-7",
+      "name": "Upper Lakeside Patio 7",
+      "category": "patio",
+      "categoryLabel": "Patios & Day-Use",
+      "activities": ["patio"],
+      "capacity": null,
+      "featured": false,
+      "bookByPhone": false,
+      "priceTBD": false,
+      "pricing": [
+        { "label": "Per day", "amount": 100 }
+      ],
+      "fromPrice": 100,
+      "deposit": null,
+      "addOns": [],
+      "notes": [],
+      "blurb": "Upper lakeside reserved patio with elevated views.",
+      "photos": {
+        "local": "/images/singenuity/3657.jpg",
+        "localAbsolute": "/mnt/c/Users/dukot/projects/LakeSonoma/public/images/singenuity/3657.jpg",
+        "cloudinary": "https://res.cloudinary.com/singenuity/w_800,h_600,c_fill/v1/prod/1560/758/entities/images/3657/original"
+      }
+    }
+  ],
+
+  "equipmentAddOns": [
+    {
+      "name": "Performance Water Ski",
+      "capacity": 1,
+      "pricing": [
+        { "label": "1 hour",  "amount": 30 },
+        { "label": "4 hours", "amount": 50 },
+        { "label": "8 hours", "amount": 70 },
+        { "label": "24 hours","amount": 100 }
+      ]
+    },
+    {
+      "name": "Knee Board",
+      "capacity": 1,
+      "pricing": [
+        { "label": "1 hour",  "amount": 30 },
+        { "label": "4 hours", "amount": 50 },
+        { "label": "8 hours", "amount": 70 },
+        { "label": "24 hours","amount": 100 }
+      ]
+    },
+    {
+      "name": "Wake Board",
+      "capacity": 1,
+      "pricing": [
+        { "label": "1 hour",  "amount": 35 },
+        { "label": "4 hours", "amount": 60 },
+        { "label": "8 hours", "amount": 100 },
+        { "label": "24 hours","amount": 135 }
+      ]
+    },
+    {
+      "name": "Tube",
+      "capacity": 1,
+      "pricing": [
+        { "label": "1 hour",  "amount": 35 },
+        { "label": "4 hours", "amount": 60 },
+        { "label": "8 hours", "amount": 100 },
+        { "label": "24 hours","amount": 135 }
+      ]
+    }
+  ],
+
+  "dayUseFees": [
+    { "label": "Launch Ramp",    "amount": 25 },
+    { "label": "Hand Launch",    "amount": 20 },
+    { "label": "Daily Parking",  "amount": 20 }
+  ],
+
+  "passesAndStorage": [
+    { "label": "Annual Ramp Pass",   "price": "$450 / yr", "note": "Vehicle + trailer, one calendar year" },
+    { "label": "Annual Day-Use Pass","price": "$250 / yr", "note": "Vehicle only, hand launch ok" },
+    { "label": "Trailer Storage",    "price": "$85 / mo",  "note": "Month-to-month" }
+  ],
+
+  "whatsIncluded": [
+    "1 complimentary parking pass per reservation",
+    "USCG-approved safety gear and life jackets (infant through adult)"
+  ],
+
+  "operatorRules": [
+    "Boat operators must be 21+ with a valid government-issued photo ID",
+    "A boating safety card is recommended but not required",
+    "Children under 12 must be accompanied by an adult at all times",
+    "Life jackets are required for all children under 13 while underway",
+    "Please arrive 30 minutes early for check-in"
+  ],
+
+  "cancellationPolicy": [
+    "Full refund when cancelled 7 or more days in advance",
+    "50% refund when cancelled within 7 days",
+    "Non-refundable within 24 hours of the reservation"
+  ],
+
+  "rentalDisclaimers": [
+    "A valid driver's license and a credit card are required for all rentals.",
+    "Fuel and sales tax are not included in the boat rental rates.",
+    "All renters must check in 30 minutes prior to the reserved time.",
+    "Cancellations must be made 7 days prior to the reservation date."
+  ],
+
+  "dayUsePatioAmenities": {
+    "hours": "8:00 AM – 8:00 PM",
+    "includes": ["BBQ pits","Partly shaded area","Picnic tables","Trash receptacles"],
+    "extras": "Volleyball option also available — ask staff on arrival"
+  },
+
+  "pricingPageSummary": {
+    "description": "The /pricing page is the canonical rate display. It renders all PRODUCTS from marina.ts grouped by category, showing the lowest (fromPrice) as 'From $X / {first tier label}'. Equipment add-ons appear in a secondary table. Day-use fees and passes/storage are shown in a two-column card layout. The official 2026 price sheet image is linked at /forms/2026-price-sheet.png.",
+    "noteOnPriceSheet": "The PNG at /public/forms/2026-price-sheet.png is the marina's official rate sheet and is the ultimate source of truth. The data in marina.ts is declared to mirror it exactly; any discrepancy should resolve in favor of the PNG."
+  }
+}
