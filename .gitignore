@@ -33,3 +33,6 @@ Thumbs.db
 
 # Vercel CLI local project link
 .vercel
+
+# Local upload store (runtime artifact; photos regenerated via copy-lakesonoma-photos.sh)
+.sandbox/
