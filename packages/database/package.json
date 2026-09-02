@@ -21,6 +21,7 @@
     "seed:season": "node --experimental-strip-types prisma/seed-season.ts",
     "seed:waiver": "node --experimental-strip-types scripts/seed-waiver-clauses.ts",
     "seed:lakesonoma-catalog": "bash scripts/copy-lakesonoma-photos.sh && node --experimental-strip-types scripts/seed-lakesonoma-catalog.ts",
+    "sanitize:names": "node --experimental-strip-types scripts/sanitize-customer-names.ts",
     "state": "node scripts/ensure-seeded.mjs"
   },
   "prisma": {
