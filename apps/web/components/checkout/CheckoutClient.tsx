@@ -511,9 +511,33 @@ export function CheckoutClient({
     }
   };
 
+  const submitLabel = submitting
+    ? reserveMode
+      ? 'Reserving…'
+      : 'Processing…'
+    : reserveMode
+      ? 'Reserve my spot'
+      : 'Complete booking';
+  const submitDisabled = !reserveMode && !stripe.configured && !stripe.fakeMode;
+
   return (
     <FormProvider {...methods}>
-      <form onSubmit={methods.handleSubmit(onSubmit, onInvalid)} noValidate>
+      {/*
+        The primary submit lives in the summary rail, which on a phone is `order-1` —
+        it sits ABOVE the four sections of fields a guest has to fill. So the moment
+        they finish the last field (payment, at the very bottom) the button they need
+        is a full-page scroll back up, out of thumb reach. The rail stays where it is
+        (it carries the price context and is the desktop CTA), and this mobile-only
+        bar keeps the same action pinned to the bottom of the screen the whole way
+        down — one-handed, no scroll-back. Hidden from `lg` up, where the rail is
+        already sticky and beside the form. The `pb` on the form clears the bar so it
+        never covers the last field.
+      */}
+      <form
+        onSubmit={methods.handleSubmit(onSubmit, onInvalid)}
+        noValidate
+        className="pb-24 lg:pb-0"
+      >
         {/*
           Error summary — the only thing that tells a non-sighted guest the submit
           was rejected at all. Two mechanisms, deliberately, because neither
@@ -718,15 +742,9 @@ export function CheckoutClient({
                 loading={submitting}
                 // Reserve mode never needs online payment configured — it takes no
                 // card here — so the config guard only gates the card path.
-                disabled={!reserveMode && !stripe.configured && !stripe.fakeMode}
+                disabled={submitDisabled}
               >
-                {submitting
-                  ? reserveMode
-                    ? 'Reserving…'
-                    : 'Processing…'
-                  : reserveMode
-                    ? 'Reserve my spot'
-                    : 'Complete booking'}
+                {submitLabel}
               </Button>
 
               {/*
@@ -749,6 +767,39 @@ export function CheckoutClient({
               </p>
             </div>
           </div>
+        </div>
+
+        {/*
+          Mobile-only sticky action bar. A second submit button in the same form is
+          valid and fires the same handler; it is `aria-hidden` and out of the tab
+          order because the in-flow button above already gives assistive tech and
+          keyboard users the submit — this bar is purely a reach aid for a thumb on a
+          phone, so duplicating it into the accessibility tree would just announce the
+          same control twice. It carries the running total for at-a-glance context.
+        */}
+        <div
+          aria-hidden
+          className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white/95 px-4 py-3 shadow-[0_-1px_8px_rgba(15,23,42,0.06)] backdrop-blur supports-[backdrop-filter]:bg-white/80 lg:hidden"
+          style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}
+        >
+          <Button
+            type="submit"
+            variant="brand"
+            size="lg"
+            className="w-full"
+            loading={submitting}
+            disabled={submitDisabled}
+            tabIndex={-1}
+          >
+            <span className="flex w-full items-center justify-between gap-3">
+              <span>{submitLabel}</span>
+              {!submitting && (
+                <span className="font-semibold tabular-nums">
+                  {formatUSD(reserveDueCents)}
+                </span>
+              )}
+            </span>
+          </Button>
         </div>
 
         {/*
