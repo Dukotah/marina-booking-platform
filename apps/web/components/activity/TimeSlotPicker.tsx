@@ -179,6 +179,28 @@ export function TimeSlotPicker({
   const requestSeq = useRef(0);
   const chipRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
+  // Restore a previously chosen time (e.g. after Back from checkout). The parent
+  // controls selection by id, but the CTA needs the resolved slot *object* — with
+  // its live remaining capacity — before it can advance. So once the day's slots
+  // load, re-emit the slot matching the controlled id, but ONLY if it is still
+  // selectable: a slot that filled up while the guest was away must not silently
+  // become bookable again. Guarded to fire once per (day, id) so it can never loop
+  // or override a fresh pick the guest makes after the restore.
+  const restoredKey = useRef<string | null>(null);
+  useEffect(() => {
+    if (!selectedTimeslotId) return;
+    const key = `${iso}|${selectedTimeslotId}`;
+    if (restoredKey.current === key) return;
+    const match = slots.find((s) => s.timeslotId === selectedTimeslotId);
+    if (!match) return;
+    restoredKey.current = key;
+    if (match.status === 'FULL' || match.capacityRemaining <= 0) return;
+    onSelect(match);
+    // onSelect is stable enough for this one-shot restore; guarding by restoredKey
+    // makes re-runs no-ops regardless.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slots, selectedTimeslotId, iso]);
+
   useEffect(() => {
     const seq = ++requestSeq.current;
     let cancelled = false;

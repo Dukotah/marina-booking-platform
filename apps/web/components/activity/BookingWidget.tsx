@@ -11,14 +11,16 @@
  *      chosen slot's remaining capacity.
  *
  * When all three are chosen it routes to /checkout, passing the selection as
- * query params so the checkout slice can hydrate the cart. State (not just the
- * id) is also pushed via the router so a soft navigation preserves it without a
- * refetch where possible.
+ * query params so the checkout slice can hydrate the cart. The selection is also
+ * mirrored to sessionStorage (keyed by activity) so that pressing Back from
+ * checkout restores the chosen rate, date, time, and party size instead of
+ * dumping the guest back onto an empty form. See `restoreSelection` below.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
+import { parseISO, startOfDay } from 'date-fns';
 import { formatUSD, formatISODate, formatLongDate, formatTime } from '@/lib/format';
 import type {
   ActivityDetail,
@@ -28,6 +30,63 @@ import type {
 import { onBrandForeground } from '@/lib/brand';
 import { RateCards } from './RateCards';
 import type { RangeDay } from '../booking/AvailabilityCalendar';
+
+/**
+ * A guest's in-progress selection, persisted so Back from checkout restores it.
+ *
+ * Only primitives are stored — the ids the guest chose plus the party size — never
+ * the resolved slot object, which is live inventory that must be re-fetched (its
+ * remaining capacity can change while the guest is away). The timeslot is restored
+ * by handing its id to TimeSlotPicker, which re-selects the matching slot from the
+ * freshly loaded day so we never advance to checkout on stale capacity.
+ */
+interface PersistedSelection {
+  rateId: string | null;
+  dateISO: string | null;
+  timeslotId: string | null;
+  quantity: number;
+}
+
+/** sessionStorage key for one activity's in-progress selection. */
+function selectionKey(activityId: string): string {
+  return `booking:selection:${activityId}`;
+}
+
+/** Read a persisted selection for this activity, or null when none/invalid. */
+function restoreSelection(activityId: string): PersistedSelection | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.sessionStorage.getItem(selectionKey(activityId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<PersistedSelection>;
+    return {
+      rateId: typeof parsed.rateId === 'string' ? parsed.rateId : null,
+      dateISO: typeof parsed.dateISO === 'string' ? parsed.dateISO : null,
+      timeslotId: typeof parsed.timeslotId === 'string' ? parsed.timeslotId : null,
+      quantity:
+        typeof parsed.quantity === 'number' && Number.isFinite(parsed.quantity)
+          ? parsed.quantity
+          : 1,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Persist (or clear) this activity's in-progress selection. */
+function persistSelection(activityId: string, value: PersistedSelection | null): void {
+  if (typeof window === 'undefined') return;
+  try {
+    if (value === null) {
+      window.sessionStorage.removeItem(selectionKey(activityId));
+    } else {
+      window.sessionStorage.setItem(selectionKey(activityId), JSON.stringify(value));
+    }
+  } catch {
+    // Private-mode / quota failures are non-fatal: the funnel works without the
+    // restore, exactly as it did before this was added.
+  }
+}
 
 /*
  * The calendar and the time picker load as separate chunks.
@@ -164,12 +223,43 @@ export function BookingWidget({ activity, initialRange }: BookingWidgetProps) {
   const router = useRouter();
   const accent = activity.color;
 
-  const [rate, setRate] = useState<CatalogRate | null>(
-    activity.rates.length === 1 ? (activity.rates[0] ?? null) : null,
+  // Restore any in-progress selection saved before the guest left for checkout,
+  // so Back does not wipe their choices. Read once, lazily, during the initial
+  // render (same value on server and first client render is not a concern — this
+  // is a client component with no SSR of the restored value). `restored` is null
+  // on a fresh visit, which leaves every default exactly as it was.
+  const restoredRef = useRef<PersistedSelection | null>(null);
+  if (restoredRef.current === null) {
+    restoredRef.current = restoreSelection(activity.id) ?? {
+      rateId: null,
+      dateISO: null,
+      timeslotId: null,
+      quantity: Math.max(1, activity.minParticipants),
+    };
+  }
+  const restored = restoredRef.current;
+
+  const [rate, setRate] = useState<CatalogRate | null>(() => {
+    const fromStore = restored.rateId
+      ? (activity.rates.find((r) => r.id === restored.rateId) ?? null)
+      : null;
+    if (fromStore) return fromStore;
+    return activity.rates.length === 1 ? (activity.rates[0] ?? null) : null;
+  });
+  const [date, setDate] = useState<Date | null>(() =>
+    restored.dateISO ? startOfDay(parseISO(restored.dateISO)) : null,
   );
-  const [date, setDate] = useState<Date | null>(null);
   const [slot, setSlot] = useState<AvailabilitySlot | null>(null);
-  const [quantity, setQuantity] = useState<number>(Math.max(1, activity.minParticipants));
+  const [quantity, setQuantity] = useState<number>(() =>
+    Math.max(Math.max(1, activity.minParticipants), restored.quantity || 1),
+  );
+
+  // The timeslot the guest had chosen, if any. Held until TimeSlotPicker loads
+  // the day and re-selects the matching slot (which sets the real `slot` object
+  // above and clears this). Only used to drive the picker's controlled selection.
+  const [pendingTimeslotId, setPendingTimeslotId] = useState<string | null>(
+    restored.timeslotId,
+  );
 
   // Capacity ceiling: never exceed the slot's TRUE remaining spots or the activity
   // max. An unset (0) activity max falls back to the slot's remaining capacity so
@@ -201,20 +291,47 @@ export function BookingWidget({ activity, initialRange }: BookingWidgetProps) {
     if (chosen) setRate((current) => current ?? chosen);
   };
 
-  // Choosing a new date invalidates the previously chosen time slot.
+  // Choosing a new date invalidates the previously chosen time slot — including a
+  // restored one, so a guest who changes the date does not carry a stale timeslot.
   const handleSelectDate = (d: Date) => {
     setDate(d);
     setSlot(null);
+    setPendingTimeslotId(null);
   };
 
   const handleSelectSlot = (s: AvailabilitySlot) => {
     setSlot(s);
+    // A real slot object now backs the selection, so the restore placeholder is done.
+    setPendingTimeslotId(null);
     // Re-clamp quantity down if the newly chosen slot has fewer spots.
     setQuantity((q) => Math.min(Math.max(q, minQty), Math.max(minQty, s.capacityRemaining)));
   };
 
+  // The timeslot id the picker should show as chosen: the live slot's id once one
+  // is resolved, otherwise the id awaiting restore from the loaded day.
+  const effectiveTimeslotId = slot?.timeslotId ?? pendingTimeslotId;
+
+  // Mirror the in-progress selection to sessionStorage on every change, so Back
+  // from checkout restores it. Keyed by activity, primitives only (see
+  // PersistedSelection). Nothing here is fatal if storage is unavailable.
+  useEffect(() => {
+    persistSelection(activity.id, {
+      rateId: rate?.id ?? null,
+      dateISO: date ? formatISODate(date) : null,
+      timeslotId: effectiveTimeslotId,
+      quantity: clampedQty,
+    });
+  }, [activity.id, rate?.id, date, effectiveTimeslotId, clampedQty]);
+
   const proceedToCheckout = () => {
     if (!ready || !rate || !date || !slot) return;
+    // Save the exact selection first, so pressing Back from checkout restores it.
+    persistSelection(activity.id, {
+      rateId: rate.id,
+      dateISO: formatISODate(date),
+      timeslotId: slot.timeslotId,
+      quantity: clampedQty,
+    });
     const params = new URLSearchParams({
       activityId: activity.id,
       rateId: rate.id,
@@ -254,7 +371,7 @@ export function BookingWidget({ activity, initialRange }: BookingWidgetProps) {
             <TimeSlotPicker
               activityId={activity.id}
               date={date}
-              selectedTimeslotId={slot?.timeslotId ?? null}
+              selectedTimeslotId={effectiveTimeslotId}
               onSelect={handleSelectSlot}
               accentColor={accent}
             />
