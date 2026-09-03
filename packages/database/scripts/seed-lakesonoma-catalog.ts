@@ -582,6 +582,26 @@ async function main() {
         }
       }
 
+      // ---- Prune out-of-hours phantom slots -------------------------------
+      // Older base-seed runs left AVAILABLE slots at 06:00 UTC (11pm PT) — an
+      // 11:00 PM boat-rental time nobody offers. The generator above only ever
+      // creates the sane operating hours (SLOT_HOURS PT -> ALLOWED_UTC_HOURS),
+      // so any AVAILABLE slot at a different hour is a leftover. Delete those,
+      // but NEVER one a customer has actually booked into: an order item pins a
+      // slot as historical fact, so we skip any slot with order items regardless
+      // of the hour. Idempotent — a clean database matches nothing.
+      const ALLOWED_UTC_HOURS = SLOT_HOURS.map((h) => (h + PT_UTC_OFFSET) % 24);
+      const prunedResult = await tx.$executeRaw`
+        DELETE FROM "Timeslot" t
+        WHERE t.operator_id = ${OP_ID}
+          AND t.status = 'AVAILABLE'
+          AND EXTRACT(HOUR FROM t.datetime)::int NOT IN (${Prisma.join(ALLOWED_UTC_HOURS)})
+          AND NOT EXISTS (
+            SELECT 1 FROM "OrderItem" oi WHERE oi.timeslot_id = t.id
+          )
+      `;
+      const slotsPruned = Number(prunedResult) || 0;
+
       // ---- Pontoon Fleet shared resource (keep membership current) -------
       if (pontoonActivityIds.length > 0) {
         const fleet = await tx.resource.findFirst({ where: { operator_id: OP_ID, name: 'Pontoon Fleet' } });
@@ -607,6 +627,7 @@ async function main() {
       console.log(`  ${PRODUCTS.length} activities synced (${pontoonActivityIds.length} pontoons)`);
       console.log(`  add-ons + day-use fees reconciled`);
       console.log(`  ${slotsAdded} future timeslots added (target ${FUTURE_DAYS} days)`);
+      console.log(`  ${slotsPruned} out-of-hours phantom timeslots pruned (bookings kept)`);
     },
     { maxWait: 20000, timeout: 180000 },
   );
