@@ -96,35 +96,40 @@ interface Product {
 
 /** Standard boat tier durations. */
 const T = {
+  // NOTE: name_external is the customer-facing label. It must match the marketing
+  // site (data/marina.ts in the LakeSonoma repo) exactly, since customers read the
+  // site first: "1 hour" / "4 hours" / "8 hours" / "24 hours" / "Per day". The
+  // name_internal keys are the staff-facing labels and the idempotent reconcile key
+  // for this script, so they stay stable regardless of the public relabel.
   hour: (amount: number, from = false): Tier => ({
     name_internal: 'One Hour',
-    name_external: 'One Hour',
+    name_external: '1 hour',
     minutes: 60,
     amount,
     is_from_price: from,
   }),
   half: (amount: number, from = false): Tier => ({
     name_internal: 'Half Day',
-    name_external: 'Half Day (4 hr)',
+    name_external: '4 hours',
     minutes: 240,
     amount,
     is_from_price: from,
   }),
   full: (amount: number): Tier => ({
     name_internal: 'Full Day',
-    name_external: 'Full Day (8 hr)',
+    name_external: '8 hours',
     minutes: 480,
     amount,
   }),
   overnight: (amount: number): Tier => ({
     name_internal: 'Overnight',
-    name_external: 'Overnight (24 hr)',
+    name_external: '24 hours',
     minutes: 1440,
     amount,
   }),
   perDay: (amount: number, from = true): Tier => ({
     name_internal: 'Full Day',
-    name_external: 'Full Day',
+    name_external: 'Per day',
     minutes: 480,
     amount,
     is_from_price: from,
