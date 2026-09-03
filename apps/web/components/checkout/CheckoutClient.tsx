@@ -534,15 +534,14 @@ export function CheckoutClient({
   return (
     <FormProvider {...methods}>
       {/*
-        The primary submit lives in the summary rail, which on a phone is `order-1` —
-        it sits ABOVE the four sections of fields a guest has to fill. So the moment
-        they finish the last field (payment, at the very bottom) the button they need
-        is a full-page scroll back up, out of thumb reach. The rail stays where it is
-        (it carries the price context and is the desktop CTA), and this mobile-only
-        bar keeps the same action pinned to the bottom of the screen the whole way
-        down — one-handed, no scroll-back. Hidden from `lg` up, where the rail is
-        already sticky and beside the form. The `pb` on the form clears the bar so it
-        never covers the last field.
+        The primary submit lives in the summary rail, which on a phone sits BELOW
+        the four sections of fields a guest has to fill (the rail is `order-2` so the
+        guest-details form leads). Either way the submit is a long scroll from
+        wherever the guest is finishing a field, so this mobile-only bar keeps the
+        action pinned to the bottom of the screen the whole way down — one-handed, no
+        scroll-hunting. Hidden from `lg` up, where the rail is already sticky and
+        beside the form. The `pb` on the form clears the bar so it never covers the
+        last field.
       */}
       <form
         onSubmit={methods.handleSubmit(onSubmit, onInvalid)}
@@ -612,7 +611,15 @@ export function CheckoutClient({
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_22rem]">
           {/* Main column ----------------------------------------------------- */}
-          <div className="order-2 space-y-6 lg:order-1">
+          {/*
+            On a phone the guest just tapped "Continue to checkout" having already
+            chosen the boat, date, time, and party size — so the reservation
+            summary is a recap, not the next action. Put the guest-details fields
+            FIRST (order-1) so name/email are in view immediately instead of ~1400px
+            below the summary rail; the recap follows (order-2). On lg+ the two-column
+            layout is unchanged (form left, sticky rail right).
+          */}
+          <div className="order-1 space-y-6 lg:order-1">
             <Section
               title="Guest details"
               description="No account needed — book as a guest. We'll send your confirmation and receipt to this email."
@@ -669,7 +676,7 @@ export function CheckoutClient({
           </div>
 
           {/* Sticky summary rail -------------------------------------------- */}
-          <div className="order-1 lg:order-2">
+          <div className="order-2 lg:order-2">
             <div className="space-y-4 lg:sticky lg:top-20">
               <section aria-labelledby={reservationHeadingId}>
                 <Card>
