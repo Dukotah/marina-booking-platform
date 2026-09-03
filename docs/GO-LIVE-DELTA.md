@@ -123,6 +123,22 @@ than one tenant.
 
 **Rollback:** `REQUIRE_CLERK_AUTH="false"` — dev fallback returns immediately.
 
+### Stage 3b — Role-shaped admin UI (D-016, code task, do with Clerk)
+
+Once real logins exist, roles become meaningful. Per D-016 (one dashboard, no
+admin/register login fork — FareHarbor's model, self-serve):
+
+1. Gate the sidebar + routes on permissions: STAFF renders only the ops surface
+   (Manifest, Calendar, Orders, POS, Customers); MANAGER/OWNER render everything.
+   Today `apps/admin/components/shell/Sidebar.tsx` renders all items unconditionally
+   and `apps/admin/lib/session.ts` hardcodes role OWNER in dev — both change here.
+2. Role-based landing: STAFF lands on `/manifest`, not the analytics dashboard.
+3. Verify a GUIDE login sees only their own assignments.
+4. Smoke: log in as one user per role; confirm no gated route is reachable by URL.
+
+This is the "your dock staff learn just the register screen" pitch — same training
+win as Singenuity's register mode without their two-app fork.
+
 ---
 
 ## Stage 4 — Neon (cloud Postgres) + Vercel deploy

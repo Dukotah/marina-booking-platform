@@ -314,3 +314,30 @@ already existed; nothing triggered reminders on a schedule).
 fully testable offline; the actual email delivery is a config flip (Resend key) on the
 existing no-op path. **Follow-up:** add an SMS channel (Twilio) to the same sweep, and
 a cron schedule config at deploy.
+
+## D-016 — One dashboard, role-shaped: no admin/register login fork (2026-09-03) — Accepted
+
+How do line staff get a simple "register" experience while managers keep the full
+console? Singenuity forks at login into two separate applications (legacy ASP.NET
+admin console + modern SPA register) — an artifact of their split-brain architecture
+that their own audit flags (SINGENUITY-PARITY.md). FareHarbor ships ONE dashboard
+whose UI is shaped by permission groups (reservationist / manager / guide / director),
+but operators cannot create or edit groups themselves — custom groups go through
+FareHarbor support.
+
+**Decision: keep a single admin app and shape it by permissions — never fork at
+login.** The RBAC substrate already exists (`BUILTIN_ROLES` OWNER/ADMIN/MANAGER/
+STAFF/GUIDE + granular `PERMISSIONS` + per-user `extra_permissions` in
+@marina/types) and beats both: FareHarbor's model with self-serve customization.
+
+What this implies at go-live (with Clerk, Stage 3):
+- Sidebar + routes gate on permissions: a STAFF login renders only the ops surface
+  (Manifest, Calendar, Orders, POS, Customers); MANAGER/OWNER render everything.
+- Role-based landing: STAFF lands on /manifest, not the analytics dashboard.
+- GUIDE sees only their own assignments (already the narrowest role).
+- Owners edit roles/extra permissions in Settings → Staff (self-serve — the thing
+  FareHarbor gates behind support).
+
+**Why:** same trainability win as Singenuity's register ("dock staff learn one small
+screen") without maintaining two apps, and a manager moving between ringing a sale
+and editing an activity never re-logs-in.
