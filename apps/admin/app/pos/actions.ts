@@ -233,16 +233,15 @@ export async function submitSale(input: SaleInput): Promise<SaleResult> {
       const customerId = await resolveCustomer(tx, operatorId, sale.customer);
 
       // 6. Per-location, per-day order sequence (atomic within this transaction).
+      //    Count orders already numbered for THIS day's prefix rather than orders
+      //    whose created_at is today: seed/back-dated orders carry a calendar-day
+      //    order number that differs from their created_at, so counting by
+      //    created_at drifts out of sync with the encoded date and collides on the
+      //    order_number unique index. Matches services/booking.ts.
       const now = new Date();
-      const startOfDay = new Date(now);
-      startOfDay.setHours(0, 0, 0, 0);
-      const endOfDay = new Date(startOfDay);
-      endOfDay.setDate(endOfDay.getDate() + 1);
+      const numberPrefix = generateOrderNumber(operator.location_code, now, 0).slice(0, -3);
       const todaysOrders = await tx.order.count({
-        where: {
-          operator_id: operatorId,
-          created_at: { gte: startOfDay, lt: endOfDay },
-        },
+        where: { operator_id: operatorId, order_number: { startsWith: numberPrefix } },
       });
       const orderNumber = generateOrderNumber(operator.location_code, now, todaysOrders + 1);
 

@@ -356,12 +356,16 @@ pos.post('/sale', async (c) => {
         customerId = created.id;
       }
 
-      // Per-operator, per-day sequence for the human-facing order number.
+      // Per-operator, per-day sequence for the human-facing order number. Count
+      // orders already numbered for THIS day's prefix rather than orders whose
+      // created_at is today: back-dated/seed orders carry a calendar-day order
+      // number that differs from their created_at, so counting by created_at drifts
+      // out of sync with the encoded date and collides on the order_number unique
+      // index. Matches services/booking.ts.
       const now = new Date();
-      const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-      const dayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0, 0);
+      const numberPrefix = generateOrderNumber(operator.location_code, now, 0).slice(0, -3);
       const todayCount = await tx.order.count({
-        where: { created_at: { gte: dayStart, lt: dayEnd } },
+        where: { order_number: { startsWith: numberPrefix } },
       });
       const orderNumber = generateOrderNumber(operator.location_code, now, todayCount + 1);
 
