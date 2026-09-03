@@ -52,7 +52,7 @@ export default async function HomePage() {
           ) : activities.length === 0 ? (
             <CatalogNotice variant="empty" />
           ) : (
-            <CatalogBrowser activities={activities} />
+            <CatalogBrowser activities={activities} contactPhone={brand.phone} />
           )}
         </div>
       </main>

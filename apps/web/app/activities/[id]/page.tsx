@@ -12,6 +12,7 @@ import {
 import { getBrandAsync, brandStyle, onBrandForeground } from '@/lib/brand';
 import { formatUSD } from '@/lib/format';
 import { BookingWidget } from '@/components/activity/BookingWidget';
+import { InquiryPanel } from '@/components/activity/InquiryPanel';
 
 /**
  * The gallery is still server-rendered (so the layout is stable and the placeholder or
@@ -187,6 +188,9 @@ export default async function ActivityDetailPage({ params }: PageProps) {
   const brand = await getBrandAsync();
   const accent = activity.color;
   const categoryLabel = CATEGORY_LABELS[activity.category];
+  // Bookable online only when there is a real rate to charge. Otherwise the page
+  // offers an inquiry path (call the marina) rather than a dead booking widget.
+  const bookable = activity.fromPriceCents != null && activity.rates.length > 0;
 
   return (
     <main id="main-content" tabIndex={-1} style={brandStyle(brand)} className="mx-auto w-full max-w-6xl px-4 py-8">
@@ -261,9 +265,20 @@ export default async function ActivityDetailPage({ params }: PageProps) {
         </header>
 
         {/* The booking widget: second on a phone, so the first control is reachable
-            without scrolling past a full-bleed hero. Sticky alongside on desktop. */}
+            without scrolling past a full-bleed hero. Sticky alongside on desktop.
+            Activities with no online rate (e.g. the Grand Patio, "Pricing soon")
+            have no bookable funnel, so they show an inquiry panel with the marina's
+            phone instead of a booking widget that leads nowhere. */}
         <div className="min-w-0 lg:col-start-2 lg:row-start-1 lg:row-span-3 lg:sticky lg:top-20 lg:self-start">
-          <BookingWidget activity={activity} initialRange={initialRange} />
+          {bookable ? (
+            <BookingWidget activity={activity} initialRange={initialRange} />
+          ) : (
+            <InquiryPanel
+              activityName={activity.name}
+              phone={brand.phone}
+              accentColor={accent}
+            />
+          )}
         </div>
 
         {/* Media. Below the fold on a phone, and its client chunk is loaded lazily for

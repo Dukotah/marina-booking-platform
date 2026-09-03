@@ -15,6 +15,17 @@ import { readableTextOn } from './color';
 
 interface ActivityCardProps {
   activity: CatalogActivity;
+  /** Operator phone; when the activity can only be booked by calling, the card's
+   *  CTA becomes "Inquire" and dials this instead of opening a dead booking page. */
+  contactPhone?: string | null;
+}
+
+/** Digits-only tel: href from a formatted phone, e.g. "(707) 433-2200" -> "tel:+17074332200". */
+function telHref(phone: string): string {
+  const digits = phone.replace(/[^\d]/g, '');
+  // US 10-digit numbers get the +1 country code; anything else is passed through.
+  const e164 = digits.length === 10 ? `+1${digits}` : `+${digits}`;
+  return `tel:${e164}`;
 }
 
 /** Shortest configured duration label, e.g. "from 2h", when rates exist. */
@@ -23,17 +34,25 @@ function lowestRate(activity: CatalogActivity) {
   return activity.rates.reduce((min, r) => (r.priceCents < min.priceCents ? r : min));
 }
 
-export function ActivityCard({ activity }: ActivityCardProps) {
+export function ActivityCard({ activity, contactPhone }: ActivityCardProps) {
   const photo = activity.photoUrls[0] ?? null;
   const headerText = readableTextOn(activity.color);
   const cheapest = lowestRate(activity);
   const bookable = activity.fromPriceCents != null && activity.rates.length > 0;
 
-  return (
-    <Link
-      href={`/activities/${encodeURIComponent(activity.id)}`}
-      className="group flex h-full flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm outline-none transition hover:-translate-y-0.5 hover:shadow-md focus-visible:ring-2 focus-visible:ring-[var(--brand-color)] focus-visible:ring-offset-2"
-    >
+  // An activity with no online rate (e.g. the Grand Patio, "Pricing soon") cannot
+  // be booked in the funnel — its detail page has no booking widget. If we know the
+  // marina's phone, turn the whole card into a call-to-inquire so the CTA actually
+  // does something; otherwise fall back to the detail page as before.
+  const inquire = !bookable && !!contactPhone;
+  const href = inquire
+    ? telHref(contactPhone as string)
+    : `/activities/${encodeURIComponent(activity.id)}`;
+  const cardClass =
+    'group flex h-full flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm outline-none transition hover:-translate-y-0.5 hover:shadow-md focus-visible:ring-2 focus-visible:ring-[var(--brand-color)] focus-visible:ring-offset-2';
+
+  const cardBody = (
+    <>
       {/* Header: photo when available, otherwise the activity color + glyph. */}
       <div className="relative aspect-[16/10] w-full overflow-hidden" style={{ backgroundColor: activity.color }}>
         {photo ? (
@@ -110,7 +129,7 @@ export function ActivityCard({ activity }: ActivityCardProps) {
         {/* Availability hint */}
         <p className="mt-3 inline-flex w-fit items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">
           <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-          {bookable ? 'Check live availability' : 'Coming soon'}
+          {bookable ? 'Check live availability' : inquire ? 'Call to reserve' : 'Coming soon'}
         </p>
 
         {/* Price + CTA */}
@@ -134,10 +153,26 @@ export function ActivityCard({ activity }: ActivityCardProps) {
             className="rounded-lg px-3 py-1.5 text-sm font-semibold text-white transition group-hover:opacity-90"
             style={{ backgroundColor: 'var(--brand-color)' }}
           >
-            Book
+            {inquire ? 'Inquire' : 'Book'}
           </span>
         </div>
       </div>
+    </>
+  );
+
+  // A tel: target is a plain anchor (Next's <Link> is for in-app routes); a
+  // bookable activity keeps the client-side <Link> to its detail page.
+  if (inquire) {
+    return (
+      <a href={href} aria-label={`Inquire about ${activity.name} by phone`} className={cardClass}>
+        {cardBody}
+      </a>
+    );
+  }
+
+  return (
+    <Link href={href} className={cardClass}>
+      {cardBody}
     </Link>
   );
 }

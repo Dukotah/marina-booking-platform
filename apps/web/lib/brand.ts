@@ -41,6 +41,8 @@ export interface Brand {
   logoDarkUrl: string | null;
   /** Optional tagline shown under the name. */
   tagline: string | null;
+  /** Public phone (Operator.phone), for activities that must be booked by calling. */
+  phone: string | null;
 }
 
 /** Sensible neutral defaults — no platform or marina-specific branding. */
@@ -50,6 +52,7 @@ const DEFAULT_BRAND: Brand = {
   logoLightUrl: null,
   logoDarkUrl: null,
   tagline: null,
+  phone: null,
 };
 
 /**
@@ -63,6 +66,7 @@ const DEMO_BRAND: Brand = {
   logoLightUrl: null,
   logoDarkUrl: null,
   tagline: 'Boat rentals, kayaks & lakeside adventures on Lake Sonoma',
+  phone: '(707) 433-2200',
 };
 
 const BASE_BRAND: Brand = DEMO_MODE ? DEMO_BRAND : DEFAULT_BRAND;
@@ -93,6 +97,7 @@ export function getBrand(): Brand {
     logoLightUrl: clean(process.env.BRAND_LOGO_LIGHT_URL) ?? BASE_BRAND.logoLightUrl,
     logoDarkUrl: clean(process.env.BRAND_LOGO_DARK_URL) ?? BASE_BRAND.logoDarkUrl,
     tagline: clean(process.env.BRAND_TAGLINE) ?? BASE_BRAND.tagline,
+    phone: clean(process.env.BRAND_PHONE) ?? BASE_BRAND.phone,
   };
 }
 
@@ -130,6 +135,8 @@ export async function getBrandAsync(): Promise<Brand> {
         clean(op.logo_dark_url) ?? clean(process.env.BRAND_LOGO_DARK_URL) ?? BASE_BRAND.logoDarkUrl,
       // The public endpoint has no tagline, so it stays env/base-driven.
       tagline: clean(process.env.BRAND_TAGLINE) ?? BASE_BRAND.tagline,
+      // Operator record first (the tenant's real line), then env, then base.
+      phone: clean(op.phone) ?? clean(process.env.BRAND_PHONE) ?? BASE_BRAND.phone,
     };
   } catch (err) {
     // Missing tenant, API down, malformed payload — theme from env/base instead

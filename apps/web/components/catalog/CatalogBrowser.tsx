@@ -17,6 +17,8 @@ import { categoryLabel, sortCategories } from './category';
 
 interface CatalogBrowserProps {
   activities: CatalogActivity[];
+  /** Operator phone, so activities that cannot be booked online offer "Inquire". */
+  contactPhone?: string | null;
 }
 
 type CategoryFilter = ActivityCategory | 'ALL';
@@ -42,7 +44,7 @@ const PRICE_OPTIONS = [
 const SELECT_CLASS =
   'h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 shadow-sm outline-none transition focus:border-slate-300 focus:ring-2 focus:ring-[var(--brand-color)]';
 
-export function CatalogBrowser({ activities }: CatalogBrowserProps) {
+export function CatalogBrowser({ activities, contactPhone }: CatalogBrowserProps) {
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<CategoryFilter>('ALL');
   const [minCapacity, setMinCapacity] = useState(0);
@@ -222,7 +224,7 @@ export function CatalogBrowser({ activities }: CatalogBrowserProps) {
               </div>
               <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
                 {group.items.map((activity) => (
-                  <ActivityCard key={activity.id} activity={activity} />
+                  <ActivityCard key={activity.id} activity={activity} contactPhone={contactPhone} />
                 ))}
               </div>
             </section>

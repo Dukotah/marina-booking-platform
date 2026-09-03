@@ -100,6 +100,9 @@ async function main() {
           name_external: 'Lake Sonoma Marina',
           location_code: 'LSRA',
           website: 'https://lakesonoma.com',
+          // The marina's public booking line. Surfaced to customers for activities
+          // that cannot be booked online yet (e.g. the Grand Patio "Inquire" CTA).
+          phone: '(707) 433-2200',
           timezone: 'America/Los_Angeles',
           legal_adult_age: 21,
           brand_color: '#0ea5e9',
