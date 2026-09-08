@@ -9,6 +9,7 @@
  * fully-resolved, typed `CheckoutSelection` to the interactive client form. All
  * money is integer cents; nothing here hardcodes operator/platform branding.
  */
+import type { Metadata } from 'next';
 import Link from 'next/link';
 import { getActivity, getAvailability, isApiError } from '@/lib/api';
 import { getBrandAsync } from '@/lib/brand';
@@ -18,6 +19,19 @@ import { CheckoutClient } from '@/components/checkout/CheckoutClient';
 import type { CheckoutSelection } from '@/components/checkout/types';
 
 export const dynamic = 'force-dynamic';
+
+// The tab must read "Checkout · <operator>", like every other titled page. Without a
+// title here Next falls back to the root layout's default (the bare operator name), so
+// the checkout tab was indistinguishable from the home tab. A plain string title flows
+// through the root `title.template` (`%s · <operator>`), which appends the brand — so
+// this is only the leaf word, not the whole phrase. `noindex` because a checkout URL
+// carries a specific booking selection and is not a page to index.
+export function generateMetadata(): Metadata {
+  return {
+    title: 'Checkout',
+    robots: { index: false, follow: false },
+  };
+}
 
 interface CheckoutPageProps {
   searchParams: {
