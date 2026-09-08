@@ -22,6 +22,12 @@ if [ ! -f .env ]; then
 fi
 set -a; . ./.env; set +a
 
+# Mirror the root .env into apps/web/.env.local so the customer web app has
+# NEXT_PUBLIC_DEMO_MODE=0 when started standalone (Next only reads .env from
+# apps/web/, not the repo root). See apps/web/.env.local.example for why.
+echo "▸ Syncing apps/web/.env.local (keeps DEMO_MODE=0 on standalone web boot)…"
+cp -f .env apps/web/.env.local
+
 echo "▸ Installing dependencies…"
 pnpm install
 
