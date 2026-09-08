@@ -2,6 +2,21 @@ import { PageHeader } from '../../../components/shell';
 import { getTenantDb, requirePermission } from '../../../lib/session';
 import { INTEGRATION_CATALOG, type IntegrationDef } from '../../../components/settings/integrationCatalog';
 import { IntegrationCard, type IntegrationState } from '../../../components/settings/IntegrationCard';
+import { CalendarFeedCard } from '../../../components/settings/CalendarFeedCard';
+
+/**
+ * Public base URL of the API — what external calendar services will poll for the
+ * ICS feed. Mirrors the fallback chain the rest of the admin app uses for
+ * server-side API calls, with the local dev default last.
+ */
+function apiPublicBaseUrl(): string {
+  return (
+    process.env.API_BASE_URL ??
+    process.env.NEXT_PUBLIC_API_BASE_URL ??
+    process.env.API_URL ??
+    'http://localhost:3001'
+  ).replace(/\/+$/, '');
+}
 
 export const dynamic = 'force-dynamic';
 
@@ -55,9 +70,24 @@ export default async function IntegrationsPage() {
               {category}
             </h2>
             <div className="space-y-4">
-              {INTEGRATION_CATALOG.filter((d) => d.category === category).map((def) => (
-                <IntegrationCard key={def.key} def={def} initial={initialFor(def)} />
-              ))}
+              {INTEGRATION_CATALOG.filter((d) => d.category === category).map((def) => {
+                // The calendar feed's credential is a server-generated token, not
+                // typed-in keys — it gets its own generate/rotate card.
+                if (def.key === 'calendar_feed') {
+                  const row = byKey.get(def.key);
+                  const config = toStringMap(row?.config);
+                  return (
+                    <CalendarFeedCard
+                      key={def.key}
+                      def={def}
+                      initialToken={config.token ?? null}
+                      initialEnabled={row?.enabled ?? false}
+                      apiBaseUrl={apiPublicBaseUrl()}
+                    />
+                  );
+                }
+                return <IntegrationCard key={def.key} def={def} initial={initialFor(def)} />;
+              })}
             </div>
           </div>
         ))}

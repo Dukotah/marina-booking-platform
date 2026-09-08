@@ -1,6 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
+import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import { createId } from '@marina/core';
 import { AuthorizationError } from '@marina/auth';
@@ -557,6 +558,59 @@ export async function upsertIntegration(input: IntegrationInput): Promise<Action
       },
     });
 
+    revalidatePath('/settings/integrations');
+    return { ok: true };
+  } catch (err) {
+    if (err instanceof AuthorizationError) return denied();
+    throw err;
+  }
+}
+
+// ===========================================================================
+// Calendar feed (secret-token ICS subscribe URL)
+// ===========================================================================
+
+/**
+ * Generate (or rotate) the operator's calendar-feed token. The token is the
+ * WHOLE credential — whoever holds the URL can read the booking schedule — so
+ * rotation simply overwrites `config.token`, which invalidates every previously
+ * shared URL on the next calendar poll. 48 hex chars (192 bits) of entropy.
+ */
+export async function rotateCalendarFeedToken(): Promise<ActionResult & { token?: string }> {
+  try {
+    const { operatorId } = await requirePermission('operator:manage');
+    const token = randomBytes(24).toString('hex');
+
+    const db = await getTenantDb();
+    await db.integration.upsert({
+      where: { operator_id_key: { operator_id: operatorId, key: 'calendar_feed' } },
+      create: {
+        id: createId(),
+        operator_id: operatorId,
+        key: 'calendar_feed',
+        enabled: true,
+        config: { token },
+      },
+      update: { enabled: true, config: { token } },
+    });
+
+    revalidatePath('/settings/integrations');
+    return { ok: true, token };
+  } catch (err) {
+    if (err instanceof AuthorizationError) return denied();
+    throw err;
+  }
+}
+
+/** Turn the feed off (keeps the token so re-enabling restores the same URL). */
+export async function setCalendarFeedEnabled(enabled: boolean): Promise<ActionResult> {
+  try {
+    const { operatorId } = await requirePermission('operator:manage');
+    const db = await getTenantDb();
+    await db.integration.updateMany({
+      where: { operator_id: operatorId, key: 'calendar_feed' },
+      data: { enabled },
+    });
     revalidatePath('/settings/integrations');
     return { ok: true };
   } catch (err) {

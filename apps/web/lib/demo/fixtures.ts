@@ -320,6 +320,7 @@ export function computeDemoOrder(payload: CreateBookingPayload): OrderSummary {
         activityName: activity?.name ?? 'Reservation',
         rateName: rate?.name ?? 'Standard',
         datetime,
+        durationMinutes: rate?.durationMinutes ?? 60,
         quantity,
         unitPriceCents,
       },

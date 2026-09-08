@@ -24,6 +24,7 @@ import { QrPlaceholder } from './components/QrPlaceholder';
 import { PriceBreakdown } from './components/PriceBreakdown';
 import { CheckInInstructions, CancellationPolicy } from './components/InfoPanels';
 import { OrderNotFound } from './components/OrderNotFound';
+import { AddToCalendar } from './components/AddToCalendar';
 
 // Title carries the operator brand (e.g. "Booking confirmed · Lake Sonoma
 // Marina") so the tab reads as the operator on the confirmation screen too,
@@ -229,6 +230,16 @@ export default async function ConfirmationPage({
             <span className="font-medium text-slate-700">Reserved for </span>
             {order.customerName}
           </div>
+
+          {/* Add-to-calendar links for the (primary) booked activity. Hidden on
+              cancelled orders — no point putting a dead trip on a calendar. */}
+          {!isCancelled && order.items[0] ? (
+            <AddToCalendar
+              item={order.items[0]}
+              orderNumber={order.orderNumber}
+              brandName={brand.name}
+            />
+          ) : null}
         </section>
 
         {/* Price breakdown */}

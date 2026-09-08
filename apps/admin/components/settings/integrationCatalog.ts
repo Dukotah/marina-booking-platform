@@ -22,9 +22,15 @@ export interface IntegrationField {
 export interface IntegrationDef {
   key: string;
   name: string;
-  category: 'Payments' | 'Accounting' | 'Marketing' | 'Communications';
+  category: 'Payments' | 'Accounting' | 'Marketing' | 'Communications' | 'Operations';
   description: string;
   fields: IntegrationField[];
+  /**
+   * Rendered by a dedicated component instead of the generic key/value card
+   * (e.g. the calendar feed's generate/rotate-token UI). The integrations page
+   * switches on the key.
+   */
+  custom?: boolean;
 }
 
 export const INTEGRATION_CATALOG: IntegrationDef[] = [
@@ -75,6 +81,15 @@ export const INTEGRATION_CATALOG: IntegrationDef[] = [
       { name: 'api_key', label: 'API key', secret: true },
       { name: 'audience_id', label: 'Audience ID' },
     ],
+  },
+  {
+    key: 'calendar_feed',
+    name: 'Calendar feed',
+    category: 'Operations',
+    description:
+      'Live calendar feed — subscribe from Google Calendar, Apple Calendar, or Outlook.',
+    fields: [],
+    custom: true,
   },
   {
     key: 'twilio',

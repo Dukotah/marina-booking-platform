@@ -205,6 +205,8 @@ export interface OrderLineItem {
   rateName: string;
   /** ISO 8601 datetime (UTC) of the booked slot. */
   datetime: string;
+  /** Rate duration — drives the end time on add-to-calendar links. */
+  durationMinutes: number;
   quantity: number;
   unitPriceCents: number;
 }
@@ -308,6 +310,7 @@ export function mapApiOrder(o: ApiOrder): OrderSummary {
       activityName: it.activity.name,
       rateName: it.rate.name,
       datetime: it.timeslot.datetime,
+      durationMinutes: it.rate.durationMinutes,
       quantity: it.quantity,
       unitPriceCents: it.unitPriceCents,
     })),
