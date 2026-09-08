@@ -59,6 +59,8 @@ import {
   type AvailabilityDay,
   type SlotStatus,
 } from '@/lib/api';
+import { loadDay } from '@/lib/dayAvailability';
+import { futureSlots, operatorDayISO } from '@/lib/operatorDay';
 
 /** Aggregate availability for a single calendar day. */
 export type DayAvailability = 'AVAILABLE' | 'FILLING_UP' | 'FULL' | 'NONE';
@@ -77,8 +79,19 @@ interface AvailabilityCalendarProps {
   onSelectDate: (date: Date) => void;
   /** Optional cap on how far ahead a customer may book (days from today). */
   maxAdvanceDays?: number;
-  /** Marker colour for the selected day. Defaults to the tenant brand colour. */
+  /**
+   * Legacy prop, retained for call-site compatibility. Estate chrome no longer
+   * paints the operator/activity color; selection is always the sage accent.
+   */
   accentColor?: string;
+  /**
+   * IANA timezone the operator's calendar days are bucketed in. When given, the
+   * strip starts on the OPERATOR's current day (matching the server-seeded
+   * range, commit 7ec5d9e) and "today" is refined with slot-level truth so a
+   * chip never advertises departures that have already left. Callers without it
+   * (embed/reschedule) keep the browser-local day, as before.
+   */
+  timeZone?: string;
   /**
    * Select the soonest bookable day as soon as availability lands, so a
    * first-time mobile booking costs zero date taps. Off by default: controlled
@@ -190,37 +203,33 @@ async function loadRange(
 // Presentation
 // ---------------------------------------------------------------------------
 
-/** Tailwind classes for each availability state's month-grid cell. */
-function cellClasses(status: DayAvailability, selected: boolean, disabled: boolean): string {
+/**
+ * Estate month-grid cell: surface + hairline at rest, sage border + sage-deep
+ * text when chosen, quiet muted when unbookable. Availability status lives only
+ * in the small dot below the number — never as a cell wash.
+ */
+function cellClasses(selected: boolean, disabled: boolean): string {
   const base =
-    'relative flex aspect-square w-full flex-col items-center justify-center rounded-lg border text-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1';
+    'relative flex aspect-square w-full flex-col items-center justify-center rounded-lg border text-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-ink focus-visible:ring-offset-1';
 
   if (selected) {
-    return `${base} cursor-pointer border-slate-900 bg-slate-900 font-semibold text-white shadow-sm`;
+    return `${base} cursor-pointer border-accent bg-surface font-semibold text-accent-ink`;
   }
   if (disabled) {
-    return `${base} cursor-not-allowed border-transparent text-slate-300`;
+    return `${base} cursor-not-allowed border-transparent text-muted opacity-50`;
   }
-  switch (status) {
-    case 'AVAILABLE':
-      return `${base} cursor-pointer border-emerald-200 bg-emerald-50 font-medium text-emerald-900 hover:border-emerald-400 hover:bg-emerald-100`;
-    case 'FILLING_UP':
-      return `${base} cursor-pointer border-amber-200 bg-amber-50 font-medium text-amber-900 hover:border-amber-400 hover:bg-amber-100`;
-    case 'FULL':
-      return `${base} cursor-not-allowed border-rose-100 bg-rose-50 text-rose-400`;
-    default:
-      return `${base} cursor-not-allowed border-slate-100 bg-white text-slate-400`;
-  }
+  return `${base} cursor-pointer border-hairline bg-surface font-medium text-ink hover:border-accent`;
 }
 
+/** Status colors appear only on status (DESIGN.md): the dot/rail, nothing else. */
 function dotColor(status: DayAvailability): string {
   switch (status) {
     case 'AVAILABLE':
-      return 'bg-emerald-500';
+      return 'bg-success';
     case 'FILLING_UP':
-      return 'bg-amber-500';
+      return 'bg-warn';
     case 'FULL':
-      return 'bg-rose-400';
+      return 'bg-danger';
     default:
       return 'bg-transparent';
   }
@@ -297,11 +306,18 @@ export function AvailabilityCalendar({
   selectedDate,
   onSelectDate,
   maxAdvanceDays = 365,
-  accentColor = 'var(--brand-color)',
   autoSelect = false,
   initialRange,
+  timeZone,
 }: AvailabilityCalendarProps) {
-  const today = useMemo(() => startOfDay(new Date()), []);
+  // "Today" is the OPERATOR's current calendar day when a timezone is given —
+  // the same bucketing the server-seeded range uses — held as the browser-local
+  // midnight of that calendar date so every date-fns/format round trip below
+  // keys the same YYYY-MM-DD the API speaks.
+  const today = useMemo(
+    () => (timeZone ? startOfDay(parseISO(operatorDayISO(timeZone))) : startOfDay(new Date())),
+    [timeZone],
+  );
   // Bookable horizon (inclusive upper bound).
   const horizon = useMemo(() => startOfDay(addDays(today, maxAdvanceDays)), [today, maxAdvanceDays]);
 
@@ -334,6 +350,23 @@ export function AvailabilityCalendar({
   // Bumped whenever a request hands its days back without having delivered them, so
   // the reconcile effect below asks for them again. See ensureRange's catch.
   const [reconcileTick, setReconcileTick] = useState(0);
+  /**
+   * Slot-level refinement of TODAY. The range rollup counts the whole calendar
+   * day, so late in the day the chip advertised seats on departures that had
+   * already left ("10 spots left" against a time picker that rightly shows
+   * none). One shared day-cache fetch answers what is actually still ahead of
+   * the clock:
+   *   - futureSpots  remaining seats across future, still-bookable slots
+   *   - ended        the day HAD departures but every one has left
+   *   - full         future departures exist but none has a seat
+   * null until (or unless) the fetch answers; the rollup keeps painting then,
+   * and the time picker still refuses past slots at selection time.
+   */
+  const [todayLive, setTodayLive] = useState<{
+    futureSpots: number;
+    ended: boolean;
+    full: boolean;
+  } | null>(null);
 
   // Day keys already loaded or in flight. Mutated synchronously so two ensureRange
   // calls in the same tick (strip + month) ask for disjoint sets instead of
@@ -363,6 +396,7 @@ export function AvailabilityCalendar({
     inFlight.current.clear();
     setDays({});
     setError(null);
+    setTodayLive(null);
     // `pending` is deliberately left alone: the requests just aborted still run their
     // own finally and decrement it themselves.
   }
@@ -494,6 +528,37 @@ export function AvailabilityCalendar({
     if (showGrid) void ensureRange(startOfMonth(viewMonth), endOfMonth(viewMonth));
   }, [ensureRange, stripDays, showGrid, viewMonth, reconcileTick]);
 
+  /*
+   * Refine today with slot-level truth once the rollup says the day has slots.
+   * Uses the same shared day cache as the time picker, so for a guest who taps
+   * today (most do) this round trip is spent, not added. A failure keeps the
+   * rollup painting — the picker still refuses past slots at selection time.
+   */
+  const todayIso = format(today, 'yyyy-MM-dd');
+  const todayRollupStatus = days[todayIso]?.status;
+  useEffect(() => {
+    if (!todayRollupStatus || todayRollupStatus === 'NONE') return;
+    const generation = epoch.current;
+    let cancelled = false;
+    loadDay(activityId, todayIso)
+      .then((slots) => {
+        if (cancelled || epoch.current !== generation) return;
+        const future = futureSlots(slots);
+        const bookable = future.filter((s) => s.status !== 'FULL' && s.capacityRemaining > 0);
+        setTodayLive({
+          futureSpots: bookable.reduce((n, s) => n + Math.max(0, s.capacityRemaining), 0),
+          ended: slots.length > 0 && future.length === 0,
+          full: future.length > 0 && bookable.length === 0,
+        });
+      })
+      .catch(() => {
+        // Keep the rollup. This refinement is a courtesy, never a gate.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activityId, todayIso, todayRollupStatus]);
+
   // Abort only on the way out. A live request is never cancelled to make room for
   // another range: the two ranges are additive, and cancelling one used to throw its
   // days away — the strip lost its whole fortnight whenever the grid opened first.
@@ -511,6 +576,9 @@ export function AvailabilityCalendar({
   useEffect(() => {
     if (!autoSelect || autoPicked.current || selectedDate || loading) return;
     for (const d of stripDays) {
+      // Today with no future departures left is not a bookable landing spot,
+      // whatever the whole-day rollup claims.
+      if (todayLive && todayLive.futureSpots <= 0 && isSameDay(d, today)) continue;
       const state = days[format(d, 'yyyy-MM-dd')];
       if (state && (state.status === 'AVAILABLE' || state.status === 'FILLING_UP')) {
         autoPicked.current = true;
@@ -518,7 +586,7 @@ export function AvailabilityCalendar({
         return;
       }
     }
-  }, [autoSelect, selectedDate, loading, days, stripDays, onSelectDate]);
+  }, [autoSelect, selectedDate, loading, days, stripDays, onSelectDate, todayLive, today]);
 
   // Clearing the error is enough to make the days askable again — the failed request
   // already gave its reservation back — so the tick just re-runs the reconcile, which
@@ -553,9 +621,13 @@ export function AvailabilityCalendar({
     () =>
       stripDays.map((date) => {
         const state = days[format(date, 'yyyy-MM-dd')];
-        return Boolean(state) && state?.status !== 'FULL' && state?.status !== 'NONE';
+        const base = Boolean(state) && state?.status !== 'FULL' && state?.status !== 'NONE';
+        // Today, refined: once every remaining departure has left (or filled),
+        // the chip stops being a choice — whatever the whole-day rollup says.
+        if (todayLive && isSameDay(date, today)) return base && todayLive.futureSpots > 0;
+        return base;
       }),
-    [stripDays, days],
+    [stripDays, days, today, todayLive],
   );
 
   const gridSelectable = useMemo(
@@ -563,10 +635,28 @@ export function AvailabilityCalendar({
       monthGrid.allDays.map((date) => {
         if (isBefore(date, today) || isBefore(horizon, date)) return false;
         const state = days[format(date, 'yyyy-MM-dd')];
-        return Boolean(state) && state?.status !== 'FULL' && state?.status !== 'NONE';
+        const base = Boolean(state) && state?.status !== 'FULL' && state?.status !== 'NONE';
+        if (todayLive && isSameDay(date, today)) return base && todayLive.futureSpots > 0;
+        return base;
       }),
-    [monthGrid.allDays, today, horizon, days],
+    [monthGrid.allDays, today, horizon, days, todayLive],
   );
+
+  /*
+   * When today's departures have ended and nothing is chosen yet, land on the
+   * next bookable day (normally tomorrow) instead of leaving a dead "Today" as
+   * the implied default. Gated to timezone-aware callers (the booking page):
+   * the reschedule dialog must never have a date chosen for it. `autoPicked`
+   * makes this one-shot and an explicit guest choice always retires it.
+   */
+  useEffect(() => {
+    if (!timeZone || !todayLive?.ended || selectedDate || autoPicked.current || loading) return;
+    const next = stripSelectable.findIndex((ok, i) => ok && i > 0);
+    if (next > 0) {
+      autoPicked.current = true;
+      onSelectDate(startOfDay(stripDays[next] as Date));
+    }
+  }, [timeZone, todayLive, selectedDate, loading, stripSelectable, stripDays, onSelectDate]);
 
   const stripSelectedIndex = selectedDate
     ? stripDays.findIndex((d) => isSameDay(d, selectedDate))
@@ -657,7 +747,9 @@ export function AvailabilityCalendar({
   };
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm sm:p-4">
+    // No card chrome of its own: the booking card (or the reschedule dialog)
+    // supplies the surface, and Estate never nests card on card.
+    <div>
       {/* Fast path: the next two weeks, one horizontal flick. */}
       <div
         role="radiogroup"
@@ -672,6 +764,22 @@ export function AvailabilityCalendar({
           const disabled = !stripSelectable[i];
           const selected = selectedDate ? isSameDay(date, selectedDate) : false;
 
+          // Today speaks with slot-level truth once it is in hand: remaining
+          // FUTURE seats, "Ended for today", or "fully booked" — never the
+          // whole-day count that includes boats that already left.
+          const live = todayLive && isSameDay(date, today) ? todayLive : null;
+          const refinable = state && state.status !== 'NONE' && state.status !== 'FULL';
+          const when = format(date, 'EEEE, MMMM d');
+          const label =
+            live && refinable
+              ? live.ended
+                ? `${when} — departures have ended for today`
+                : live.full
+                  ? `${when} — remaining departures are full`
+                  : `${when} — ${live.futureSpots} ${live.futureSpots === 1 ? 'spot' : 'spots'} left`
+              : dayLabel(date, state, disabled, loadFailed);
+          const endedToday = Boolean(live?.ended && refinable);
+
           return (
             <button
               key={iso}
@@ -681,7 +789,7 @@ export function AvailabilityCalendar({
               type="button"
               role="radio"
               aria-checked={selected}
-              aria-label={dayLabel(date, state, disabled, loadFailed)}
+              aria-label={label}
               disabled={disabled}
               // One tab stop for the whole strip; the arrows do the rest.
               tabIndex={i === stripTabStop ? 0 : -1}
@@ -689,46 +797,30 @@ export function AvailabilityCalendar({
               onClick={() => pick(date, disabled)}
               onKeyDown={(event) => dayKeyDown(event, 'strip', i, 1)}
               className={[
-                'flex min-h-[76px] w-[68px] shrink-0 flex-col items-center justify-center gap-0.5 rounded-xl border-2 pt-2 transition focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1',
+                'flex min-h-[76px] w-[68px] shrink-0 flex-col items-center justify-center gap-0.5 rounded-lg border-2 pt-2 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-ink focus-visible:ring-offset-1',
                 selected
-                  ? 'border-slate-900 bg-slate-900 text-white shadow-sm'
+                  ? 'border-accent bg-surface text-accent-ink'
                   : disabled
-                    ? 'cursor-not-allowed border-slate-100 bg-white text-slate-300'
-                    : status === 'FILLING_UP'
-                      ? 'cursor-pointer border-amber-200 bg-amber-50 text-amber-900'
-                      : 'cursor-pointer border-emerald-200 bg-emerald-50 text-emerald-900',
+                    ? 'cursor-not-allowed border-hairline bg-surface text-muted opacity-60'
+                    : 'cursor-pointer border-hairline bg-surface text-ink hover:border-accent',
                 !state && loading ? 'animate-pulse' : '',
               ].join(' ')}
             >
-              <span
-                aria-hidden
-                // Was opacity-70, which multiplies against whatever tint the day
-                // chip is painted and lands at 4.15:1 on the available-day green.
-                // Opacity is invisible to a design token, so the weight is carried
-                // by the type instead and the colour stays at full strength.
-                className="text-[11px] font-semibold uppercase tracking-wide"
-              >
-                {i === 0 ? 'Today' : i === 1 ? 'Tomo' : format(date, 'EEE')}
+              <span aria-hidden className="text-[11px] font-semibold uppercase tracking-wide">
+                {i === 0 ? 'Today' : i === 1 ? 'Tmrw' : format(date, 'EEE')}
               </span>
-              <span aria-hidden className="text-lg font-bold leading-none tabular-nums">
+              <span aria-hidden className="tnum text-lg font-semibold leading-none">
                 {format(date, 'd')}
               </span>
-              <span
-                aria-hidden
-                // Same reason as the label above: opacity multiplies against the day
-                // chip's tint and lands at 3.27:1 on the available-day green. At 10px
-                // this is the smallest text in the funnel, so it needs the full 4.5:1.
-                className="text-[10px] font-semibold uppercase"
-              >
-                {format(date, 'MMM')}
+              <span aria-hidden className="text-[10px] font-semibold uppercase">
+                {endedToday ? 'Ended' : format(date, 'MMM')}
               </span>
-              {/* Fixed-height status rail: colour changes, geometry never does. */}
+              {/* Fixed-height status tick: colour changes, geometry never does. */}
               <span
                 aria-hidden
-                className={`mt-1.5 h-1 w-full rounded-b-lg ${
-                  selected ? '' : dotColor(status)
+                className={`mb-1.5 mt-1.5 h-1 w-7 rounded-full ${
+                  endedToday ? 'bg-transparent' : dotColor(status)
                 }`}
-                style={selected ? { backgroundColor: accentColor } : undefined}
               />
             </button>
           );
@@ -740,7 +832,7 @@ export function AvailabilityCalendar({
           type="button"
           onClick={() => setShowGrid((v) => !v)}
           aria-expanded={showGrid}
-          className="inline-flex min-h-[44px] items-center gap-1.5 rounded-lg px-2 text-sm font-semibold text-slate-600 transition hover:text-slate-900"
+          className="inline-flex min-h-[44px] items-center gap-1.5 rounded-lg px-2 text-sm font-semibold text-muted transition-colors hover:text-ink"
         >
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
             <rect x="3" y="4" width="18" height="18" rx="2" />
@@ -763,15 +855,11 @@ export function AvailabilityCalendar({
           names are left exactly as they were — they answer "what is this?" for anyone
           who does reach one mid-load, which is a different question.
         */}
-        <span role="status" className="flex items-center gap-2 text-xs text-slate-400">
+        <span role="status" className="flex items-center gap-2 text-xs text-muted">
           {loading ? (
-            <>
-              <span
-                aria-hidden
-                className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600"
-              />
-              Checking availability…
-            </>
+            // Text only — Estate loading is shape-accurate skeletons (the pulsing
+            // chips above), never a spinner.
+            <>Checking availability…</>
           ) : loadFailed ? null : (
             // Silence after "checking availability…" reads as a page that gave up.
             // Visually hidden on purpose: the spinner vanishing is the sighted
@@ -782,7 +870,7 @@ export function AvailabilityCalendar({
       </div>
 
       {showGrid && (
-        <div className="mt-2 border-t border-slate-100 pt-3">
+        <div className="mt-2 border-t border-hairline pt-3">
           {/* Month header + nav */}
           <div className="mb-3 flex items-center justify-between">
             <button
@@ -796,13 +884,13 @@ export function AvailabilityCalendar({
               }}
               disabled={!canGoPrev}
               aria-label="Previous month"
-              className="flex h-11 w-11 items-center justify-center rounded-lg border border-slate-200 text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-30"
+              className="flex h-11 w-11 items-center justify-center rounded-lg border border-hairline text-muted transition-colors hover:bg-bg hover:text-ink disabled:cursor-not-allowed disabled:opacity-30"
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                 <polyline points="15 18 9 12 15 6" />
               </svg>
             </button>
-            <h3 className="text-sm font-semibold text-slate-900" aria-live="polite">
+            <h3 className="text-sm font-semibold text-ink" aria-live="polite">
               {format(viewMonth, 'MMMM yyyy')}
             </h3>
             <button
@@ -814,7 +902,7 @@ export function AvailabilityCalendar({
               }}
               disabled={!canGoNext}
               aria-label="Next month"
-              className="flex h-11 w-11 items-center justify-center rounded-lg border border-slate-200 text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-30"
+              className="flex h-11 w-11 items-center justify-center rounded-lg border border-hairline text-muted transition-colors hover:bg-bg hover:text-ink disabled:cursor-not-allowed disabled:opacity-30"
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                 <polyline points="9 18 15 12 9 6" />
@@ -827,7 +915,7 @@ export function AvailabilityCalendar({
             {WEEKDAYS.map((d) => (
               <div
                 key={d}
-                className="py-1 text-center text-[11px] font-semibold uppercase tracking-wide text-slate-400"
+                className="py-1 text-center text-[11px] font-semibold uppercase tracking-wide text-muted"
               >
                 {d}
               </div>
@@ -847,6 +935,8 @@ export function AvailabilityCalendar({
               const disabled = !gridSelectable[i];
               const selected = selectedDate ? isSameDay(date, selectedDate) : false;
               const isToday = isSameDay(date, today);
+              const endedToday =
+                isToday && Boolean(todayLive?.ended) && state && state.status !== 'NONE';
 
               return (
                 <button
@@ -858,14 +948,18 @@ export function AvailabilityCalendar({
                   role="radio"
                   aria-checked={selected}
                   disabled={disabled}
-                  aria-label={dayLabel(date, state, disabled, loadFailed)}
+                  aria-label={
+                    endedToday
+                      ? `${format(date, 'EEEE, MMMM d')} — departures have ended for today`
+                      : dayLabel(date, state, disabled, loadFailed)
+                  }
                   // One tab stop for the month, as on the strip. Up/Down walk the
                   // weekday column, which is the movement the grid's shape implies.
                   tabIndex={i === gridTabStop ? 0 : -1}
                   onFocus={() => setGridFocusIndex(i)}
                   onClick={() => pick(date, disabled)}
                   onKeyDown={(event) => dayKeyDown(event, 'grid', i, 7)}
-                  className={cellClasses(status, selected, disabled)}
+                  className={cellClasses(selected, disabled)}
                 >
                   <span className={isToday && !selected ? 'underline decoration-2 underline-offset-2' : undefined}>
                     {format(date, 'd')}
@@ -879,17 +973,17 @@ export function AvailabilityCalendar({
           </div>
 
           {/* Legend — only meaningful once the colour-coded grid is on screen. */}
-          <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-slate-100 pt-3 text-xs text-slate-500">
+          <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-hairline pt-3 text-xs text-muted">
             <span className="flex items-center gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" aria-hidden />
+              <span className="h-2.5 w-2.5 rounded-full bg-success" aria-hidden />
               Available
             </span>
             <span className="flex items-center gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-full bg-amber-500" aria-hidden />
+              <span className="h-2.5 w-2.5 rounded-full bg-warn" aria-hidden />
               Filling up
             </span>
             <span className="flex items-center gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-full bg-rose-400" aria-hidden />
+              <span className="h-2.5 w-2.5 rounded-full bg-danger" aria-hidden />
               Full
             </span>
           </div>
@@ -897,12 +991,12 @@ export function AvailabilityCalendar({
       )}
 
       {error && (
-        <div className="mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+        <div className="mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-danger bg-surface px-3 py-2 text-xs text-danger">
           <span role="alert">{error}</span>
           <button
             type="button"
             onClick={retry}
-            className="ml-auto min-h-[36px] rounded-lg border border-rose-300 bg-white px-3 text-xs font-semibold text-rose-700 transition hover:bg-rose-100"
+            className="ml-auto min-h-[36px] rounded-lg border border-danger bg-surface px-3 text-xs font-semibold text-danger transition-colors hover:bg-bg"
           >
             Try again
           </button>

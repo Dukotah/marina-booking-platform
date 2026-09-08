@@ -12,9 +12,12 @@
  * one surface card, hairline separators, sage reserved for Reserve + the
  * selected day. Server component — zero hydration cost.
  *
- * Deep link: Reserve goes to the activity detail page. The detail page does
- * not read date/slot query params today, so the closest supported deep-link is
- * the plain detail URL (its strip already opens on today).
+ * Deep link: Reserve carries `?date=&slot=&rate=` to the activity detail page,
+ * which preselects the booking card (falling back silently on stale/sold-out
+ * params) — board tap → checkout in two taps.
+ *
+ * One sage action per viewport (DESIGN.md): the first (soonest) row's Reserve
+ * is sage; every other row's is ink.
  */
 import Link from 'next/link';
 import type { DeparturesBoard as BoardData, DepartureRailDay, DepartureRow } from '@/lib/api';
@@ -94,12 +97,27 @@ function DayRail({
   );
 }
 
-function BoardRow({ row, timeZone }: { row: DepartureRow; timeZone: string }) {
+function BoardRow({
+  row,
+  timeZone,
+  date,
+  primary,
+}: {
+  row: DepartureRow;
+  timeZone: string;
+  /** The board day, YYYY-MM-DD — carried into the deep link. */
+  date: string;
+  /** First (soonest) row: the one sage Reserve in this viewport. */
+  primary: boolean;
+}) {
   const lowSeats = row.seatsLeft <= 2;
+  const deepLink = `/activities/${encodeURIComponent(row.activityId)}?date=${encodeURIComponent(
+    date,
+  )}&slot=${encodeURIComponent(row.timeslotId)}&rate=${encodeURIComponent(row.rateId)}`;
   return (
     <li>
       <Link
-        href={`/activities/${encodeURIComponent(row.activityId)}`}
+        href={deepLink}
         className="group flex items-center gap-3 px-4 py-3 transition-colors hover:bg-bg sm:gap-4 sm:px-6"
       >
         {/* Departure time — the guest's first scan column. */}
@@ -142,8 +160,12 @@ function BoardRow({ row, timeZone }: { row: DepartureRow; timeZone: string }) {
           {formatUSD(row.allInCents)}
         </span>
 
-        {/* The one sage action per view lives in this column. */}
-        <span className="hidden shrink-0 rounded-lg bg-accent px-4 py-2 text-[15px] font-semibold text-white transition-opacity group-hover:opacity-90 sm:block">
+        {/* One sage action per viewport: the soonest row. The rest are ink. */}
+        <span
+          className={`hidden shrink-0 rounded-lg px-4 py-2 text-[15px] font-semibold transition-opacity group-hover:opacity-90 sm:block ${
+            primary ? 'bg-accent text-white' : 'bg-ink text-bg'
+          }`}
+        >
           Reserve
         </span>
         <span aria-hidden className="text-accent-ink sm:hidden">
@@ -198,8 +220,14 @@ export function DeparturesBoard({ board, selectedDate }: DeparturesBoardProps) {
           </div>
         ) : (
           <ul className="divide-y divide-hairline">
-            {board.departures.map((row) => (
-              <BoardRow key={row.timeslotId} row={row} timeZone={board.timezone} />
+            {board.departures.map((row, i) => (
+              <BoardRow
+                key={row.timeslotId}
+                row={row}
+                timeZone={board.timezone}
+                date={selectedDate}
+                primary={i === 0}
+              />
             ))}
           </ul>
         )}

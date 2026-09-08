@@ -3,27 +3,33 @@
 /**
  * Time-slot picker for a chosen activity + day.
  *
- * Fetches the day's bookable slots via getAvailability and renders each as a
- * selectable chip showing the start time and remaining capacity ("X spots
- * left"). Full slots are shown disabled. Slot status drives the chip color so
- * it matches the month calendar's green/yellow/red language. Selection is
+ * Fetches the day's bookable slots via the shared day cache (lib/dayAvailability)
+ * and renders each as a selectable chip showing the start time and remaining
+ * capacity ("X spots left"). Full slots are shown disabled. Selection is
  * controlled by the parent so it can compose rate + date + time before routing
  * to checkout.
+ *
+ * PAST DEPARTURES ARE NOT OFFERED. For the operator's current calendar day the
+ * chips are filtered to start times still ahead of the clock — a guest cannot
+ * board a boat that left (same rule as the homepage departures board,
+ * services/departures.ts). Days are bucketed in the OPERATOR's timezone via
+ * `timeZone` (the approach commit 7ec5d9e established for the seeded strip);
+ * the past/future check itself is a plain instant comparison. When a day HAS
+ * slots but they are all in the past, the empty state says so and hands the
+ * guest tomorrow instead of a dead "no times" shrug.
  *
  * PERFORMANCE (see docs/PERFORMANCE.md). This is the third and last round trip in
  * the booking funnel, and on Slow 4G a round trip is ~400ms before a single byte
  * of the body moves. A guest comparing Saturday against Sunday and back used to
- * pay that toll every single time, so days are held in a short-lived module cache
- * and identical in-flight requests share one response.
+ * pay that toll every single time, so days are held in the shared short-lived
+ * cache and identical in-flight requests share one response.
  */
 
 import { useEffect, useRef, useState } from 'react';
 import { formatTime, formatISODate } from '@/lib/format';
-import {
-  getAvailability,
-  isApiError,
-  type AvailabilitySlot,
-} from '@/lib/api';
+import { loadDay, readCachedDay } from '@/lib/dayAvailability';
+import { futureSlots, operatorDayISO } from '@/lib/operatorDay';
+import type { AvailabilitySlot } from '@/lib/api';
 
 interface TimeSlotPickerProps {
   activityId: string;
@@ -31,87 +37,23 @@ interface TimeSlotPickerProps {
   date: Date;
   selectedTimeslotId: string | null;
   onSelect: (slot: AvailabilitySlot) => void;
-  accentColor: string;
-}
-
-// ---------------------------------------------------------------------------
-// Day cache
-// ---------------------------------------------------------------------------
-
-/**
- * How long a fetched day may be reused, in ms.
- *
- * Deliberately short. "Availability that never lies" (docs/LOCAL-FIRST-BUILD.md §6)
- * outranks the round trip this saves: capacity is live inventory and another guest
- * can take the last seat at any moment. Thirty seconds is long enough to make
- * flicking between two days feel instant and short enough that nothing a guest sees
- * is meaningfully older than the page they are looking at. It is not a correctness
- * boundary either way — the booking call re-checks capacity server-side and rejects
- * a slot that filled up, which is the only place that check can be trusted.
- */
-const DAY_TTL_MS = 30_000;
-
-interface CachedDay {
-  slots: AvailabilitySlot[];
-  fetchedAt: number;
-}
-
-const dayCache = new Map<string, CachedDay>();
-/** Requests currently on the wire, so two mounts of the same day cost one. */
-const inFlight = new Map<string, Promise<AvailabilitySlot[]>>();
-
-function cacheKey(activityId: string, iso: string): string {
-  return `${activityId}|${iso}`;
-}
-
-/** Cached slots for a day, or null when nothing fresh is held. */
-function readCache(key: string): AvailabilitySlot[] | null {
-  const hit = dayCache.get(key);
-  if (!hit) return null;
-  if (Date.now() - hit.fetchedAt > DAY_TTL_MS) {
-    dayCache.delete(key);
-    return null;
-  }
-  return hit.slots;
-}
-
-/**
- * Load one day's slots, sharing an in-flight request and caching the result.
- *
- * A 404 means "this activity has no schedule that day", which is an answer rather
- * than a failure, so it caches as an empty day instead of being retried on every
- * re-render.
- */
-async function loadDay(activityId: string, iso: string): Promise<AvailabilitySlot[]> {
-  const key = cacheKey(activityId, iso);
-  const cached = readCache(key);
-  if (cached) return cached;
-
-  const existing = inFlight.get(key);
-  if (existing) return existing;
-
-  const pending = (async () => {
-    try {
-      const day = await getAvailability(activityId, iso);
-      // Stable order by start time.
-      const sorted = [...day.slots].sort(
-        (a, b) => new Date(a.datetime).getTime() - new Date(b.datetime).getTime(),
-      );
-      dayCache.set(key, { slots: sorted, fetchedAt: Date.now() });
-      return sorted;
-    } catch (err) {
-      if (isApiError(err) && err.status === 404) {
-        dayCache.set(key, { slots: [], fetchedAt: Date.now() });
-        return [];
-      }
-      throw err;
-    } finally {
-      inFlight.delete(key);
-    }
-  })();
-
-  inFlight.set(key, pending);
-  return pending;
+  /**
+   * Legacy prop, retained for call-site compatibility (reschedule dialog).
+   * Estate chrome no longer paints the operator/activity color; selection is
+   * always the sage accent token.
+   */
+  accentColor?: string;
+  /**
+   * IANA timezone the operator's calendar days are bucketed in. Decides which
+   * day counts as "today" for the past-departure filter. Falls back to the
+   * browser's local day when absent (embed/reschedule callers).
+   */
+  timeZone?: string;
+  /**
+   * Renders the "See tomorrow →" action in the all-departures-ended empty
+   * state. The parent selects the operator's next calendar day.
+   */
+  onSeeTomorrow?: () => void;
 }
 
 function spotsLabel(remaining: number): string {
@@ -140,23 +82,21 @@ function nextSelectableIndex(selectable: boolean[], from: number, step: number):
   return -1;
 }
 
-function chipClasses(
-  status: AvailabilitySlot['status'],
-  selected: boolean,
-  full: boolean,
-): string {
+/**
+ * Estate chip styling: surface + hairline at rest, sage border + sage-deep text
+ * when chosen, quiet muted when full. Status colors live only in the small
+ * capacity line (warn when filling up), never as a chip wash.
+ */
+function chipClasses(selected: boolean, full: boolean): string {
   const base =
-    'flex min-h-[52px] flex-col items-center justify-center gap-0.5 rounded-xl border-2 px-3 py-2.5 text-center transition focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1';
+    'flex min-h-[52px] flex-col items-center justify-center gap-0.5 rounded-lg border-2 px-3 py-2.5 text-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-ink focus-visible:ring-offset-1';
   if (full) {
-    return `${base} cursor-not-allowed border-rose-100 bg-rose-50 text-rose-400`;
+    return `${base} cursor-not-allowed border-hairline bg-surface text-muted opacity-60`;
   }
   if (selected) {
-    return `${base} cursor-pointer border-slate-900 bg-slate-900 text-white shadow-sm`;
+    return `${base} cursor-pointer border-accent bg-surface text-accent-ink`;
   }
-  if (status === 'FILLING_UP') {
-    return `${base} cursor-pointer border-amber-200 bg-amber-50 text-amber-900 hover:border-amber-400`;
-  }
-  return `${base} cursor-pointer border-emerald-200 bg-emerald-50 text-emerald-900 hover:border-emerald-400`;
+  return `${base} cursor-pointer border-hairline bg-surface text-ink hover:border-accent`;
 }
 
 export function TimeSlotPicker({
@@ -164,14 +104,15 @@ export function TimeSlotPicker({
   date,
   selectedTimeslotId,
   onSelect,
-  accentColor,
+  timeZone,
+  onSeeTomorrow,
 }: TimeSlotPickerProps) {
   const iso = formatISODate(date);
 
   // Seed from the cache during render, not in an effect. A cached day therefore
   // paints its chips in the very first frame after the date is tapped — no skeleton
   // flash, no layout shift, and nothing for the guest to wait on.
-  const cached = readCache(cacheKey(activityId, iso));
+  const cached = readCachedDay(activityId, iso);
   const [slots, setSlots] = useState<AvailabilitySlot[]>(cached ?? []);
   const [loading, setLoading] = useState(cached === null);
   const [error, setError] = useState<string | null>(null);
@@ -179,19 +120,31 @@ export function TimeSlotPicker({
   const requestSeq = useRef(0);
   const chipRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
+  /*
+   * The operator's current calendar day. For that day (or, defensively, an
+   * earlier one a restored selection might carry) departures already underway
+   * are dropped — the same "a departure in the past is gone" rule the homepage
+   * board applies server-side. Future days pass through untouched.
+   */
+  const todayIso = timeZone ? operatorDayISO(timeZone) : formatISODate(new Date());
+  const isToday = iso === todayIso;
+  const visibleSlots = iso <= todayIso ? futureSlots(slots) : slots;
+  /** The day HAD departures, but every one of them has already left. */
+  const allDeparted = !loading && !error && slots.length > 0 && visibleSlots.length === 0;
+
   // Restore a previously chosen time (e.g. after Back from checkout). The parent
   // controls selection by id, but the CTA needs the resolved slot *object* — with
   // its live remaining capacity — before it can advance. So once the day's slots
   // load, re-emit the slot matching the controlled id, but ONLY if it is still
-  // selectable: a slot that filled up while the guest was away must not silently
-  // become bookable again. Guarded to fire once per (day, id) so it can never loop
-  // or override a fresh pick the guest makes after the restore.
+  // selectable: a slot that filled up (or departed) while the guest was away must
+  // not silently become bookable again. Guarded to fire once per (day, id) so it
+  // can never loop or override a fresh pick the guest makes after the restore.
   const restoredKey = useRef<string | null>(null);
   useEffect(() => {
     if (!selectedTimeslotId) return;
     const key = `${iso}|${selectedTimeslotId}`;
     if (restoredKey.current === key) return;
-    const match = slots.find((s) => s.timeslotId === selectedTimeslotId);
+    const match = visibleSlots.find((s) => s.timeslotId === selectedTimeslotId);
     if (!match) return;
     restoredKey.current = key;
     if (match.status === 'FULL' || match.capacityRemaining <= 0) return;
@@ -199,13 +152,13 @@ export function TimeSlotPicker({
     // onSelect is stable enough for this one-shot restore; guarding by restoredKey
     // makes re-runs no-ops regardless.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [slots, selectedTimeslotId, iso]);
+  }, [visibleSlots, selectedTimeslotId, iso]);
 
   useEffect(() => {
     const seq = ++requestSeq.current;
     let cancelled = false;
 
-    const hit = readCache(cacheKey(activityId, iso));
+    const hit = readCachedDay(activityId, iso);
     if (hit) {
       setSlots(hit);
       setLoading(false);
@@ -255,11 +208,13 @@ export function TimeSlotPicker({
       return;
     }
     setAnnouncement(
-      slots.length === 0
-        ? 'No times are available on this day.'
-        : `${slots.length} ${slots.length === 1 ? 'time' : 'times'} available.`,
+      allDeparted
+        ? 'Today’s departures have ended.'
+        : visibleSlots.length === 0
+          ? 'No times are available on this day.'
+          : `${visibleSlots.length} ${visibleSlots.length === 1 ? 'time' : 'times'} available.`,
     );
-  }, [loading, error, slots.length]);
+  }, [loading, error, visibleSlots.length, allDeparted]);
 
   /**
    * The live region, always the FIRST child of the returned fragment.
@@ -279,13 +234,13 @@ export function TimeSlotPicker({
     return (
       <>
         {status}
-        {/* The placeholders are the height of a real chip (min-h-[52px] + border), so
-            the answer arriving does not shove the guest's thumb target down the page. */}
+        {/* Shape-accurate skeleton: the height of a real chip (min-h-[52px] + border),
+            so the answer arriving does not shove the guest's thumb target down. */}
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
           {Array.from({ length: 6 }).map((_, i) => (
             <div
               key={i}
-              className="h-[52px] animate-pulse rounded-xl border-2 border-slate-100 bg-slate-100"
+              className="h-[52px] animate-pulse rounded-lg border border-hairline bg-surface"
               aria-hidden
             />
           ))}
@@ -301,7 +256,7 @@ export function TimeSlotPicker({
         {/* Inserted with no focus move, so it has to announce itself. */}
         <p
           role="alert"
-          className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700"
+          className="rounded-lg border border-danger bg-surface px-3 py-2 text-sm text-danger"
         >
           {error}
         </p>
@@ -309,12 +264,36 @@ export function TimeSlotPicker({
     );
   }
 
-  if (slots.length === 0) {
+  if (allDeparted) {
+    // Empty state, DESIGN.md shape: one sentence + one action. Only meaningful
+    // for the operator's today; a stale past day gets the plain empty below.
     return (
       <>
         {status}
-        <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-500">
-          No times are available on this day. Try another date.
+        <div className="rounded-lg border border-hairline bg-surface px-3 py-4 text-sm">
+          <p className="text-ink">
+            {isToday ? 'Today’s departures have ended.' : 'These departures have passed.'}
+          </p>
+          {onSeeTomorrow && (
+            <button
+              type="button"
+              onClick={onSeeTomorrow}
+              className="mt-1 font-semibold text-accent-ink transition-colors hover:underline"
+            >
+              See tomorrow →
+            </button>
+          )}
+        </div>
+      </>
+    );
+  }
+
+  if (visibleSlots.length === 0) {
+    return (
+      <>
+        {status}
+        <p className="rounded-lg border border-hairline bg-surface px-3 py-3 text-sm text-muted">
+          No departures this day.
         </p>
       </>
     );
@@ -333,13 +312,15 @@ export function TimeSlotPicker({
    * columns on a phone and three from `sm` up, so any fixed row step would be a lie on
    * one of them.
    */
-  const selectable = slots.map((slot) => !(slot.status === 'FULL' || slot.capacityRemaining <= 0));
-  const selectedIndex = slots.findIndex((slot) => slot.timeslotId === selectedTimeslotId);
+  const selectable = visibleSlots.map(
+    (slot) => !(slot.status === 'FULL' || slot.capacityRemaining <= 0),
+  );
+  const selectedIndex = visibleSlots.findIndex((slot) => slot.timeslotId === selectedTimeslotId);
   const tabStop = rovingIndex(selectable, selectedIndex);
 
   const move = (from: number, step: number) => {
     const to = nextSelectableIndex(selectable, from, step);
-    const slot = to >= 0 ? slots[to] : undefined;
+    const slot = to >= 0 ? visibleSlots[to] : undefined;
     if (!slot) return;
     chipRefs.current[to]?.focus();
     onSelect(slot);
@@ -363,7 +344,7 @@ export function TimeSlotPicker({
         break;
       case 'End':
         event.preventDefault();
-        move(slots.length, -1);
+        move(visibleSlots.length, -1);
         break;
       default:
         break;
@@ -378,9 +359,10 @@ export function TimeSlotPicker({
         role="radiogroup"
         aria-label="Choose a time"
       >
-        {slots.map((slot, index) => {
+        {visibleSlots.map((slot, index) => {
           const full = !selectable[index];
           const selected = slot.timeslotId === selectedTimeslotId;
+          const fillingUp = !full && slot.status === 'FILLING_UP';
           return (
             <button
               key={slot.timeslotId}
@@ -394,23 +376,16 @@ export function TimeSlotPicker({
               tabIndex={index === tabStop ? 0 : -1}
               onClick={() => onSelect(slot)}
               onKeyDown={(event) => onKeyDown(event, index)}
-              className={chipClasses(slot.status, selected, full)}
+              className={chipClasses(selected, full)}
             >
-              <span className="text-sm font-semibold">{formatTime(slot.datetime)}</span>
+              <span className="tnum text-sm font-semibold">{formatTime(slot.datetime)}</span>
               <span
-                className={`text-[11px] font-medium ${
-                  selected ? 'text-white/80' : full ? 'text-rose-400' : 'opacity-80'
+                className={`tnum text-[11px] font-medium ${
+                  full ? 'text-muted' : fillingUp ? 'text-warn' : selected ? 'text-accent-ink' : 'text-muted'
                 }`}
               >
                 {spotsLabel(slot.capacityRemaining)}
               </span>
-              {selected && (
-                <span
-                  aria-hidden
-                  className="mt-0.5 h-1 w-6 rounded-full"
-                  style={{ backgroundColor: accentColor }}
-                />
-              )}
             </button>
           );
         })}
