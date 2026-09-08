@@ -1,9 +1,10 @@
 'use client';
 
-import { useState } from 'react';
-import { Banknote, CreditCard, Loader2, CheckCircle2, User } from 'lucide-react';
+import { useState, useTransition } from 'react';
+import { Banknote, CreditCard, Gift, Loader2, CheckCircle2, User, X } from 'lucide-react';
 import { formatUSD, toCents } from '@marina/core';
 import { cn } from '../../lib/cn';
+import { checkGiftCardCode } from '../../app/pos/actions';
 import type { PosPaymentMethod, SaleResult } from './types';
 
 /**
@@ -21,6 +22,8 @@ export interface PaymentPanelProps {
   onTipChange: (cents: number) => void;
   cashTenderedCents: number;
   onCashTenderedChange: (cents: number) => void;
+  giftCard: { code: string; balanceCents: number } | null;
+  onGiftCardChange: (card: { code: string; balanceCents: number } | null) => void;
   customer: { firstName: string; lastName: string; email: string; phone: string };
   onCustomerChange: (
     customer: { firstName: string; lastName: string; email: string; phone: string },
@@ -42,6 +45,8 @@ export function PaymentPanel({
   onTipChange,
   cashTenderedCents,
   onCashTenderedChange,
+  giftCard,
+  onGiftCardChange,
   customer,
   onCustomerChange,
   submitting,
@@ -50,6 +55,31 @@ export function PaymentPanel({
   onNewSale,
 }: PaymentPanelProps) {
   const [showCustomer, setShowCustomer] = useState(false);
+  const [gcCode, setGcCode] = useState('');
+  const [gcError, setGcError] = useState<string | null>(null);
+  const [gcChecking, startGcCheck] = useTransition();
+
+  function checkGiftCard() {
+    const code = gcCode.trim();
+    if (!code) return;
+    setGcError(null);
+    startGcCheck(async () => {
+      const res = await checkGiftCardCode(code);
+      if (res.valid) {
+        onGiftCardChange({ code: res.code, balanceCents: res.balanceCents });
+        setGcCode('');
+      } else {
+        onGiftCardChange(null);
+        setGcError(res.reason ?? 'This gift card cannot be used.');
+      }
+    });
+  }
+
+  function removeGiftCard() {
+    onGiftCardChange(null);
+    setGcError(null);
+    setGcCode('');
+  }
 
   // Success / receipt state.
   if (result?.ok) {
@@ -65,6 +95,20 @@ export function PaymentPanel({
             <span>Charged</span>
             <span className="font-semibold">{formatUSD(result.totalCents ?? 0)}</span>
           </div>
+          {result.giftCardAppliedCents && result.giftCardAppliedCents > 0 ? (
+            <>
+              <div className="flex items-center justify-between">
+                <span>Gift card applied</span>
+                <span className="font-semibold">
+                  −{formatUSD(result.giftCardAppliedCents)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-xs text-emerald-800">
+                <span>Gift card balance remaining</span>
+                <span>{formatUSD(result.giftCardRemainingCents ?? 0)}</span>
+              </div>
+            </>
+          ) : null}
           {result.changeDueCents && result.changeDueCents > 0 ? (
             <div className="flex items-center justify-between text-base font-bold">
               <span>Change due</span>
@@ -86,14 +130,21 @@ export function PaymentPanel({
   // Subtotal-derived tip presets operate on (total - existing tip) so toggling presets
   // recomputes against the pre-tip amount.
   const preTipTotal = totalCents - tipCents;
-  const changeDue = cashTenderedCents - totalCents;
+
+  // A gift card covers up to the full total; the remainder is settled by cash/card.
+  const giftCardAppliedCents = giftCard ? Math.min(giftCard.balanceCents, totalCents) : 0;
+  const remainderCents = totalCents - giftCardAppliedCents;
+  const giftCardCoversAll = giftCard != null && remainderCents === 0;
+  const changeDue = cashTenderedCents - remainderCents;
+  // When the card covers everything, no cash/card tender is needed to check out.
+  const cashShort = method === 'CASH' && !giftCardCoversAll && cashTenderedCents < remainderCents;
 
   return (
     <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-      {/* Payment method */}
+      {/* Payment method — for the remainder after any gift card is applied. */}
       <div>
         <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-          Payment method
+          {giftCard ? 'Pay remainder with' : 'Payment method'}
         </div>
         <div className="grid grid-cols-2 gap-2">
           <MethodButton
@@ -101,14 +152,77 @@ export function PaymentPanel({
             onClick={() => onMethodChange('CASH')}
             icon={<Banknote className="h-4 w-4" aria-hidden />}
             label="Cash"
+            disabled={giftCardCoversAll}
           />
           <MethodButton
             active={method === 'CARD'}
             onClick={() => onMethodChange('CARD')}
             icon={<CreditCard className="h-4 w-4" aria-hidden />}
             label="Card"
+            disabled={giftCardCoversAll}
           />
         </div>
+      </div>
+
+      {/* Gift card tender */}
+      <div>
+        <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+          Gift card
+        </div>
+        {giftCard ? (
+          <div className="flex items-center justify-between rounded-lg border border-violet-200 bg-violet-50 px-3 py-2">
+            <div className="flex items-center gap-2 text-sm text-violet-900">
+              <Gift className="h-4 w-4 text-violet-600" aria-hidden />
+              <div>
+                <div className="font-semibold tracking-wide">{giftCard.code}</div>
+                <div className="text-xs text-violet-700">
+                  Balance {formatUSD(giftCard.balanceCents)} · applying{' '}
+                  {formatUSD(giftCardAppliedCents)}
+                </div>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={removeGiftCard}
+              aria-label="Remove gift card"
+              className="rounded-md p-1 text-violet-600 hover:bg-violet-100"
+            >
+              <X className="h-4 w-4" aria-hidden />
+            </button>
+          </div>
+        ) : (
+          <div>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={gcCode}
+                onChange={(e) => setGcCode(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    checkGiftCard();
+                  }
+                }}
+                placeholder="Gift card code"
+                aria-label="Gift card code"
+                autoComplete="off"
+                className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm uppercase tracking-wide text-slate-700 placeholder:normal-case placeholder:tracking-normal placeholder:text-slate-400 focus:border-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-200"
+              />
+              <button
+                type="button"
+                onClick={checkGiftCard}
+                disabled={gcChecking || gcCode.trim().length === 0}
+                className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg bg-slate-900 px-3 text-sm font-medium text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {gcChecking ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
+                Check
+              </button>
+            </div>
+            {gcError ? (
+              <p className="mt-1 text-sm font-medium text-red-600">{gcError}</p>
+            ) : null}
+          </div>
+        )}
       </div>
 
       {/* Tip */}
@@ -158,11 +272,12 @@ export function PaymentPanel({
         </div>
       </div>
 
-      {/* Cash tendered */}
-      {method === 'CASH' ? (
+      {/* Cash tendered (for the remainder after any gift card) */}
+      {method === 'CASH' && !giftCardCoversAll ? (
         <div>
-          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-            Cash tendered
+          <div className="mb-2 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-slate-500">
+            <span>Cash tendered</span>
+            {giftCard ? <span className="text-slate-400">Due {formatUSD(remainderCents)}</span> : null}
           </div>
           <div className="relative">
             <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">
@@ -178,7 +293,7 @@ export function PaymentPanel({
                 const v = Number.parseFloat(e.target.value);
                 onCashTenderedChange(Number.isFinite(v) && v > 0 ? toCents(v) : 0);
               }}
-              placeholder={(totalCents / 100).toFixed(2)}
+              placeholder={(remainderCents / 100).toFixed(2)}
               aria-label="Cash tendered"
               className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-7 pr-3 text-sm text-slate-800 placeholder:text-slate-400 focus:border-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-200"
             />
@@ -255,17 +370,16 @@ export function PaymentPanel({
       {/* Checkout */}
       <button
         type="button"
-        disabled={
-          submitting ||
-          itemCount === 0 ||
-          totalCents <= 0 ||
-          (method === 'CASH' && cashTenderedCents < totalCents)
-        }
+        disabled={submitting || itemCount === 0 || totalCents <= 0 || cashShort}
         onClick={onCheckout}
         className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-5 text-base font-bold text-white transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
       >
         {submitting ? <Loader2 className="h-5 w-5 animate-spin" aria-hidden /> : null}
-        Charge {formatUSD(totalCents)}
+        {giftCardCoversAll
+          ? `Redeem ${formatUSD(giftCardAppliedCents)} gift card`
+          : giftCard
+            ? `Charge ${formatUSD(remainderCents)} + gift card`
+            : `Charge ${formatUSD(totalCents)}`}
       </button>
     </div>
   );
@@ -276,18 +390,21 @@ function MethodButton({
   onClick,
   icon,
   label,
+  disabled = false,
 }: {
   active: boolean;
   onClick: () => void;
   icon: React.ReactNode;
   label: string;
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      disabled={disabled}
       className={cn(
-        'flex h-12 items-center justify-center gap-2 rounded-lg border text-sm font-semibold transition-colors',
+        'flex h-12 items-center justify-center gap-2 rounded-lg border text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40',
         active
           ? 'border-slate-900 bg-slate-900 text-white'
           : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300',

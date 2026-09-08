@@ -51,6 +51,9 @@ export function PosTerminal({ activities, merchandise, config }: PosTerminalProp
   const [tipCents, setTipCents] = useState(0);
   const [cashTenderedCents, setCashTenderedCents] = useState(0);
   const [customer, setCustomer] = useState(emptyCustomer);
+  // Applied gift card (validated via checkGiftCardCode) — null until the operator
+  // enters + checks a code. Cleared on new sale.
+  const [giftCard, setGiftCard] = useState<{ code: string; balanceCents: number } | null>(null);
   const [result, setResult] = useState<SaleResult | null>(null);
   const [submitting, startSubmit] = useTransition();
 
@@ -117,6 +120,7 @@ export function PosTerminal({ activities, merchandise, config }: PosTerminalProp
     setTipCents(0);
     setCashTenderedCents(0);
     setCustomer(emptyCustomer);
+    setGiftCard(null);
     setResult(null);
     setTab('BOOKINGS');
   }
@@ -140,6 +144,7 @@ export function PosTerminal({ activities, merchandise, config }: PosTerminalProp
         paymentMethod: method,
         tipCents,
         cashTenderedCents: method === 'CASH' ? cashTenderedCents : undefined,
+        giftCardCode: giftCard?.code,
         customer: hasCustomer
           ? {
               firstName: customer.firstName.trim(),
@@ -219,6 +224,8 @@ export function PosTerminal({ activities, merchandise, config }: PosTerminalProp
             onTipChange={setTipCents}
             cashTenderedCents={cashTenderedCents}
             onCashTenderedChange={setCashTenderedCents}
+            giftCard={giftCard}
+            onGiftCardChange={setGiftCard}
             customer={customer}
             onCustomerChange={setCustomer}
             submitting={submitting}

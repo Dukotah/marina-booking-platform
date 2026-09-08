@@ -5,13 +5,24 @@ import { z } from 'zod';
 import {
   calculatePricing,
   createId,
+  formatUSD,
   generateOrderNumber,
   type PricingFee,
   type PricingItem,
 } from '@marina/core';
 import { withTenant } from '@marina/database';
 import { getOperatorContext, getTenantDb, requirePermission } from '../../lib/session';
-import type { CodeLookupResult, SaleInput, SaleResult } from '../../components/pos/types';
+import type {
+  CodeLookupResult,
+  GiftCardCheckResult,
+  SaleInput,
+  SaleResult,
+} from '../../components/pos/types';
+
+/** Normalize an operator-entered gift-card code (case + surrounding whitespace). */
+function normalizeGiftCardCode(code: string): string {
+  return code.trim().toUpperCase();
+}
 
 /**
  * Server actions backing the integrated POS terminal.
@@ -42,9 +53,10 @@ const cartLineSchema = z.object({
 
 const saleSchema = z.object({
   lines: z.array(cartLineSchema).min(1, 'Add at least one item to the cart.'),
-  paymentMethod: z.enum(['CASH', 'CARD']),
+  paymentMethod: z.enum(['CASH', 'CARD', 'GIFT_CARD']),
   tipCents: z.number().int().nonnegative().default(0),
   cashTenderedCents: z.number().int().nonnegative().optional(),
+  giftCardCode: z.string().trim().min(1).max(64).optional(),
   customer: z
     .object({
       firstName: z.string().trim().min(1).max(80),
@@ -98,6 +110,46 @@ export async function lookupByCode(rawCode: string): Promise<CodeLookupResult> {
       balanceDueCents: order.balance_due_cents,
     },
   };
+}
+
+// --- Gift-card balance check ---------------------------------------------
+
+/**
+ * Look up a gift card by code and report its usable balance for the register.
+ * Mirrors the API's public `checkGiftCard` (services/gift-cards.ts) so staff can
+ * preview a card before applying it as tender. Never mutates the card.
+ */
+export async function checkGiftCardCode(rawCode: string): Promise<GiftCardCheckResult> {
+  await requirePermission('pos:operate');
+
+  const code = normalizeGiftCardCode(rawCode);
+  if (!code) {
+    return { valid: false, code: '', balanceCents: 0, status: 'VOID', reason: 'Enter a gift card code.' };
+  }
+
+  const { operatorId } = await getOperatorContext();
+  const db = await getTenantDb();
+
+  const card = await db.giftCard.findFirst({
+    where: { operator_id: operatorId, code },
+    select: { code: true, balance_cents: true, status: true, expires_at: true },
+  });
+
+  if (!card) {
+    return { valid: false, code, balanceCents: 0, status: 'VOID', reason: 'No gift card with that code.' };
+  }
+
+  const base = { code: card.code, balanceCents: card.balance_cents } as const;
+  if (card.status === 'VOID') {
+    return { valid: false, ...base, status: 'VOID', reason: 'This gift card has been voided.' };
+  }
+  if (card.status === 'REDEEMED' || card.balance_cents <= 0) {
+    return { valid: false, ...base, status: 'REDEEMED', reason: 'This gift card has no remaining balance.' };
+  }
+  if (card.expires_at && card.expires_at.getTime() < Date.now()) {
+    return { valid: false, ...base, status: 'EXPIRED', reason: 'This gift card has expired.' };
+  }
+  return { valid: true, ...base, status: 'ACTIVE' };
 }
 
 // --- Checkout -------------------------------------------------------------
@@ -219,20 +271,65 @@ export async function submitSale(input: SaleInput): Promise<SaleResult> {
       }));
       const pricing = calculatePricing({ items, fees, tipCents: sale.tipCents });
 
-      // 4. Cash tender validation + change.
-      let changeDueCents = 0;
-      if (sale.paymentMethod === 'CASH') {
-        const tendered = sale.cashTenderedCents ?? 0;
-        if (tendered < pricing.totalCents) {
-          throw new SaleError('Cash tendered is less than the total due.');
+      // 4. Gift-card tender (optional). Redeem the card for up to the full total,
+      //    then the remainder is settled by the chosen cash/card method below.
+      //    The claim-then-decrement guard mirrors services/gift-cards.ts so two
+      //    concurrent redemptions can never over-draw the same balance.
+      let giftCardAppliedCents = 0;
+      let giftCardRemainingCents = 0;
+      let giftCard: { id: string; code: string } | null = null;
+      if (sale.giftCardCode) {
+        const code = normalizeGiftCardCode(sale.giftCardCode);
+        const card = await tx.giftCard.findFirst({
+          where: { operator_id: operatorId, code },
+          select: { id: true, code: true, balance_cents: true, status: true, expires_at: true },
+        });
+        if (!card) throw new SaleError('No gift card with that code.');
+        if (card.status === 'VOID') throw new SaleError('This gift card has been voided.');
+        if (card.expires_at && card.expires_at.getTime() < Date.now()) {
+          throw new SaleError('This gift card has expired.');
         }
-        changeDueCents = tendered - pricing.totalCents;
+        if (card.status === 'REDEEMED' || card.balance_cents <= 0) {
+          throw new SaleError('This gift card has no remaining balance.');
+        }
+
+        const applied = Math.min(card.balance_cents, pricing.totalCents);
+        if (applied <= 0) throw new SaleError('This sale has no balance for the gift card to cover.');
+
+        // Atomically claim the funds first: the decrement only lands while the card
+        // still holds at least `applied`, so a concurrent redeem can't spend it twice.
+        const claim = await tx.giftCard.updateMany({
+          where: { id: card.id, status: { not: 'REDEEMED' }, balance_cents: { gte: applied } },
+          data: { balance_cents: { decrement: applied } },
+        });
+        if (claim.count === 0) {
+          throw new SaleError('This gift card balance changed — please re-check the card.');
+        }
+        giftCardAppliedCents = applied;
+        giftCardRemainingCents = card.balance_cents - applied;
+        giftCard = { id: card.id, code: card.code };
+        if (giftCardRemainingCents <= 0) {
+          await tx.giftCard.update({ where: { id: card.id }, data: { status: 'REDEEMED' } });
+        }
       }
 
-      // 5. Resolve / create the customer for the order.
+      // 5. Remainder tender validation + change. What's left after the gift card is
+      //    settled by the chosen cash/card method. A gift card that fully covers the
+      //    sale leaves no remainder, so no cash/card payment is taken.
+      const remainderCents = pricing.totalCents - giftCardAppliedCents;
+      let changeDueCents = 0;
+      if (remainderCents > 0 && sale.paymentMethod === 'CASH') {
+        const tendered = sale.cashTenderedCents ?? 0;
+        if (tendered < remainderCents) {
+          throw new SaleError('Cash tendered is less than the balance due.');
+        }
+        changeDueCents = tendered - remainderCents;
+      }
+
+      // 6. Resolve / create the customer for the order.
       const customerId = await resolveCustomer(tx, operatorId, sale.customer);
 
-      // 6. Per-location, per-day order sequence (atomic within this transaction).
+      // 7. Per-location, per-day order sequence (atomic within this transaction).
       //    Count orders already numbered for THIS day's prefix rather than orders
       //    whose created_at is today: seed/back-dated orders carry a calendar-day
       //    order number that differs from their created_at, so counting by
@@ -329,26 +426,62 @@ export async function submitSale(input: SaleInput): Promise<SaleResult> {
         });
       }
 
-      // 10. Payment.
-      await tx.payment.create({
-        data: {
-          id: createId(),
-          operator_id: operatorId,
-          order_id: orderId,
-          method: sale.paymentMethod,
-          status: 'PAID',
-          amount_cents: pricing.totalCents,
-          is_manually_keyed: sale.paymentMethod === 'CARD',
-        },
-      });
+      // 10. Payment(s). A gift-card tender records a GIFT_CARD payment linked to the
+      //     card for the applied amount; any remainder is a second cash/card payment.
+      //     The payments always sum to the order total (amount_paid = total).
+      if (giftCard && giftCardAppliedCents > 0) {
+        await tx.payment.create({
+          data: {
+            id: createId(),
+            operator_id: operatorId,
+            order_id: orderId,
+            method: 'GIFT_CARD',
+            status: 'PAID',
+            amount_cents: giftCardAppliedCents,
+            gift_card_id: giftCard.id,
+          },
+        });
+        await tx.orderEvent.create({
+          data: {
+            operator_id: operatorId,
+            order_id: orderId,
+            type: 'PAYMENT',
+            description: `Redeemed gift card ${giftCard.code} (${formatUSD(giftCardAppliedCents)})`,
+            actor: auth.userId,
+            metadata: {
+              giftCardId: giftCard.id,
+              appliedCents: giftCardAppliedCents,
+              cardBalanceCents: giftCardRemainingCents,
+            },
+          },
+        });
+      }
+      if (remainderCents > 0) {
+        await tx.payment.create({
+          data: {
+            id: createId(),
+            operator_id: operatorId,
+            order_id: orderId,
+            method: sale.paymentMethod === 'GIFT_CARD' ? 'CARD' : sale.paymentMethod,
+            status: 'PAID',
+            amount_cents: remainderCents,
+            is_manually_keyed: sale.paymentMethod === 'CARD',
+          },
+        });
+      }
 
       // 11. Audit event for the sale itself.
+      const remainderMethod = sale.paymentMethod === 'GIFT_CARD' ? 'card' : sale.paymentMethod.toLowerCase();
+      const saleTenders = [
+        giftCardAppliedCents > 0 ? 'gift card' : null,
+        remainderCents > 0 ? remainderMethod : null,
+      ].filter(Boolean);
       await tx.orderEvent.create({
         data: {
           operator_id: operatorId,
           order_id: orderId,
           type: 'POS_SALE',
-          description: `Register sale (${sale.paymentMethod.toLowerCase()})`,
+          description: `Register sale (${saleTenders.join(' + ') || 'no tender'})`,
           actor: auth.userId,
         },
       });
@@ -368,6 +501,8 @@ export async function submitSale(input: SaleInput): Promise<SaleResult> {
         orderNumber,
         totalCents: pricing.totalCents,
         changeDueCents,
+        giftCardAppliedCents,
+        giftCardRemainingCents: giftCard ? giftCardRemainingCents : 0,
       };
     });
 
@@ -381,6 +516,8 @@ export async function submitSale(input: SaleInput): Promise<SaleResult> {
       orderNumber: result.orderNumber,
       totalCents: result.totalCents,
       changeDueCents: result.changeDueCents,
+      giftCardAppliedCents: result.giftCardAppliedCents,
+      giftCardRemainingCents: result.giftCardRemainingCents,
     };
   } catch (err) {
     if (err instanceof SaleError) {

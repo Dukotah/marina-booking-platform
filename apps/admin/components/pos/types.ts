@@ -7,7 +7,17 @@
  */
 
 /** Payment methods the register accepts. Mirrors the relevant PaymentMethod enum members. */
-export type PosPaymentMethod = 'CASH' | 'CARD';
+export type PosPaymentMethod = 'CASH' | 'CARD' | 'GIFT_CARD';
+
+/** Result of a register-side gift-card balance/validity lookup. */
+export interface GiftCardCheckResult {
+  valid: boolean;
+  code: string;
+  balanceCents: number;
+  status: 'ACTIVE' | 'REDEEMED' | 'EXPIRED' | 'VOID';
+  /** Present when valid is false — a human-readable reason. */
+  reason?: string;
+}
 
 /** Which entry tab a line item came from. Drives how we persist it at checkout. */
 export type CartLineKind = 'BOOKING' | 'MERCHANDISE' | 'MISC';
@@ -101,6 +111,12 @@ export interface SaleInput {
   tipCents: number;
   /** Cash tendered, in cents — used to compute change for CASH sales. */
   cashTenderedCents?: number;
+  /**
+   * Optional gift-card tender. When present, the card is redeemed for
+   * min(card balance, total) and any remainder is settled by `paymentMethod`
+   * (CASH/CARD). If the card fully covers the sale, `paymentMethod` is ignored.
+   */
+  giftCardCode?: string;
   /** Optional customer details captured at the register; falls back to walk-up. */
   customer?: {
     firstName: string;
@@ -117,6 +133,10 @@ export interface SaleResult {
   orderNumber?: string;
   totalCents?: number;
   changeDueCents?: number;
+  /** Cents covered by a redeemed gift card on this sale (0 when none applied). */
+  giftCardAppliedCents?: number;
+  /** Remaining balance on the gift card after this sale, when one was applied. */
+  giftCardRemainingCents?: number;
   error?: string;
 }
 
