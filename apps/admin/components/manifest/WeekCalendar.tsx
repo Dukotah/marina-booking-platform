@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { Plus } from 'lucide-react';
 import { cn } from '../../lib/cn';
 import { formatTime } from '../../lib/format';
 import { readableTextColor } from './types';
@@ -162,28 +163,50 @@ function DayColumn({
         const fg = readableTextColor(event.color);
         const muted = statusStyle(event.status).muted;
 
+        // Room for the corner "add charge" tap target only on a block tall enough that
+        // it won't cover the block's own text. A cancelled/no-show block is muted and
+        // takes no post-trip charge, so it shows the view-only block.
+        const showCharge = !muted && height >= 40;
+
         return (
-          <Link
+          <div
             key={event.orderItemId}
-            href={`/orders/${event.orderId}`}
-            title={`${event.title} · ${formatTime(event.startISO)} · ${event.subtitle}`}
-            className={cn(
-              'absolute overflow-hidden rounded-md border border-black/10 px-1.5 py-1 text-[11px] leading-tight shadow-sm transition-shadow hover:z-10 hover:shadow-md',
-              muted && 'opacity-60 saturate-50',
-            )}
+            className="group absolute"
             style={{
               top,
               height,
               left: `calc(${leftPct}% + 2px)`,
               width: `calc(${widthPct}% - 4px)`,
-              backgroundColor: event.color,
-              color: fg,
             }}
           >
-            <div className="truncate font-semibold">{formatTime(event.startISO)}</div>
-            <div className="truncate opacity-95">{event.title}</div>
-            {height > 36 ? <div className="truncate opacity-80">{event.subtitle}</div> : null}
-          </Link>
+            <Link
+              href={`/orders/${event.orderId}`}
+              title={`${event.title} · ${formatTime(event.startISO)} · ${event.subtitle}`}
+              className={cn(
+                'block h-full overflow-hidden rounded-md border border-black/10 px-1.5 py-1 text-[11px] leading-tight shadow-sm transition-shadow group-hover:z-10 group-hover:shadow-md',
+                muted && 'opacity-60 saturate-50',
+              )}
+              style={{ backgroundColor: event.color, color: fg }}
+            >
+              <div className="truncate font-semibold">{formatTime(event.startISO)}</div>
+              <div className="truncate opacity-95">{event.title}</div>
+              {height > 36 ? <div className="truncate opacity-80">{event.subtitle}</div> : null}
+            </Link>
+            {showCharge ? (
+              // One-tap post-trip charge: deep-links to the order detail with the
+              // charge panel pre-opened (#add-charge). A separate anchor, not nested
+              // inside the block link, so both are valid tap targets. Revealed on
+              // hover/focus so it never competes with the block's own text.
+              <Link
+                href={`/orders/${event.orderId}#add-charge`}
+                aria-label={`Add a charge to ${event.title}, ${formatTime(event.startISO)}`}
+                title="Add fuel / charge"
+                className="absolute right-1 top-1 z-10 inline-flex h-5 w-5 items-center justify-center rounded border border-black/10 bg-white/90 text-slate-700 opacity-0 shadow-sm transition-opacity hover:bg-white focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-sky-500 group-hover:opacity-100"
+              >
+                <Plus className="h-3 w-3" aria-hidden />
+              </Link>
+            ) : null}
+          </div>
         );
       })}
 
