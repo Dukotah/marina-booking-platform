@@ -3,6 +3,10 @@
 // "not connected" state so the UI/structure can be evaluated before infra is stood up.
 const nextConfig = {
   reactStrictMode: true,
+  // Optional build-output override so a second local server (e.g. a dev server
+  // for design review) can run alongside a production build without the two
+  // fighting over `.next`. Unset => the standard `.next`, exactly as before.
+  distDir: process.env.NEXT_DIST_DIR || '.next',
   transpilePackages: ['@marina/types', '@marina/ui', '@marina/core'],
   // Browser-side API calls are proxied by app/api/[...path]/route.ts, NOT by a
   // rewrite. A rewrite cannot attach the `x-operator-slug` header, so every proxied

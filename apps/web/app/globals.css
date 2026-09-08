@@ -27,6 +27,28 @@
   --brand-color: #0ea5e9;
   --brand-foreground: #0f172a; /* 6.44:1 on #0ea5e9 (white would be 2.77:1) */
   --brand-text: #0a77a9; /* 4.97:1 on white, 4.54:1 on slate-100 */
+
+  /*
+   * "Estate" design tokens — the semantic palette from DESIGN.md. These are the
+   * ONLY colors customer-facing chrome may use; components consume them through
+   * the Tailwind mappings in tailwind.config.ts (bg, surface, ink, muted,
+   * hairline, accent, accent-ink, success, warn, danger), never as raw hex.
+   *
+   * Deliberately independent of the white-label --brand-color above: per the
+   * 2026-09-07 decision, the operator brand color no longer paints any chrome
+   * background — it is reserved for the favicon/logo area. Multi-tenant theming
+   * can re-enter later by re-pointing these tokens.
+   */
+  --bg: #fbf9f4; /* page background — warm cream, never gray-50 */
+  --surface: #fffefb; /* cards, board, inputs */
+  --ink: #2b241c; /* espresso — primary text, primary buttons */
+  --muted: #8a7f6e; /* linen — secondary text, meta */
+  --hairline: rgba(43, 36, 28, 0.12); /* all borders, 1px, one token */
+  --accent: #5f7a5a; /* sage — the ONE live action per view */
+  --accent-ink: #47603f; /* sage-deep — text links, small accent text */
+  --success: #3e7c4f;
+  --warn: #8f6a0e;
+  --danger: #a93b2a;
 }
 
 /*
@@ -145,7 +167,12 @@ body {
    * on the brand itself would be near-invisible (see SiteHeader).
    */
   :focus-visible {
-    outline: 2px solid var(--brand-text, var(--brand-color));
+    /*
+     * Estate: the focus ring is chrome, and chrome no longer takes the operator
+     * brand color — sage-deep is AA-contrast on the cream page by construction.
+     * Component-level focus-visible:ring-* utilities still win over this.
+     */
+    outline: 2px solid var(--accent-ink, #47603f);
     outline-offset: 2px;
   }
 }
@@ -206,6 +233,15 @@ body {
   /* Sticky mobile CTA clearance on notched phones. */
   .safe-bottom {
     padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  /*
+   * Estate rule: every number a guest decides with (times, prices, seats,
+   * confirmation codes) is tabular so columns of figures align and nothing
+   * shifts as values tick over. Apply to the SPAN holding the number.
+   */
+  .tnum {
+    font-variant-numeric: tabular-nums;
   }
 }
 

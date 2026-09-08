@@ -1,6 +1,26 @@
 import type { Metadata } from 'next';
+import { Figtree, Marcellus } from 'next/font/google';
 import './globals.css';
 import { getBrandAsync } from '@/lib/brand';
+
+/*
+ * "Estate" type pairing (DESIGN.md): Marcellus for display (one weight, 400),
+ * Figtree for UI/body. Self-hosted via next/font (never a <link> tag), exposed
+ * as CSS variables consumed by Tailwind's `font-display` / `font-sans`.
+ */
+const display = Marcellus({
+  subsets: ['latin'],
+  weight: '400',
+  display: 'swap',
+  variable: '--font-display',
+});
+
+const ui = Figtree({
+  subsets: ['latin'],
+  weight: ['400', '500', '600'],
+  display: 'swap',
+  variable: '--font-ui',
+});
 
 // White-label the browser title/description from the resolved tenant brand,
 // so the tab reads as the operator (e.g. "Lake Sonoma Marina"), never a
@@ -25,8 +45,9 @@ export async function generateMetadata(): Promise<Metadata> {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
-      <body className="min-h-screen bg-slate-50 text-slate-900 antialiased">{children}</body>
+    <html lang="en" className={`${display.variable} ${ui.variable}`}>
+      {/* Estate page canvas: warm cream, espresso ink, Figtree UI face. */}
+      <body className="min-h-screen bg-bg font-sans text-ink antialiased">{children}</body>
     </html>
   );
 }

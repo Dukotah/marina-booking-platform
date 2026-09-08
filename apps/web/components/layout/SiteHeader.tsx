@@ -1,28 +1,23 @@
 /**
- * White-label site header for the customer booking portal.
+ * White-label site header for the customer booking portal — "Estate" chrome.
  *
- * Renders the OPERATOR's brand only (logo or name + tagline) — never any
- * platform branding. Brand data comes from getBrandAsync() (the operator record,
- * env/base fallback); the brand color drives
- * the logo accent and CTA via the `--brand-color` variable, which this header
- * also sets locally so it works even if a parent layout hasn't set it. The CTA
- * label color comes from lib/brand's onBrandForeground() rather than a
- * hardcoded white, because the brand is operator-chosen (see that file).
+ * A calm masthead: the operator's name set in Marcellus over the warm cream
+ * page, a single hairline underneath, quiet Figtree navigation. No colored
+ * band, no blur, no shadow — typography and air do the work (DESIGN.md).
+ *
+ * Brand data still comes from getBrandAsync() (operator record, env/base
+ * fallback) and the header still publishes the `--brand-*` variables for
+ * descendants, but per the 2026-09-07 Estate decision the operator BRAND COLOR
+ * NO LONGER PAINTS ANY CHROME — no header band, no CTA fill, no logo swatch.
+ * It is reserved for the favicon/logo area; a configured logo image is shown
+ * as-is. Multi-tenant theming can re-enter later via the Estate tokens.
  *
  * Server component (no client interactivity needed): the mobile experience uses
  * a CSS-only collapse so it stays fast and avoids hydration cost.
  */
 import Link from 'next/link';
-import { getBrandAsync, brandStyle, onBrandForeground, type Brand } from '@/lib/brand';
+import { getBrandAsync, brandStyle, type Brand } from '@/lib/brand';
 import { DEMO_MODE } from '@/lib/demo/config';
-
-/**
- * Focus ring for controls painted in the brand color. The global
- * `:focus-visible` outline is a brand-derived color, which all but disappears
- * on a brand-filled button, so brand CTAs opt out and ring in slate-900.
- */
-const BRAND_CTA_FOCUS =
-  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-900 focus-visible:ring-offset-2';
 
 /** Slim notice shown only in DEMO_MODE so viewers know payments are simulated. */
 function DemoBanner() {
@@ -32,10 +27,10 @@ function DemoBanner() {
     // list and is not orphaned content sitting outside every region.
     <aside
       aria-label="Demo mode notice"
-      className="w-full bg-slate-900 px-4 py-1.5 text-center text-xs font-medium text-slate-100"
+      className="w-full bg-ink px-4 py-1.5 text-center text-[13px] font-medium text-bg"
     >
       Interactive demo — bookings are simulated, no real payments are taken. Try
-      promo code <span className="font-semibold text-white">SONOMA10</span> at checkout.
+      promo code <span className="font-semibold">SONOMA10</span> at checkout.
     </aside>
   );
 }
@@ -63,26 +58,16 @@ function BrandMark({ brand }: { brand: Brand }) {
       />
     );
   }
+  // Estate wordmark: Marcellus, gently letterspaced — the brand IS the type.
   return (
-    <span className="flex items-center gap-2">
-      <span
-        aria-hidden
-        className="inline-block h-7 w-7 rounded-lg"
-        style={{ backgroundColor: 'var(--brand-color)' }}
-      />
-      <span className="flex flex-col leading-tight">
-        <span className="text-lg font-bold tracking-tight text-slate-900">{brand.name}</span>
-        {brand.tagline && (
-          <span className="text-xs font-medium text-slate-500">{brand.tagline}</span>
-        )}
-      </span>
+    <span className="font-display text-[19px] leading-tight tracking-[0.04em] text-ink">
+      {brand.name}
     </span>
   );
 }
 
 export async function SiteHeader() {
   const brand = await getBrandAsync();
-  const ctaForeground = onBrandForeground(brand.color);
 
   return (
     <>
@@ -93,87 +78,90 @@ export async function SiteHeader() {
       */}
       <a
         href="#main-content"
-        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-slate-900 focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-white"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-ink focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-bg"
       >
         Skip to main content
       </a>
       <DemoBanner />
       <header
         style={brandStyle(brand)}
-        className="sticky top-0 z-40 w-full border-b border-slate-200 bg-white/90 backdrop-blur supports-[backdrop-filter]:bg-white/75"
+        className="sticky top-0 z-40 w-full border-b border-hairline bg-bg"
       >
-      <div className="mx-auto flex h-16 max-w-6xl items-center justify-between gap-4 px-4">
-        <Link href="/" aria-label={`${brand.name} home`} className="shrink-0 rounded-lg">
-          <BrandMark brand={brand} />
-        </Link>
-
-        {/* Desktop nav */}
-        <nav aria-label="Primary" className="hidden items-center gap-6 md:flex">
-          {NAV.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className="rounded text-sm font-medium text-slate-600 transition-colors hover:text-slate-900"
-            >
-              {item.label}
-            </Link>
-          ))}
-          <Link
-            href="/"
-            className={`rounded-lg px-4 py-2 text-sm font-semibold shadow-sm transition hover:opacity-90 ${BRAND_CTA_FOCUS}`}
-            style={{ backgroundColor: 'var(--brand-color)', color: ctaForeground }}
-          >
-            Book now
+        <div className="mx-auto flex h-16 max-w-[1120px] items-center justify-between gap-4 px-6">
+          <Link href="/" aria-label={`${brand.name} home`} className="shrink-0 rounded-lg">
+            <BrandMark brand={brand} />
           </Link>
-        </nav>
 
-        {/* Mobile nav — CSS-only disclosure (no JS). <summary> already exposes
-            its expanded/collapsed state to assistive tech, so no aria-expanded. */}
-        <details className="relative md:hidden">
-          <summary
-            className="flex h-10 w-10 cursor-pointer list-none items-center justify-center rounded-lg border border-slate-200 text-slate-700 [&::-webkit-details-marker]:hidden"
-            aria-label="Menu"
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="20"
-              height="20"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden
-            >
-              <line x1="4" y1="6" x2="20" y2="6" />
-              <line x1="4" y1="12" x2="20" y2="12" />
-              <line x1="4" y1="18" x2="20" y2="18" />
-            </svg>
-          </summary>
-          <nav
-            aria-label="Mobile"
-            className="absolute right-0 mt-2 w-48 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-lg"
-          >
+          {/* Desktop nav — quiet Figtree links; the header carries no colored CTA
+              because the ONE sage action per view belongs to the content (Reserve). */}
+          <nav aria-label="Primary" className="hidden items-center gap-8 md:flex">
             {NAV.map((item) => (
               <Link
                 key={item.href}
                 href={item.href}
-                className="block px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
+                className="rounded text-sm font-medium text-muted transition-colors hover:text-ink"
               >
                 {item.label}
               </Link>
             ))}
-            <Link
-              href="/"
-              className={`mx-2 mt-1 block rounded-lg px-3 py-2 text-center text-sm font-semibold ${BRAND_CTA_FOCUS}`}
-              style={{ backgroundColor: 'var(--brand-color)', color: ctaForeground }}
-            >
-              Book now
-            </Link>
+            {brand.phone && (
+              <a
+                href={`tel:${brand.phone.replace(/[^\d+]/g, '')}`}
+                className="rounded-lg border border-hairline px-4 py-2 text-sm font-medium text-ink transition-colors hover:bg-surface"
+              >
+                <span className="tnum">{brand.phone}</span>
+              </a>
+            )}
           </nav>
-        </details>
-      </div>
+
+          {/* Mobile nav — CSS-only disclosure (no JS). <summary> already exposes
+              its expanded/collapsed state to assistive tech, so no aria-expanded. */}
+          <details className="relative md:hidden">
+            <summary
+              className="flex h-10 w-10 cursor-pointer list-none items-center justify-center rounded-lg border border-hairline text-ink [&::-webkit-details-marker]:hidden"
+              aria-label="Menu"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden
+              >
+                <line x1="4" y1="6" x2="20" y2="6" />
+                <line x1="4" y1="12" x2="20" y2="12" />
+                <line x1="4" y1="18" x2="20" y2="18" />
+              </svg>
+            </summary>
+            <nav
+              aria-label="Mobile"
+              className="absolute right-0 mt-2 w-48 overflow-hidden rounded-sheet border border-hairline bg-surface py-1 shadow-overlay"
+            >
+              {NAV.map((item) => (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className="block px-4 py-2.5 text-sm font-medium text-ink transition-colors hover:bg-bg"
+                >
+                  {item.label}
+                </Link>
+              ))}
+              {brand.phone && (
+                <a
+                  href={`tel:${brand.phone.replace(/[^\d+]/g, '')}`}
+                  className="block border-t border-hairline px-4 py-2.5 text-sm font-medium text-muted"
+                >
+                  Call <span className="tnum">{brand.phone}</span>
+                </a>
+              )}
+            </nav>
+          </details>
+        </div>
       </header>
     </>
   );

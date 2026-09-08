@@ -42,7 +42,7 @@ const PRICE_OPTIONS = [
 ] as const;
 
 const SELECT_CLASS =
-  'h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 shadow-sm outline-none transition focus:border-slate-300 focus:ring-2 focus:ring-[var(--brand-color)]';
+  'h-10 rounded-lg border border-hairline bg-surface px-3 text-sm font-medium text-ink outline-none transition focus:ring-2 focus:ring-accent-ink';
 
 export function CatalogBrowser({ activities, contactPhone }: CatalogBrowserProps) {
   const [query, setQuery] = useState('');
@@ -95,8 +95,8 @@ export function CatalogBrowser({ activities, contactPhone }: CatalogBrowserProps
 
   return (
     <div>
-      {/* Toolbar */}
-      <div className="sticky top-16 z-30 -mx-4 mb-8 border-b border-slate-200 bg-slate-50/90 px-4 py-4 backdrop-blur">
+      {/* Toolbar — Estate: no sticky blur band; a quiet row of controls. */}
+      <div className="mb-8">
         <div className="flex flex-col gap-3">
           {/* Search */}
           <div className="relative">
@@ -111,7 +111,7 @@ export function CatalogBrowser({ activities, contactPhone }: CatalogBrowserProps
               strokeLinecap="round"
               strokeLinejoin="round"
               aria-hidden
-              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted"
             >
               <circle cx="11" cy="11" r="8" />
               <line x1="21" y1="21" x2="16.65" y2="16.65" />
@@ -122,7 +122,7 @@ export function CatalogBrowser({ activities, contactPhone }: CatalogBrowserProps
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search activities..."
               aria-label="Search activities"
-              className="h-11 w-full rounded-xl border border-slate-200 bg-white pl-10 pr-4 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-slate-300 focus:ring-2 focus:ring-[var(--brand-color)]"
+              className="h-11 w-full rounded-lg border border-hairline bg-surface pl-10 pr-4 text-sm text-ink outline-none transition placeholder:text-muted focus:ring-2 focus:ring-accent-ink"
             />
           </div>
 
@@ -177,15 +177,16 @@ export function CatalogBrowser({ activities, contactPhone }: CatalogBrowserProps
               ))}
             </select>
 
-            <span className="ml-auto text-sm text-slate-500">
-              {filtered.length} {filtered.length === 1 ? 'result' : 'results'}
+            <span className="ml-auto text-sm text-muted">
+              <span className="tnum">{filtered.length}</span>{' '}
+              {filtered.length === 1 ? 'result' : 'results'}
             </span>
 
             {isFiltering && (
               <button
                 type="button"
                 onClick={reset}
-                className="rounded-lg px-3 text-sm font-medium text-slate-500 underline-offset-2 transition hover:text-slate-900 hover:underline"
+                className="rounded-lg px-3 text-sm font-medium text-accent-ink underline-offset-2 transition hover:underline"
               >
                 Clear
               </button>
@@ -196,33 +197,31 @@ export function CatalogBrowser({ activities, contactPhone }: CatalogBrowserProps
 
       {/* Results */}
       {filtered.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-16 text-center">
-          <p className="text-base font-semibold text-slate-900">No activities match your filters</p>
-          <p className="mx-auto mt-1 max-w-md text-sm text-slate-500">
-            Try a different search term, widen the group size, or raise the price limit.
-          </p>
+        /* Empty state, Estate style: one sentence + one action. */
+        <div className="rounded-card border border-hairline bg-surface px-6 py-16 text-center shadow-card">
+          <p className="font-display text-[19px] text-ink">Nothing matches those filters.</p>
           <button
             type="button"
             onClick={reset}
-            className="mt-5 inline-flex rounded-lg px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:opacity-90"
-            style={{ backgroundColor: 'var(--brand-color)' }}
+            className="mt-4 inline-flex rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-bg transition hover:opacity-90"
           >
             Clear filters
           </button>
         </div>
       ) : (
-        <div className="space-y-12">
+        <div className="space-y-16">
           {grouped.map((group) => (
             <section key={group.category}>
-              <div className="mb-4 flex items-baseline justify-between">
-                <h2 className="text-xl font-bold tracking-tight text-slate-900">
+              <div className="mb-6 flex items-baseline justify-between">
+                <h2 className="font-display text-[22px] tracking-[0.02em] text-ink">
                   {categoryLabel(group.category)}
                 </h2>
-                <span className="text-sm text-slate-400">
-                  {group.items.length} {group.items.length === 1 ? 'option' : 'options'}
+                <span className="text-sm text-muted">
+                  <span className="tnum">{group.items.length}</span>{' '}
+                  {group.items.length === 1 ? 'option' : 'options'}
                 </span>
               </div>
-              <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
                 {group.items.map((activity) => (
                   <ActivityCard key={activity.id} activity={activity} contactPhone={contactPhone} />
                 ))}

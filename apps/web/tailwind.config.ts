@@ -19,7 +19,47 @@ const config: Config = {
   ],
   theme: {
     extend: {
+      /*
+       * "Estate" type stack (DESIGN.md). The font families are published as CSS
+       * variables by next/font in app/layout.tsx; `sans` is overridden so the
+       * entire app inherits Figtree without per-component wiring, and
+       * `font-display` opts headings into Marcellus.
+       */
+      fontFamily: {
+        sans: ['var(--font-ui)', 'system-ui', 'sans-serif'],
+        display: ['var(--font-display)', 'Georgia', 'serif'],
+      },
+      /*
+       * Estate depth: cards get exactly one soft shadow + a hairline border;
+       * overlays/modals get the two-layer overlay shadow. Nothing else casts.
+       */
+      boxShadow: {
+        card: '0 2px 14px rgba(43,36,28,.05)',
+        overlay: '0 4px 12px rgba(43,36,28,.10), 0 12px 32px rgba(43,36,28,.12)',
+      },
+      /* Estate radii: buttons/inputs use rounded-lg (8); cards/photos 14; sheets 16. */
+      borderRadius: {
+        card: '14px',
+        sheet: '16px',
+      },
       colors: {
+        /*
+         * Estate semantic tokens (DESIGN.md) — resolved from the CSS variables
+         * in globals.css. Components use THESE (bg-surface, text-ink,
+         * border-hairline, bg-accent, text-accent-ink…), never raw hex.
+         */
+        bg: 'var(--bg)',
+        surface: 'var(--surface)',
+        ink: 'var(--ink)',
+        muted: 'var(--muted)',
+        hairline: 'var(--hairline)',
+        accent: {
+          DEFAULT: 'var(--accent)',
+          ink: 'var(--accent-ink)',
+        },
+        success: 'var(--success)',
+        warn: 'var(--warn)',
+        danger: 'var(--danger)',
         // White-label brand color is injected per-tenant via CSS variable.
         // Safe as a fill (bg-/border-/ring-); for brand-colored TEXT use the
         // `.text-brand` override in globals.css, which resolves to the
