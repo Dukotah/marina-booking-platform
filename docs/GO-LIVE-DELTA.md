@@ -30,6 +30,16 @@ waiver legal review, etc.).
    STRIPE_WEBHOOK_SECRET="whsec_…"
    NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY="pk_test_…"
    ```
+   The API serves the publishable key to the checkout via `GET
+   /api/payments/config`, so only the API deployment strictly needs it; the web
+   env copy is a fallback. Alternative to env keys entirely: enter the keys in
+   the admin **Settings → Integrations → Stripe** record (fields
+   `secret_key` / `publishable_key` / `webhook_secret`) — per-operator, no
+   redeploy. Provider resolution order and details: `docs/PAYMENTS.md`.
+
+   **If testing from a dev machine:** also set `SANDBOX=cloud` on the API — in
+   any non-production run the local payment simulator otherwise supersedes real
+   Stripe keys by design.
 5. Switch payment mode off of reserve:
    ```
    # Remove or change these in .env:
@@ -43,11 +53,13 @@ waiver legal review, etc.).
 6. Verify: book an activity, pay with Stripe test card `4242 4242 4242 4242`, any
    future expiry, any CVC. Order should complete and appear as `succeeded` in the
    Stripe test dashboard.
-7. **3DS follow-up (not yet coded):** Cards requiring 3D Secure (e.g.
-   `4000 0027 6000 3184`) currently decline rather than redirect to the bank
-   challenge screen. A non-`succeeded` PaymentIntent is treated as a decline.
-   This must be wired before going live with real keys if the marina expects
-   international cards. Track as a code task separate from key wiring.
+7. **3DS is wired (2026-09):** cards requiring 3D Secure (e.g.
+   `4000 0027 6000 3184`) now surface the bank challenge dialog instead of a
+   decline — the charge answers `requiresAction` with the intent id + client
+   secret, Stripe.js runs the issuer challenge, and `/api/payments/confirm`
+   settles it (see `docs/PAYMENTS.md` §6). Verify it as part of step 6: the
+   3DS test card should show "Your bank needs to confirm this payment", then
+   complete and appear as `succeeded` in the Stripe test dashboard.
 
 **Rollback:** set `PAYMENT_MODE=reserve`, `DEV_FAKE_PAYMENTS=true`,
 `NEXT_PUBLIC_DEV_FAKE_PAYMENTS=true` — back to "pay at marina" in seconds.
