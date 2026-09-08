@@ -12,6 +12,7 @@ understand *why*, not just *what*.
 | 3 | [`docs/DECISIONS.md`](docs/DECISIONS.md) | Append-only log of every significant decision and its rationale |
 | 4 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | Phases + a live status board of what's done / in progress / next |
 | 5 | [`PRODUCT_REQUIREMENTS.md`](PRODUCT_REQUIREMENTS.md) | The full PRD — competitive analysis, features, seed data |
+| 6 | [`DESIGN.md`](DESIGN.md) | The design system ("Estate") — read before ANY visual/UI change; tokens, type scale, hard bans, and the AI prompting protocol live there |
 
 ## Working rules for agents
 
