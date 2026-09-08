@@ -111,6 +111,36 @@ export {
   type LocationRollUp,
 } from './reports.js';
 
+// Itemized sales + merchandise report math (line-level views that reconcile
+// exactly with the order-level summaries).
+export {
+  allocateProportionally,
+  allocateLines,
+  buildItemizedSales,
+  buildItemizedDetails,
+  buildMerchandiseReport,
+  reconcileItemized,
+  chargeCategoryLabel,
+  ITEM_GROUP_LABEL,
+  type ItemizedInput,
+  type ItemizedOrderRow,
+  type ItemizedActivityLineRow,
+  type ItemizedMerchLineRow,
+  type ItemizedChargeRow,
+  type ItemGroupKey,
+  type AllocatedLine,
+  type ItemRow,
+  type ItemGroup,
+  type ItemTotals,
+  type ItemizedSales,
+  type Reconciliation,
+  type ReconciliationCheck,
+  type MerchandiseReportData,
+  type MerchandiseCategoryGroup,
+  type MerchandiseProductRow,
+  type MerchandiseVariantRow,
+} from './itemized.js';
+
 // Dependency-free QR encoder (byte mode, EC level M) + SVG renderer, used for
 // the admin waiver sign-link QR the dock crew shows to guests.
 export {
