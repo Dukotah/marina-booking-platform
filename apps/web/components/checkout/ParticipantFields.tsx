@@ -79,9 +79,9 @@ export function ParticipantFields({ count }: ParticipantFieldsProps) {
         return (
           <fieldset
             key={i}
-            className="rounded-lg border border-slate-200 p-4"
+            className="rounded-lg border border-hairline p-4"
           >
-            <legend className="px-1 text-sm font-semibold text-slate-700">
+            <legend className="px-1 text-sm font-semibold text-ink">
               {count > 1 ? `Driver ${i + 1}` : 'Driver'}
             </legend>
 
@@ -92,6 +92,7 @@ export function ParticipantFields({ count }: ParticipantFieldsProps) {
                 </Label>
                 <Input
                   id={nameId}
+                  className="rounded-lg border-hairline bg-surface text-ink placeholder:text-muted"
                   autoComplete="name"
                   aria-invalid={nameError ? true : undefined}
                   aria-describedby={nameError ? `${nameId}-error` : undefined}
@@ -109,6 +110,7 @@ export function ParticipantFields({ count }: ParticipantFieldsProps) {
                 </Label>
                 <Input
                   id={licenseId}
+                  className="rounded-lg border-hairline bg-surface text-ink placeholder:text-muted"
                   aria-invalid={licenseError ? true : undefined}
                   aria-describedby={licenseError ? `${licenseId}-error` : undefined}
                   {...register(`participants.${i}.license` as const, {
@@ -122,6 +124,7 @@ export function ParticipantFields({ count }: ParticipantFieldsProps) {
                 <Label htmlFor={dobId}>Date of birth</Label>
                 <Input
                   id={dobId}
+                  className="tnum rounded-lg border-hairline bg-surface text-ink placeholder:text-muted"
                   type="date"
                   max={max}
                   aria-invalid={dobError ? true : undefined}
@@ -140,6 +143,7 @@ export function ParticipantFields({ count }: ParticipantFieldsProps) {
                 </Label>
                 <Select
                   id={`participant-${i}-experience`}
+                  className="rounded-lg border-hairline bg-surface text-ink placeholder:text-muted"
                   {...register(`participants.${i}.experience` as const)}
                 >
                   {EXPERIENCE_OPTIONS.map((opt) => (

@@ -55,6 +55,7 @@ export function CustomerFields() {
         </Label>
         <Input
           id="firstName"
+          className="rounded-lg border-hairline bg-surface text-ink placeholder:text-muted"
           autoComplete="given-name"
           aria-invalid={firstNameError ? true : undefined}
           aria-describedby={firstNameError ? 'firstName-error' : undefined}
@@ -72,6 +73,7 @@ export function CustomerFields() {
         </Label>
         <Input
           id="lastName"
+          className="rounded-lg border-hairline bg-surface text-ink placeholder:text-muted"
           autoComplete="family-name"
           aria-invalid={lastNameError ? true : undefined}
           aria-describedby={lastNameError ? 'lastName-error' : undefined}
@@ -89,6 +91,7 @@ export function CustomerFields() {
         </Label>
         <Input
           id="email"
+          className="rounded-lg border-hairline bg-surface text-ink placeholder:text-muted"
           type="email"
           autoComplete="email"
           inputMode="email"
@@ -103,7 +106,7 @@ export function CustomerFields() {
           })}
         />
         <DescribedFieldError id="email-error" message={emailError} />
-        <p id="email-hint" className="text-xs text-slate-500">
+        <p id="email-hint" className="text-xs text-muted">
           Your booking confirmation and receipt are sent here.
         </p>
       </div>
@@ -112,6 +115,7 @@ export function CustomerFields() {
         <Label htmlFor="phone">Phone</Label>
         <Input
           id="phone"
+          className="rounded-lg border-hairline bg-surface text-ink placeholder:text-muted"
           type="tel"
           autoComplete="tel"
           inputMode="tel"

@@ -181,17 +181,18 @@ function Section({
   const headingId = useId();
   return (
     <section aria-labelledby={headingId}>
-      <Card>
+      {/* Estate surface card: radius 14, hairline + the one soft shadow. */}
+      <Card className="rounded-card border-hairline bg-surface shadow-card">
         <CardHeader>
           {/* An <h2>, not the Card's default <h3>: the page heading is the <h1>
               and a skipped level breaks heading navigation (WCAG 1.3.1). */}
           <h2
             id={headingId}
-            className="text-lg font-semibold leading-none tracking-tight"
+            className="font-display text-[19px] leading-tight tracking-[0.02em] text-ink"
           >
             {title}
           </h2>
-          {description && <p className="text-sm text-slate-500">{description}</p>}
+          {description && <p className="text-sm text-muted">{description}</p>}
         </CardHeader>
         <CardContent>{children}</CardContent>
       </Card>
@@ -574,18 +575,18 @@ export function CheckoutClient({
               ref={focusErrorSummary}
               tabIndex={-1}
               aria-labelledby={summaryHeadingId}
-              className="mb-6 rounded-lg border border-red-300 bg-red-50 p-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-600 focus-visible:ring-offset-2"
+              className="mb-6 rounded-lg border border-danger bg-surface p-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger focus-visible:ring-offset-2"
             >
               <h2
                 id={summaryHeadingId}
-                className="flex items-center gap-2 text-sm font-semibold text-red-800"
+                className="flex items-center gap-2 text-sm font-semibold text-danger"
               >
                 <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden />
                 {summaryEntries.length === 1
                   ? 'There is 1 problem with your booking details'
                   : `There are ${summaryEntries.length} problems with your booking details`}
               </h2>
-              <ul className="mt-2 space-y-1 text-sm text-red-800">
+              <ul className="mt-2 space-y-1 text-sm text-danger">
                 {summaryEntries.map((entry) => (
                   <li key={entry.key}>
                     {entry.fieldId ? (
@@ -680,11 +681,14 @@ export function CheckoutClient({
           <div className="order-2 lg:order-2">
             <div className="space-y-4 lg:sticky lg:top-20">
               <section aria-labelledby={reservationHeadingId}>
-                <Card>
+                {/* The reservation card — the Estate signature surface on this
+                    screen: it fills in as the guest types and flips into the
+                    confirmation. */}
+                <Card className="rounded-card border-hairline bg-surface shadow-card">
                   <CardHeader>
                     <h2
                       id={reservationHeadingId}
-                      className="text-lg font-semibold leading-none tracking-tight"
+                      className="font-display text-[19px] leading-tight tracking-[0.02em] text-ink"
                     >
                       Your reservation
                     </h2>
@@ -696,7 +700,7 @@ export function CheckoutClient({
                       onQuantityChange={setQty}
                     />
 
-                    <div className="border-t border-slate-200 pt-4">
+                    <div className="border-t border-hairline pt-4">
                       <PromoField
                         activityId={selection.activityId}
                         applied={promo}
@@ -711,11 +715,11 @@ export function CheckoutClient({
                     <div
                       role="group"
                       aria-labelledby={tipHeadingId}
-                      className="border-t border-slate-200 pt-4"
+                      className="border-t border-hairline pt-4"
                     >
                       <p
                         id={tipHeadingId}
-                        className="mb-3 text-sm font-medium text-slate-700"
+                        className="mb-3 text-sm font-medium text-ink"
                       >
                         Add a tip
                       </p>
@@ -726,7 +730,7 @@ export function CheckoutClient({
                       />
                     </div>
 
-                    <div className="border-t border-slate-200 pt-4">
+                    <div className="border-t border-hairline pt-4">
                       <PriceBreakdown
                         unitPriceCents={selection.rate.priceCents}
                         quantity={quantity}
@@ -747,7 +751,7 @@ export function CheckoutClient({
                   // renders one), and "the payment failed" becomes indistinguishable
                   // from "the form is incomplete" to a screen reader and to a test.
                   aria-label="Payment problem"
-                  className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700"
+                  className="flex items-start gap-2 rounded-lg border border-danger bg-surface p-3 text-sm text-danger"
                 >
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
                   <span>{submitError.message}</span>
@@ -758,7 +762,7 @@ export function CheckoutClient({
                 type="submit"
                 variant="brand"
                 size="lg"
-                className="w-full"
+                className="w-full rounded-lg font-semibold"
                 loading={submitting}
                 // Reserve mode never needs online payment configured — it takes no
                 // card here — so the config guard only gates the card path. The
@@ -786,7 +790,7 @@ export function CheckoutClient({
                   : ''}
               </p>
 
-              <p className="text-center text-xs text-slate-500">
+              <p className="text-center text-xs text-muted">
                 {reserveMode
                   ? 'By reserving you agree to the terms and any applicable cancellation policy.'
                   : 'By completing this booking you agree to the terms and any applicable cancellation policy.'}
@@ -805,14 +809,14 @@ export function CheckoutClient({
         */}
         <div
           aria-hidden
-          className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white/95 px-4 py-3 shadow-[0_-1px_8px_rgba(15,23,42,0.06)] backdrop-blur supports-[backdrop-filter]:bg-white/80 lg:hidden"
+          className="fixed inset-x-0 bottom-0 z-30 border-t border-hairline bg-surface px-4 py-3 shadow-[0_-2px_14px_rgba(43,36,28,0.06)] lg:hidden"
           style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}
         >
           <Button
             type="submit"
             variant="brand"
             size="lg"
-            className="w-full"
+            className="w-full rounded-lg font-semibold"
             loading={submitting}
             // Same in-flight double-submit guard as the in-flow button above:
             // this mobile bar submits the same form, so it must lock the moment a
@@ -823,7 +827,7 @@ export function CheckoutClient({
             <span className="flex w-full items-center justify-between gap-3">
               <span>{submitLabel}</span>
               {!submitting && (
-                <span className="font-semibold tabular-nums">
+                <span className="tnum font-semibold">
                   {formatUSD(reserveDueCents)}
                 </span>
               )}

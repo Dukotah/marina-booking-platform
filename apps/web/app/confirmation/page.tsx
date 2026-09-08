@@ -61,11 +61,13 @@ const STATUS_LABELS: Record<OrderSummary['status'], string> = {
   NO_SHOW: 'No show',
 };
 
+// Estate: status colors appear only on status — text tokens over the quiet
+// surface, framed by the one hairline. No tinted pill backgrounds.
 const STATUS_STYLES: Record<OrderSummary['status'], string> = {
-  UPCOMING: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20',
-  COMPLETED: 'bg-slate-100 text-slate-600 ring-slate-500/20',
-  CANCELLED: 'bg-red-50 text-red-700 ring-red-600/20',
-  NO_SHOW: 'bg-amber-50 text-amber-700 ring-amber-600/20',
+  UPCOMING: 'text-success ring-hairline',
+  COMPLETED: 'text-muted ring-hairline',
+  CANCELLED: 'text-danger ring-hairline',
+  NO_SHOW: 'text-warn ring-hairline',
 };
 
 async function Shell({ children }: { children: React.ReactNode }) {
@@ -147,14 +149,11 @@ export default async function ConfirmationPage({
   return (
     <Shell>
       <div className="mx-auto max-w-3xl px-4 py-10">
-        {/* Success header */}
+        {/* Success header — the tick is drawn in the success token (Estate:
+            confirmed state), never the operator brand color (chrome decision). */}
         <div className="text-center">
           <div
-            // text-on-brand, not text-white: the tick is drawn in currentColor
-            // on an operator-chosen fill, and white on the default brand is
-            // 2.77:1. The derived foreground is legible on any brand. (1.4.11)
-            className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-full text-on-brand shadow-sm"
-            style={{ backgroundColor: 'var(--brand-color)' }}
+            className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-full bg-success text-white"
             aria-hidden
           >
             <svg
@@ -170,10 +169,10 @@ export default async function ConfirmationPage({
               <path d="M20 6 9 17l-5-5" />
             </svg>
           </div>
-          <h1 className="text-3xl font-bold tracking-tight text-slate-900">
-            {isCancelled ? 'Booking cancelled' : "You're all set!"}
+          <h1 className="font-display text-[28px] leading-[1.2] tracking-[0.02em] text-ink sm:text-4xl">
+            {isCancelled ? 'Booking cancelled' : "You're all set"}
           </h1>
-          <p className="mt-2 text-slate-600">
+          <p className="mx-auto mt-3 max-w-xl leading-[1.55] text-muted">
             {isCancelled
               ? 'This reservation has been cancelled. Below is a record of the booking.'
               : isReserveOnly
@@ -183,24 +182,24 @@ export default async function ConfirmationPage({
         </div>
 
         {/* Order number + status + QR */}
-        <section className="mt-8 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <section className="mt-8 rounded-card border border-hairline bg-surface p-6 shadow-card">
           <div className="flex flex-col items-center gap-6 sm:flex-row sm:items-center sm:justify-between">
             <div className="text-center sm:text-left">
-              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+              <p className="text-[13px] font-medium uppercase tracking-wide text-muted">
                 Order number
               </p>
-              <p className="mt-1 font-mono text-2xl font-bold tracking-tight text-slate-900">
+              <p className="tnum mt-1 text-2xl font-semibold tracking-[0.04em] text-ink">
                 {order.orderNumber}
               </p>
               <span
-                className={`mt-3 inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset ${STATUS_STYLES[order.status]}`}
+                className={`mt-3 inline-flex items-center rounded-lg bg-bg px-2.5 py-1 text-[13px] font-medium ring-1 ring-inset ${STATUS_STYLES[order.status]}`}
               >
                 {STATUS_LABELS[order.status]}
               </span>
             </div>
             <div className="flex flex-col items-center gap-2">
               <QrPlaceholder value={order.orderNumber} />
-              <p className="text-xs text-slate-400">Show this at check-in</p>
+              <p className="text-[13px] text-muted">Show this at check-in</p>
             </div>
           </div>
         </section>
@@ -209,11 +208,11 @@ export default async function ConfirmationPage({
             (the inline checkout waiver usually covers this; reserve-mode and
             phone bookings are the ones that land here unsigned). */}
         {unsignedWaiverItems.length > 0 ? (
-          <section className="mt-6 rounded-2xl border border-amber-300 bg-amber-50 p-6 shadow-sm">
-            <h2 className="text-base font-semibold text-amber-900">
+          <section className="mt-6 rounded-card border border-hairline bg-surface p-6 shadow-card">
+            <h2 className="font-display text-[19px] tracking-[0.02em] text-ink">
               One more step: sign your waiver
             </h2>
-            <p className="mt-1 text-sm text-amber-800">
+            <p className="mt-1 text-sm text-muted">
               Every rental needs a signed liability waiver before you get on the
               water. Sign now on your phone and skip the paperwork at check-in.
             </p>
@@ -222,8 +221,7 @@ export default async function ConfirmationPage({
                 <li key={item.id}>
                   <a
                     href={`/waiver/${item.id}`}
-                    className="inline-flex min-h-11 w-full items-center justify-center rounded-lg px-4 py-2.5 text-sm font-semibold text-on-brand shadow-sm hover:opacity-90 sm:w-auto"
-                    style={{ backgroundColor: 'var(--brand-color)' }}
+                    className="inline-flex min-h-11 w-full items-center justify-center rounded-lg bg-accent px-4 py-2.5 text-[15px] font-semibold text-white transition-opacity hover:opacity-90 sm:w-auto"
                   >
                     Sign waiver
                     {unsignedWaiverItems.length > 1 ? ` — ${item.activityName}` : ' now'}
@@ -235,34 +233,34 @@ export default async function ConfirmationPage({
         ) : null}
 
         {/* Reservation details */}
-        <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <section className="mt-6 rounded-card border border-hairline bg-surface p-6 shadow-card">
           <div className="flex items-center justify-between">
-            <h2 className="text-base font-semibold text-slate-900">Reservation</h2>
-            <span className="text-sm text-slate-500">
-              {guests} {guests === 1 ? 'guest' : 'guests'} in party
+            <h2 className="font-display text-[19px] tracking-[0.02em] text-ink">Reservation</h2>
+            <span className="text-sm text-muted">
+              <span className="tnum">{guests}</span> {guests === 1 ? 'guest' : 'guests'} in party
             </span>
           </div>
 
-          <ul className="mt-4 divide-y divide-slate-100">
+          <ul className="mt-4 divide-y divide-hairline">
             {order.items.map((item) => (
               <li key={item.id} className="flex items-start justify-between gap-4 py-4">
                 <div>
-                  <p className="font-medium text-slate-900">{item.activityName}</p>
-                  <p className="mt-0.5 text-sm text-slate-500">{item.rateName}</p>
-                  <p className="mt-2 text-sm text-slate-700">
+                  <p className="font-medium text-ink">{item.activityName}</p>
+                  <p className="mt-0.5 text-sm text-muted">{item.rateName}</p>
+                  <p className="tnum mt-2 text-sm text-ink">
                     {formatLongDate(item.datetime)}
                   </p>
-                  <p className="text-sm text-slate-700">{formatTime(item.datetime)}</p>
+                  <p className="tnum text-sm text-ink">{formatTime(item.datetime)}</p>
                 </div>
-                <div className="shrink-0 text-right text-sm text-slate-500">
+                <div className="tnum shrink-0 text-right text-sm text-muted">
                   {item.quantity} {item.quantity === 1 ? 'guest' : 'guests'}
                 </div>
               </li>
             ))}
           </ul>
 
-          <div className="mt-2 border-t border-slate-200 pt-4 text-sm text-slate-600">
-            <span className="font-medium text-slate-700">Reserved for </span>
+          <div className="mt-2 border-t border-hairline pt-4 text-sm text-muted">
+            <span className="font-medium text-ink">Reserved for </span>
             {order.customerName}
           </div>
 
@@ -278,8 +276,8 @@ export default async function ConfirmationPage({
         </section>
 
         {/* Price breakdown */}
-        <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h2 className="mb-4 text-base font-semibold text-slate-900">
+        <section className="mt-6 rounded-card border border-hairline bg-surface p-6 shadow-card">
+          <h2 className="mb-4 font-display text-[19px] tracking-[0.02em] text-ink">
             Payment summary
           </h2>
           <PriceBreakdown order={order} />
@@ -291,14 +289,11 @@ export default async function ConfirmationPage({
           <CancellationPolicy brandName={brand.name} />
         </div>
 
-        <p className="mt-8 text-center text-sm text-slate-500">
+        <p className="mt-8 text-center text-sm text-muted">
           Need to make a change?{' '}
           <a
             href="/account"
-            // text-brand resolves to the contrast-corrected --brand-text. The
-            // raw brand as 14px link text is 2.31:1 on white with the shipped
-            // default, and an inline style would out-rank the correction. (1.4.3)
-            className="font-medium text-brand underline-offset-2 hover:underline"
+            className="font-medium text-accent-ink underline-offset-2 hover:underline"
           >
             Look up your booking
           </a>

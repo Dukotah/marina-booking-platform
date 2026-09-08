@@ -60,16 +60,16 @@ export function CheckInInstructions({
   balanceDueLabel?: string;
 }) {
   return (
-    <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-      <div className="mb-3 flex items-center gap-2 text-slate-900">
-        <span style={{ color: 'var(--brand-color)' }}>
+    <section className="rounded-card border border-hairline bg-surface p-6 shadow-card">
+      <div className="mb-3 flex items-center gap-2 text-ink">
+        <span className="text-accent-ink">
           <PanelIcon kind="checkin" />
         </span>
-        <h2 className="text-base font-semibold">Check-in instructions</h2>
+        <h2 className="font-display text-[19px] tracking-[0.02em]">Check-in instructions</h2>
       </div>
-      <ul className="space-y-2 text-sm text-slate-600">
+      <ul className="space-y-2 text-sm leading-[1.55] text-muted">
         <li className="flex gap-2">
-          <span aria-hidden className="text-slate-400">
+          <span aria-hidden className="text-muted">
             •
           </span>
           Arrive 15 minutes before your start time so the {brandName} team can get
@@ -77,7 +77,7 @@ export function CheckInInstructions({
         </li>
         {balanceDueLabel && (
           <li className="flex gap-2">
-            <span aria-hidden className="text-slate-400">
+            <span aria-hidden className="text-muted">
               •
             </span>
             Bring {balanceDueLabel} to pay at the marina — cash and card are
@@ -85,21 +85,21 @@ export function CheckInInstructions({
           </li>
         )}
         <li className="flex gap-2">
-          <span aria-hidden className="text-slate-400">
+          <span aria-hidden className="text-muted">
             •
           </span>
           Bring a photo ID for the reservation holder and have your order number or
           this confirmation ready.
         </li>
         <li className="flex gap-2">
-          <span aria-hidden className="text-slate-400">
+          <span aria-hidden className="text-muted">
             •
           </span>
           Show the code at the top of this page when you arrive — the staff can scan
           or look up your order number directly.
         </li>
         <li className="flex gap-2">
-          <span aria-hidden className="text-slate-400">
+          <span aria-hidden className="text-muted">
             •
           </span>
           All guests in your party should be present at check-in to complete any
@@ -112,14 +112,14 @@ export function CheckInInstructions({
 
 export function CancellationPolicy({ brandName }: { brandName: string }) {
   return (
-    <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-      <div className="mb-3 flex items-center gap-2 text-slate-900">
-        <span className="text-slate-400">
+    <section className="rounded-card border border-hairline bg-surface p-6 shadow-card">
+      <div className="mb-3 flex items-center gap-2 text-ink">
+        <span className="text-muted">
           <PanelIcon kind="policy" />
         </span>
-        <h2 className="text-base font-semibold">Cancellation policy</h2>
+        <h2 className="font-display text-[19px] tracking-[0.02em]">Cancellation policy</h2>
       </div>
-      <p className="text-sm text-slate-600">
+      <p className="text-sm leading-[1.55] text-muted">
         Plans change — we get it. You can cancel or reschedule your reservation up
         to 24 hours before your start time for a full refund. Cancellations made
         within 24 hours of the start time may not be eligible for a refund. To make

@@ -91,11 +91,11 @@ export function QrPlaceholder({
       viewBox={`0 0 ${size} ${size}`}
       role="img"
       aria-label={`Check-in code for order ${value}`}
-      className="rounded-lg bg-white"
+      className="rounded-lg border border-hairline bg-surface"
       shapeRendering="crispEdges"
     >
-      <rect x={0} y={0} width={size} height={size} fill="#ffffff" />
-      <g fill="#0f172a">{rects}</g>
+      <rect x={0} y={0} width={size} height={size} fill="#FFFEFB" />
+      <g fill="#2B241C">{rects}</g>
     </svg>
   );
 }

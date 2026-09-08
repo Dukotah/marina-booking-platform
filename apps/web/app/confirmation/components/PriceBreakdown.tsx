@@ -22,8 +22,8 @@ function Row({
 }) {
   return (
     <div className="flex items-center justify-between text-sm">
-      <span className={muted ? 'text-slate-500' : 'text-slate-700'}>{label}</span>
-      <span className={`tabular-nums ${muted ? 'text-slate-500' : 'text-slate-900'}`}>
+      <span className={muted ? 'text-muted' : 'text-ink'}>{label}</span>
+      <span className={`tnum ${muted ? 'text-muted' : 'text-ink'}`}>
         {negative ? `−${formatUSD(cents)}` : formatUSD(cents)}
       </span>
     </div>
@@ -51,51 +51,51 @@ export function PriceBreakdown({ order }: { order: OrderSummary }) {
       )}
       {order.tipCents > 0 && <Row label="Tip" cents={order.tipCents} muted />}
 
-      <div className="border-t border-slate-200 pt-3">
+      <div className="border-t border-hairline pt-3">
         <div className="flex items-center justify-between">
-          <span className="text-base font-semibold text-slate-900">Total</span>
-          <span className="text-base font-bold tabular-nums text-slate-900">
+          <span className="text-base font-semibold text-ink">Total</span>
+          <span className="tnum text-base font-semibold text-ink">
             {formatUSD(order.totalCents)}
           </span>
         </div>
       </div>
 
       {isDeposit && (
-        <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800">
+        <p className="rounded-lg border border-hairline bg-bg px-3 py-2 text-sm font-medium text-warn">
           Deposit taken. Pay {formatUSD(order.amountPaidCents)} now,{' '}
           {formatUSD(order.balanceDueCents)} due at check-in.
         </p>
       )}
 
       {isReserveOnly ? (
-        <div className="space-y-2 border-t border-slate-200 pt-3">
-          <div className="flex items-center justify-between rounded-lg bg-amber-50 px-3 py-2">
-            <span className="text-sm font-medium text-amber-800">
+        <div className="space-y-2 border-t border-hairline pt-3">
+          <div className="flex items-center justify-between rounded-lg border border-hairline bg-bg px-3 py-2">
+            <span className="text-sm font-medium text-warn">
               Due at the marina
             </span>
-            <span className="text-sm font-semibold tabular-nums text-amber-800">
+            <span className="tnum text-sm font-semibold text-warn">
               {formatUSD(order.balanceDueCents)}
             </span>
           </div>
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-muted">
             Your spot is reserved — nothing was charged today. Pay when you arrive.
             Cash and card are accepted at check-in.
           </p>
         </div>
       ) : (
         (order.amountPaidCents > 0 || order.balanceDueCents > 0) && (
-          <div className="space-y-2 border-t border-slate-200 pt-3">
+          <div className="space-y-2 border-t border-hairline pt-3">
             <Row label={isDeposit ? 'Deposit paid' : 'Amount paid'} cents={order.amountPaidCents} muted />
             {order.balanceDueCents > 0 ? (
               <div className="flex items-center justify-between text-sm">
-                <span className="font-medium text-amber-700">Balance due</span>
-                <span className="font-semibold tabular-nums text-amber-700">
+                <span className="font-medium text-warn">Balance due</span>
+                <span className="tnum font-semibold text-warn">
                   {formatUSD(order.balanceDueCents)}
                 </span>
               </div>
             ) : (
               fullyPaid && (
-                <p className="text-sm font-medium text-emerald-600">Paid in full</p>
+                <p className="text-sm font-medium text-success">Paid in full</p>
               )
             )}
           </div>

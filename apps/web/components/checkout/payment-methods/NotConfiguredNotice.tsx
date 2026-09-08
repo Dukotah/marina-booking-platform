@@ -10,12 +10,12 @@ import { AlertTriangle } from 'lucide-react';
 
 export function NotConfiguredNotice() {
   return (
-    <div className="rounded-lg border border-amber-300 bg-amber-50 p-4">
+    <div className="rounded-lg border border-warn bg-bg p-4">
       <div className="flex items-start gap-3">
-        <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" aria-hidden />
+        <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-warn" aria-hidden />
         <div className="space-y-1 text-sm">
-          <p className="font-semibold text-amber-900">Payments not configured</p>
-          <p className="text-amber-800">
+          <p className="font-semibold text-ink">Payments not configured</p>
+          <p className="text-muted">
             Card payments are not set up for this site yet. Add a Stripe publishable
             key to enable secure checkout. Until then, bookings cannot be paid online
             here.

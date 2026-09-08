@@ -27,22 +27,22 @@ export const ReserveAtMarinaInput = forwardRef<PaymentMethodInputHandle, { dueCe
       [],
     );
     return (
-      <div className="rounded-lg border border-sky-300 bg-sky-50 p-4">
+      <div className="rounded-lg border border-hairline bg-bg p-4">
         <div className="flex items-start gap-3">
-          <CreditCard className="mt-0.5 h-5 w-5 shrink-0 text-sky-600" aria-hidden />
+          <CreditCard className="mt-0.5 h-5 w-5 shrink-0 text-accent-ink" aria-hidden />
           <div className="space-y-2 text-sm">
-            <p className="font-semibold text-sky-900">Reserve now, pay at the marina</p>
-            <p className="text-sky-800">
+            <p className="font-semibold text-ink">Reserve now, pay at the marina</p>
+            <p className="text-muted">
               No card needed to hold your spot. Confirm your booking below and pay
               when you arrive.
             </p>
             {typeof dueCents === 'number' && dueCents > 0 && (
-              <p className="flex items-baseline justify-between gap-4 rounded-md bg-white/70 px-3 py-2 font-medium text-sky-900">
+              <p className="flex items-baseline justify-between gap-4 rounded-lg border border-hairline bg-surface px-3 py-2 font-medium text-ink">
                 <span>Due at the marina</span>
-                <span className="tabular-nums">{formatUSD(dueCents)}</span>
+                <span className="tnum font-semibold">{formatUSD(dueCents)}</span>
               </p>
             )}
-            <p className="text-xs text-sky-700">
+            <p className="text-xs text-muted">
               Bring a photo ID and your order number. Cash and card are accepted at
               check-in.
             </p>

@@ -51,11 +51,11 @@ function Row({
     <div
       className={
         'flex items-baseline justify-between ' +
-        (emphasis ? 'text-base font-semibold text-slate-900' : 'text-sm')
+        (emphasis ? 'text-base font-semibold text-ink' : 'text-sm')
       }
     >
-      <span className={muted ? 'text-slate-500' : 'text-slate-600'}>{label}</span>
-      <span className={muted ? 'text-slate-500' : 'text-slate-900'}>{value}</span>
+      <span className={muted ? 'text-muted' : 'text-ink'}>{label}</span>
+      <span className={`tnum ${muted ? 'text-muted' : 'text-ink'}`}>{value}</span>
     </div>
   );
 }
@@ -103,7 +103,7 @@ export function PriceBreakdown({
         <Row label="Tip" value={formatUSD(pricing.tipCents)} />
       )}
 
-      <div className="my-2 border-t border-slate-200" />
+      <div className="my-2 border-t border-hairline" />
 
       <Row
         label={hasFees ? 'Total' : 'Estimated total'}
@@ -111,7 +111,7 @@ export function PriceBreakdown({
         emphasis
       />
       {!hasFees && (
-        <p className="pt-1 text-xs text-slate-400">
+        <p className="pt-1 text-xs text-muted">
           Applicable taxes and processing fees are calculated and added at payment.
         </p>
       )}

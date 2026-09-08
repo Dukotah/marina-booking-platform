@@ -34,7 +34,7 @@ function googleCalendarUrl(input: {
 }
 
 const linkClass =
-  'inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:border-slate-300 hover:text-slate-900';
+  'inline-flex items-center gap-1.5 rounded-lg border border-hairline bg-surface px-3 py-1.5 text-[13px] font-medium text-ink transition-colors hover:bg-bg';
 
 export function AddToCalendar({
   item,
@@ -46,7 +46,7 @@ export function AddToCalendar({
   brandName: string;
 }) {
   return (
-    <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-4">
+    <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-hairline pt-4">
       <a
         href={googleCalendarUrl({ item, orderNumber, brandName })}
         target="_blank"
@@ -60,7 +60,7 @@ export function AddToCalendar({
         <DownloadIcon />
         Download .ics
       </a>
-      <span className="text-xs text-slate-400">Apple Calendar &amp; Outlook use the .ics file</span>
+      <span className="text-xs text-muted">Apple Calendar &amp; Outlook use the .ics file</span>
     </div>
   );
 }

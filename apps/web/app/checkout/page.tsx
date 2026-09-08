@@ -43,16 +43,32 @@ interface CheckoutPageProps {
   };
 }
 
+/**
+ * Estate override for the checkout surface: the operator brand color paints no
+ * chrome (2026-09-07 decision), so everything var-driven inside checkout — the
+ * submit button, tip chips, focus rings — resolves to the sage accent instead.
+ * White label text on sage is permitted at >=15px/600, which the submit meets.
+ */
+const ESTATE_VARS = {
+  ['--brand-color' as string]: 'var(--accent)',
+  ['--brand-foreground' as string]: '#ffffff',
+  ['--brand-text' as string]: 'var(--accent-ink)',
+} as React.CSSProperties;
+
 /** A friendly, branded error frame for unrecoverable checkout entry states. */
 function CheckoutProblem({ title, body }: { title: string; body: string }) {
   return (
-    <main id="main-content" tabIndex={-1} className="mx-auto flex max-w-2xl flex-col items-start gap-4 px-4 py-16">
-      <h1 className="text-2xl font-bold tracking-tight text-slate-900">{title}</h1>
-      <p className="text-slate-600">{body}</p>
+    <main
+      id="main-content"
+      tabIndex={-1}
+      style={ESTATE_VARS}
+      className="mx-auto flex max-w-2xl flex-col items-start gap-4 px-6 py-16"
+    >
+      <h1 className="font-display text-[28px] leading-[1.2] tracking-[0.02em] text-ink">{title}</h1>
+      <p className="leading-[1.55] text-muted">{body}</p>
       <Link
         href="/"
-        className="rounded-md px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:opacity-90"
-        style={{ backgroundColor: 'var(--brand-color)' }}
+        className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-bg transition hover:opacity-90"
       >
         Back to booking
       </Link>
@@ -169,18 +185,23 @@ export default async function CheckoutPage({ searchParams }: CheckoutPageProps) 
   const wallet = getWalletConfig(brand.name);
 
   return (
-    <main id="main-content" tabIndex={-1} className="mx-auto w-full max-w-5xl px-4 py-6 sm:py-10">
-      <header className="mb-6">
+    <main
+      id="main-content"
+      tabIndex={-1}
+      style={ESTATE_VARS}
+      className="mx-auto w-full max-w-5xl px-6 py-6 sm:py-10"
+    >
+      <header className="mb-8">
         <Link
           href="/"
-          className="text-sm font-medium text-slate-500 transition-colors hover:text-slate-900"
+          className="text-sm font-medium text-muted transition-colors hover:text-ink"
         >
           &larr; Continue browsing
         </Link>
-        <h1 className="mt-2 text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
+        <h1 className="mt-3 font-display text-[28px] leading-[1.2] tracking-[0.02em] text-ink">
           Checkout
         </h1>
-        <p className="mt-1 text-sm text-slate-600">
+        <p className="mt-1 text-sm text-muted">
           {paymentMode === 'reserve'
             ? 'Review your reservation, add guest details, and reserve your spot. Pay when you arrive at the marina.'
             : 'Review your reservation, add guest details, and pay securely.'}

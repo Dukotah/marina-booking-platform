@@ -76,9 +76,9 @@ export function WaiverSection({ operatorName, activityName }: WaiverSectionProps
         role="region"
         aria-labelledby={waiverTextTitleId}
         tabIndex={0}
-        className="max-h-44 overflow-y-auto rounded-md border border-slate-200 bg-slate-50 p-3 text-xs leading-relaxed text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-900 focus-visible:ring-offset-2"
+        className="max-h-44 overflow-y-auto rounded-lg border border-hairline bg-bg p-3 text-xs leading-relaxed text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink focus-visible:ring-offset-2"
       >
-        <p id={waiverTextTitleId} className="mb-2 font-semibold text-slate-700">
+        <p id={waiverTextTitleId} className="mb-2 font-semibold text-ink">
           Liability Waiver &amp; Release
         </p>
         <p className="mb-2">
@@ -109,14 +109,14 @@ export function WaiverSection({ operatorName, activityName }: WaiverSectionProps
         <input
           id="waiverAccepted"
           type="checkbox"
-          className="mt-0.5 h-5 w-5 shrink-0 rounded border-slate-300 text-[var(--brand-color)] focus-visible:ring-2 focus-visible:ring-[var(--brand-color,#0f766e)] focus-visible:ring-offset-2"
+          className="mt-0.5 h-5 w-5 shrink-0 rounded border-hairline text-[var(--brand-color)] focus-visible:ring-2 focus-visible:ring-[var(--brand-color,#0f766e)] focus-visible:ring-offset-2"
           aria-invalid={acceptedError ? true : undefined}
           aria-describedby={acceptedError ? 'waiverAccepted-error' : undefined}
           {...register('waiverAccepted', {
             required: 'You must accept the waiver to continue',
           })}
         />
-        <span className="text-sm text-slate-700">
+        <span className="text-sm text-ink">
           I have read and agree to the liability waiver and release.
         </span>
       </label>
@@ -128,6 +128,7 @@ export function WaiverSection({ operatorName, activityName }: WaiverSectionProps
         </Label>
         <Input
           id="signatureName"
+          className="rounded-lg border-hairline bg-surface text-ink placeholder:text-muted"
           autoComplete="name"
           placeholder="Full legal name"
           aria-invalid={signatureError ? true : undefined}

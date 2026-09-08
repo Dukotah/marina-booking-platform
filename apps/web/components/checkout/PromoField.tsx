@@ -69,15 +69,15 @@ export function PromoField({ activityId, applied, onApply, onClear }: PromoField
       */}
       <div role="status" aria-live="polite">
         {applied && (
-          <div className="flex items-center justify-between rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2">
-            <span className="flex items-center gap-2 text-sm font-medium text-emerald-800">
+          <div className="flex items-center justify-between rounded-lg border border-hairline bg-bg px-3 py-2">
+            <span className="flex items-center gap-2 text-sm font-medium text-success">
               <CheckCircle2 className="h-4 w-4" aria-hidden />
               Promo <span className="font-semibold">{applied.code}</span> applied
             </span>
             <button
               type="button"
               onClick={onClear}
-              className="rounded p-1 text-emerald-700 transition-colors hover:bg-emerald-100"
+              className="rounded p-1 text-success transition-colors hover:bg-surface"
               aria-label={`Remove promo code ${applied.code}`}
             >
               <X className="h-4 w-4" aria-hidden />
@@ -96,7 +96,7 @@ export function PromoField({ activityId, applied, onApply, onClear }: PromoField
               autoCapitalize="characters"
               placeholder="Enter code"
               aria-invalid={error ? true : undefined}
-              className={cn('uppercase', error && 'border-red-500')}
+              className={cn('uppercase rounded-lg border-hairline bg-surface text-ink placeholder:text-muted', error && 'border-danger')}
               onChange={(e) => {
                 setCode(e.target.value);
                 if (error) setError(null);
@@ -121,7 +121,7 @@ export function PromoField({ activityId, applied, onApply, onClear }: PromoField
           {/* A rejected code is as silent as an accepted one was; `role="alert"`
               matches how the checkout form announces its own field errors. */}
           {error && (
-            <p role="alert" className="text-sm text-red-600">
+            <p role="alert" className="text-sm text-danger">
               {error}
             </p>
           )}

@@ -39,8 +39,8 @@ export function TipSelector({ baseCents, tipCents, onChange }: TipSelectorProps)
           className={cn(
             'rounded-lg border px-3 py-2 text-sm font-medium transition-colors',
             isNoneActive
-              ? 'border-[var(--brand-color)] bg-[var(--brand-color)]/10 text-slate-900'
-              : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50',
+              ? 'border-accent bg-surface text-ink'
+              : 'border-hairline bg-surface text-ink hover:bg-bg',
           )}
         >
           No tip
@@ -54,12 +54,12 @@ export function TipSelector({ baseCents, tipCents, onChange }: TipSelectorProps)
             className={cn(
               'flex flex-col items-center rounded-lg border px-3 py-2 text-sm font-medium transition-colors',
               isPresetActive(pct)
-                ? 'border-[var(--brand-color)] bg-[var(--brand-color)]/10 text-slate-900'
-                : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50',
+                ? 'border-accent bg-surface text-ink'
+                : 'border-hairline bg-surface text-ink hover:bg-bg',
             )}
           >
             <span>{pct}%</span>
-            <span className="text-xs font-normal text-slate-500">
+            <span className="tnum text-xs font-normal text-muted">
               {formatUSD(presetCents(pct))}
             </span>
           </button>
@@ -67,11 +67,11 @@ export function TipSelector({ baseCents, tipCents, onChange }: TipSelectorProps)
       </div>
 
       <div className="flex items-center gap-2">
-        <label htmlFor={customId} className="text-sm text-slate-600">
+        <label htmlFor={customId} className="text-sm text-muted">
           Custom
         </label>
         <div className="relative flex-1">
-          <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">
+          <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted">
             $
           </span>
           <input
@@ -87,8 +87,8 @@ export function TipSelector({ baseCents, tipCents, onChange }: TipSelectorProps)
               onChange(Number.isFinite(dollars) && dollars > 0 ? toCents(dollars) : 0);
             }}
             className={cn(
-              'h-10 w-full rounded-md border border-slate-300 bg-white pl-7 pr-3 text-sm text-slate-900',
-              'placeholder:text-slate-400',
+              'tnum h-10 w-full rounded-lg border border-hairline bg-surface pl-7 pr-3 text-sm text-ink',
+              'placeholder:text-muted',
               'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-color,#0f766e)] focus-visible:ring-offset-2',
             )}
           />
