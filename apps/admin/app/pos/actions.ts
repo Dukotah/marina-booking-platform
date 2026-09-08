@@ -203,6 +203,9 @@ export async function submitSale(input: SaleInput): Promise<SaleResult> {
         rateId?: string;
         timeslotId?: string;
         merchandiseId?: string;
+        /** Category/variant snapshots for the persisted merchandise sale line. */
+        merchCategory?: string;
+        merchVariant?: string | null;
       };
       const resolved: ResolvedLine[] = [];
 
@@ -239,7 +242,14 @@ export async function submitSale(input: SaleInput): Promise<SaleResult> {
           if (!line.merchandiseId) throw new SaleError('A merchandise line is missing its item.');
           const item = await tx.merchandiseItem.findFirst({
             where: { id: line.merchandiseId, operator_id: operatorId, is_active: true },
-            select: { id: true, name: true, cost_cents: true, on_hand_qty: true },
+            select: {
+              id: true,
+              name: true,
+              category: true,
+              variant: true,
+              cost_cents: true,
+              on_hand_qty: true,
+            },
           });
           if (!item) throw new SaleError('A merchandise item is no longer available.');
           if (item.on_hand_qty !== null && item.on_hand_qty < line.quantity) {
@@ -251,6 +261,8 @@ export async function submitSale(input: SaleInput): Promise<SaleResult> {
             unitPriceCents: item.cost_cents,
             quantity: line.quantity,
             merchandiseId: item.id,
+            merchCategory: item.category,
+            merchVariant: item.variant,
           });
         } else {
           // MISC / gift / custom charge — price comes from the register operator.
@@ -401,10 +413,27 @@ export async function submitSale(input: SaleInput): Promise<SaleResult> {
         }
       }
 
-      // 9. Record non-booking lines (merchandise/misc) on the order's audit trail so
-      //    the register sale is fully reconstructable even though those lines aren't
-      //    activity bookings.
+      // 9. Persist merchandise/misc lines as first-class OrderMerchandiseLine rows
+      //    (name/category/variant/price snapshots) — this is what the merchandise
+      //    and itemized sales reports read. The OrderEvent below stays as the
+      //    human-readable audit trail.
       const nonBooking = resolved.filter((l) => l.kind !== 'BOOKING');
+      for (const l of nonBooking) {
+        await tx.orderMerchandiseLine.create({
+          data: {
+            id: createId(),
+            operator_id: operatorId,
+            order_id: orderId,
+            merchandise_id: l.merchandiseId ?? null,
+            kind: l.kind === 'MERCHANDISE' ? 'MERCHANDISE' : 'MISC',
+            name: l.label,
+            category: l.merchCategory ?? 'Uncategorized',
+            variant: l.merchVariant ?? null,
+            quantity: l.quantity,
+            unit_price_cents: l.unitPriceCents,
+          },
+        });
+      }
       if (nonBooking.length > 0) {
         await tx.orderEvent.create({
           data: {

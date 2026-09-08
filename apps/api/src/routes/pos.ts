@@ -139,6 +139,9 @@ pos.post('/sale', async (c) => {
     activityName: string;
     locationId: string | null;
     unitPriceCents: number;
+    /** Set when this booking line came from a PACKAGE bundle (reporting snapshot). */
+    packageId?: string;
+    packageName?: string;
   };
   const resolvedBookings: ResolvedBooking[] = [];
 
@@ -238,6 +241,8 @@ pos.post('/sale', async (c) => {
         activityName: it.activity.name_internal,
         locationId,
         unitPriceCents: unit,
+        packageId: pkg.id,
+        packageName: pkg.name_internal,
       });
     }
   }
@@ -246,6 +251,8 @@ pos.post('/sale', async (c) => {
   type ResolvedMerch = {
     line: z.infer<typeof merchandiseLineSchema>;
     name: string;
+    category: string;
+    variant: string | null;
     onHandQty: number | null;
   };
   const resolvedMerch: ResolvedMerch[] = [];
@@ -258,7 +265,13 @@ pos.post('/sale', async (c) => {
     if (item.on_hand_qty !== null && item.on_hand_qty < line.quantity) {
       return c.json({ error: `Insufficient stock for ${item.name}` }, 409);
     }
-    resolvedMerch.push({ line, name: item.name, onHandQty: item.on_hand_qty });
+    resolvedMerch.push({
+      line,
+      name: item.name,
+      category: item.category,
+      variant: item.variant,
+      onHandQty: item.on_hand_qty,
+    });
   }
 
   // --- Promo ---------------------------------------------------------------
@@ -401,6 +414,8 @@ pos.post('/sale', async (c) => {
             quantity: b.quantity,
             unit_price_cents: b.unitPriceCents,
             status: 'UPCOMING',
+            package_id: b.packageId ?? null,
+            package_name: b.packageName ?? null,
           },
         });
         // Atomic guarded increment: capacity is re-checked against the CURRENT row
@@ -417,9 +432,24 @@ pos.post('/sale', async (c) => {
         }
       }
 
-      // Merchandise inventory decrements (only when stock is tracked). Guarded so
-      // concurrent sales can't drive on_hand_qty negative.
+      // Merchandise sale lines (name/category/variant/price snapshots) — what the
+      // merchandise + itemized sales reports read — plus inventory decrements
+      // (only when stock is tracked). Guarded so concurrent sales can't drive
+      // on_hand_qty negative.
       for (const m of resolvedMerch) {
+        await tx.orderMerchandiseLine.create({
+          data: {
+            operator_id: operatorId,
+            order_id: order.id,
+            merchandise_id: m.line.merchandiseId,
+            kind: 'MERCHANDISE',
+            name: m.name,
+            category: m.category,
+            variant: m.variant,
+            quantity: m.line.quantity,
+            unit_price_cents: m.line.unitPriceCents,
+          },
+        });
         if (m.onHandQty !== null) {
           const decremented = await tx.$executeRaw`
             UPDATE "MerchandiseItem"
