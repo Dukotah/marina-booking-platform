@@ -23,6 +23,7 @@ import { operator } from './routes/operator.js';
 import { settings } from './routes/settings.js';
 import { webhooks } from './routes/webhooks.js';
 import { internal } from './routes/internal.js';
+import { calendar } from './routes/calendar.js';
 import { addons } from './routes/addons.js';
 import { memberships } from './routes/memberships.js';
 import { pricingRules } from './routes/pricing-rules.js';
@@ -101,6 +102,12 @@ app.route('/webhooks', webhooks);
 
 // Scheduled-job endpoints (reminder sweep) — no tenant context; secret-gated.
 app.route('/internal', internal);
+
+// iCalendar feeds. Google Calendar polls a bare URL with no tenant header, so
+// these live OUTSIDE the tenant middleware: the secret feed token (or the
+// unguessable order-item id) names the operator, and data reads still go
+// through the RLS client. See routes/calendar.ts.
+app.route('/calendar', calendar);
 
 // Uploaded images. Mounted OUTSIDE the tenant middleware deliberately: serving a
 // file is public (an <img> tag carries no tenant header), while the router applies
