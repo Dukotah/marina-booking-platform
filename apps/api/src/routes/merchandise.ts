@@ -22,6 +22,8 @@ merchandise.use('*', requireStaff);
 const merchandiseInputSchema = z.object({
   name: z.string().trim().min(1, 'Name is required').max(160),
   category: z.string().trim().min(1, 'Category is required').max(80),
+  /** Variant of a parent product sharing the same name (e.g. "1/4 gallon"). */
+  variant: z.string().trim().min(1).max(80).nullable().optional(),
   cost_cents: z.number().int().nonnegative('cost_cents must be >= 0').default(0),
   on_hand_qty: z.number().int().nonnegative().nullable().optional(),
   reorder_alert_qty: z.number().int().nonnegative().nullable().optional(),
@@ -37,6 +39,7 @@ function serialize(item: {
   id: string;
   name: string;
   category: string;
+  variant: string | null;
   cost_cents: number;
   on_hand_qty: number | null;
   reorder_alert_qty: number | null;
@@ -50,6 +53,7 @@ function serialize(item: {
     id: item.id,
     name: item.name,
     category: item.category,
+    variant: item.variant,
     costCents: item.cost_cents,
     onHandQty: item.on_hand_qty,
     reorderAlertQty: item.reorder_alert_qty,
@@ -108,6 +112,7 @@ merchandise.post('/', async (c) => {
       operator_id: c.var.operatorId,
       name: parsed.data.name,
       category: parsed.data.category,
+      variant: parsed.data.variant ?? null,
       cost_cents: parsed.data.cost_cents,
       on_hand_qty: parsed.data.on_hand_qty ?? null,
       reorder_alert_qty: parsed.data.reorder_alert_qty ?? null,
@@ -138,6 +143,7 @@ merchandise.patch('/:id', async (c) => {
     data: {
       ...(d.name !== undefined ? { name: d.name } : {}),
       ...(d.category !== undefined ? { category: d.category } : {}),
+      ...(d.variant !== undefined ? { variant: d.variant } : {}),
       ...(d.cost_cents !== undefined ? { cost_cents: d.cost_cents } : {}),
       ...(d.on_hand_qty !== undefined ? { on_hand_qty: d.on_hand_qty } : {}),
       ...(d.reorder_alert_qty !== undefined ? { reorder_alert_qty: d.reorder_alert_qty } : {}),
