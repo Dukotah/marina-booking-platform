@@ -10,7 +10,11 @@
 import { getBrandAsync, type Brand } from '@/lib/brand';
 
 interface CatalogHeroProps {
-  /** Number of bookable activities, shown as a confidence signal when > 0. */
+  /**
+   * Number of bookable activities. Kept for API compatibility with the page;
+   * no longer rendered — the departures board directly below IS the
+   * availability signal, and a counter line above it was noise.
+   */
   activityCount: number;
   /**
    * Resolved operator brand. Passed by the page (which already fetched it) so the
@@ -20,25 +24,19 @@ interface CatalogHeroProps {
   brand?: Brand;
 }
 
-export async function CatalogHero({ activityCount, brand: brandProp }: CatalogHeroProps) {
+export async function CatalogHero({ brand: brandProp }: CatalogHeroProps) {
   const brand = brandProp ?? (await getBrandAsync());
 
   return (
     <section className="bg-bg">
-      <div className="mx-auto max-w-[1120px] px-6 pb-8 pt-16 sm:pt-20">
-        <h1 className="max-w-3xl font-display text-4xl leading-[1.15] tracking-[0.02em] text-ink sm:text-[44px]">
+      <div className="mx-auto max-w-[1120px] px-6 pb-6 pt-10 sm:pb-8 sm:pt-16">
+        <h1 className="max-w-3xl font-display text-[28px] leading-[1.15] tracking-[0.02em] text-ink sm:text-4xl">
           {brand.name}
         </h1>
-        <p className="mt-4 max-w-xl text-base leading-[1.55] text-muted">
+        <p className="mt-3 max-w-xl text-base leading-[1.55] text-muted">
           {brand.tagline ??
             'Reserve your day on the water — live availability, all-in prices, no account needed.'}
         </p>
-        {activityCount > 0 && (
-          <p className="mt-6 text-sm font-medium text-accent-ink">
-            <span className="tnum">{activityCount}</span>{' '}
-            {activityCount === 1 ? 'experience' : 'experiences'} open for reservation
-          </p>
-        )}
       </div>
     </section>
   );

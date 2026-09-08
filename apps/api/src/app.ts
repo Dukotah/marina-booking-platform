@@ -8,6 +8,7 @@ import { trackInFlight } from './services/lifecycle.js';
 import { tenantMiddleware } from './middleware/tenant.js';
 import { activities } from './routes/activities.js';
 import { availability } from './routes/availability.js';
+import { departures } from './routes/departures.js';
 import { orders } from './routes/orders.js';
 import { payments } from './routes/payments.js';
 import { customers } from './routes/customers.js';
@@ -119,6 +120,7 @@ const api = new Hono<Env>();
 api.use('*', tenantMiddleware);
 api.route('/activities', activities);
 api.route('/availability', availability);
+api.route('/departures', departures);
 api.route('/orders', orders);
 // /bookings is an alias for /orders used by the customer portal (lib/api.ts createBooking).
 // POST /bookings -> POST /orders (create a booking); GET/PATCH on orders still use /orders.

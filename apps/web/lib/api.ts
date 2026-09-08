@@ -581,6 +581,54 @@ export async function getAvailabilityRange(
   return data.days;
 }
 
+// ---------------------------------------------------------------------------
+// Departures board (homepage "Today's Departures")
+// ---------------------------------------------------------------------------
+
+/** One bookable departure on the homepage board. */
+export interface DepartureRow {
+  timeslotId: string;
+  /** UTC instant, ISO-8601 — render in the payload's `timezone`. */
+  datetime: string;
+  activityId: string;
+  activityName: string;
+  category: string;
+  photoUrl: string | null;
+  seatsLeft: number;
+  rateId: string;
+  rateName: string;
+  durationMinutes: number;
+  /** All-in price for one guest (fees included) — the checkout number. */
+  allInCents: number;
+}
+
+/** One chip on the board's 7-day rail. */
+export interface DepartureRailDay {
+  date: string;
+  available: boolean;
+  minAllInCents: number | null;
+}
+
+export interface DeparturesBoard {
+  date: string;
+  timezone: string;
+  days: DepartureRailDay[];
+  departures: DepartureRow[];
+}
+
+/**
+ * The availability-first homepage board: upcoming bookable timeslots for one
+ * day (defaults to today in the operator timezone) + the 7-day rail.
+ *
+ * Returns null in DEMO_MODE (no API to price against) — the homepage then
+ * degrades to the catalog-led layout rather than showing invented departures.
+ */
+export async function getDepartures(date?: string): Promise<DeparturesBoard | null> {
+  if (DEMO_MODE) return null;
+  const qs = date ? `?${new URLSearchParams({ date }).toString()}` : '';
+  return request<DeparturesBoard>(`/api/departures${qs}`);
+}
+
 /** Validate a promo code for a given activity before applying it at checkout. */
 export async function validatePromo(
   code: string,
