@@ -23,7 +23,8 @@ DECLARE
   t text;
   tenant_tables text[] := ARRAY[
     'Location', 'StaffMember', 'Activity', 'Rate', 'Timeslot', 'Resource',
-    'ResourceBooking', 'Customer', 'Order', 'OrderItem', 'Payment', 'Note',
+    'ResourceBooking', 'Customer', 'Order', 'OrderItem', 'OrderMerchandiseLine',
+    'Payment', 'Note',
     'OrderEvent', 'OrderCharge', 'Fee', 'MerchandiseItem', 'PromoCode', 'Waiver',
     'WaiverClause', 'WaiverSignature', 'Integration', 'GiftCard',
     'GuideAssignment', 'GiftCertificate', 'Package', 'PackageItem',

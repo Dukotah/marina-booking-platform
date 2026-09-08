@@ -583,6 +583,7 @@ model Order {
   notes    Note[]
   history  OrderEvent[]
   charges  OrderCharge[]
+  merchandise_lines OrderMerchandiseLine[]
   channel_bookings ChannelBooking[]
 
   @@unique([operator_id, id])
@@ -626,6 +627,13 @@ model OrderItem {
   add_on           PackageUpsell? @relation(fields: [operator_id, add_on_id], references: [operator_id, id])
   /// Name snapshot - renaming an add-on must not rewrite an old receipt.
   add_on_name      String?
+  /// Set when this booking line was sold as part of a Package bundle (the POS
+  /// expands a package into its booking lines with the bundle price distributed
+  /// across them). Plain snapshot columns — no FK — so archiving/deleting a
+  /// package never rewrites or blocks on historical sales; package_name is the
+  /// durable label for reporting.
+  package_id       String?
+  package_name     String?
   created_at       DateTime        @default(now())
   waiver_signatures WaiverSignature[]
   resource_bookings ResourceBooking[]
@@ -636,6 +644,7 @@ model OrderItem {
   @@index([order_id])
   @@index([timeslot_id])
   @@index([operator_id, add_on_id])
+  @@index([operator_id, package_id])
 }
 
 model Payment {
@@ -885,12 +894,50 @@ model MerchandiseItem {
   operator          Operator @relation(fields: [operator_id], references: [id], onDelete: Cascade)
   name              String
   category          String
+  /// Optional variant of a parent product sharing the same `name` (e.g. name
+  /// "Fuel", variant "1/4 gallon"). The merchandise report rolls variants up
+  /// under a product-level total row (the fuel-by-fractional-gallon pattern).
+  variant           String?
   cost_cents        Int      @default(0)
   on_hand_qty       Int?
   reorder_alert_qty Int?
   is_active         Boolean  @default(true)
+  sale_lines        OrderMerchandiseLine[]
 
+  // Target of the tenant-composite FK from OrderMerchandiseLine.
+  @@unique([operator_id, id])
   @@index([operator_id])
+}
+
+/// A merchandise or misc/gift line sold on an order (register or checkout).
+/// Before this table existed, POS merch/misc lines lived only in OrderEvent
+/// metadata + an inventory decrement — fine for receipts, invisible to reports.
+/// Name/category/variant/price are SNAPSHOTS taken at sale time so renaming or
+/// re-pricing a catalog item never rewrites an old sale. `merchandise_id` is a
+/// tenant-composite FK kept for drill-down; it is null for MISC/gift lines and
+/// the FK restricts hard-deleting a catalog item that has recorded sales
+/// (deactivate instead — history stays intact).
+model OrderMerchandiseLine {
+  id               String           @id @default(cuid())
+  operator_id      String
+  order_id         String
+  order            Order            @relation(fields: [operator_id, order_id], references: [operator_id, id], onDelete: Cascade)
+  merchandise_id   String?
+  merchandise      MerchandiseItem? @relation(fields: [operator_id, merchandise_id], references: [operator_id, id])
+  /// MERCHANDISE (catalogued item) | MISC (gift/custom register charge) — free
+  /// string like OrderEvent.type / OrderCharge.category.
+  kind             String           @default("MERCHANDISE")
+  name             String
+  category         String           @default("Uncategorized")
+  variant          String?
+  quantity         Int              @default(1)
+  unit_price_cents Int
+  created_at       DateTime         @default(now())
+
+  @@unique([operator_id, id])
+  @@index([operator_id])
+  @@index([order_id])
+  @@index([operator_id, merchandise_id])
 }
 
 model PromoCode {
