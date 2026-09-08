@@ -5,6 +5,7 @@ import type { Metadata } from 'next';
 import {
   getActivity,
   getAvailabilityRange,
+  getOperatorPublic,
   isApiError,
   type ActivityDetail,
   type AvailabilityRangeDay,
@@ -163,17 +164,48 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 const STRIP_DAYS = 14;
 
 /**
+ * The calendar day `offset` days from today, as `YYYY-MM-DD`, evaluated in `timeZone`.
+ *
+ * The strip the browser renders keys its first day off the BROWSER's local `new Date()`
+ * (AvailabilityCalendar: `startOfDay(new Date())`), which for a guest at the marina is
+ * the operator's local day. The server, however, runs in UTC — so `new Date()
+ * .toISOString()` here is already TOMORROW for the whole evening in a west-coast zone.
+ * Seeding the range off the UTC day leaves the strip's true first column (local today)
+ * OUTSIDE `initialRange`: it paints as a permanent "checking availability" skeleton while
+ * the client fetches the one day the server forgot, which on a weak connection is the
+ * slowest, least-bookable the funnel ever looks. Bucketing the range in the operator's
+ * zone makes the seeded days line up exactly with the columns the calendar shows.
+ */
+function localDayISO(timeZone: string, offset = 0): string {
+  const base = new Date(Date.now() + offset * 86_400_000);
+  // en-CA renders YYYY-MM-DD; formatting in the operator zone gives that zone's calendar
+  // day for the instant, which is what the day strip is keyed on.
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(base);
+}
+
+/**
  * Availability for the strip window, fetched here so the page ships with its dates
  * already selectable. Never fatal: if it fails the calendar just loads them itself,
  * exactly as it did before.
+ *
+ * `timeZone` is the operator's, so the seeded window starts on the same local day the
+ * client strip does rather than on the UTC day the server happens to be in.
  */
-async function loadStripRange(activityId: string): Promise<AvailabilityRangeDay[] | undefined> {
-  const today = new Date();
-  const end = new Date(today);
-  end.setDate(today.getDate() + STRIP_DAYS - 1);
-  const iso = (d: Date) => d.toISOString().slice(0, 10);
+async function loadStripRange(
+  activityId: string,
+  timeZone: string,
+): Promise<AvailabilityRangeDay[] | undefined> {
   try {
-    return await getAvailabilityRange(activityId, iso(today), iso(end));
+    return await getAvailabilityRange(
+      activityId,
+      localDayISO(timeZone, 0),
+      localDayISO(timeZone, STRIP_DAYS - 1),
+    );
   } catch {
     return undefined;
   }
@@ -183,7 +215,13 @@ export default async function ActivityDetailPage({ params }: PageProps) {
   const activity = await loadActivity(params.id);
   if (!activity) notFound();
 
-  const initialRange = await loadStripRange(activity.id);
+  // The operator's timezone decides which calendar day the strip starts on, so seed the
+  // availability window in that zone rather than the server's UTC day. Never fatal: on a
+  // failed lookup the strip falls back to a client fetch exactly as before.
+  const operatorTimeZone = await getOperatorPublic()
+    .then((op) => op.timezone)
+    .catch(() => 'America/Los_Angeles');
+  const initialRange = await loadStripRange(activity.id, operatorTimeZone);
 
   const brand = await getBrandAsync();
   const accent = activity.color;
