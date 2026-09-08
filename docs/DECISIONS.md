@@ -341,3 +341,28 @@ What this implies at go-live (with Clerk, Stage 3):
 **Why:** same trainability win as Singenuity's register ("dock staff learn one small
 screen") without maintaining two apps, and a manager moving between ringing a sale
 and editing an activity never re-logs-in.
+
+## D-017 — Reports itemize from persisted sale lines, reconciled by construction (2026-09-08) — Accepted
+
+The Reports overhaul (beat-Singenuity depth: merchandise report, itemized sales,
+EOD, head count) needed line-level merchandise data that the register was NOT
+persisting — merch/misc lines lived only in OrderEvent metadata + an inventory
+decrement. **Decision: persist them as first-class `OrderMerchandiseLine` rows
+(name/category/variant/price snapshots, tenant-composite FKs, RLS), snapshot
+`package_id`/`package_name` on package-expanded OrderItems, and recover the
+pre-migration history from the POS_LINE_ITEMS event JSON in the migration
+backfill (real data, never fabricated).**
+
+Reporting math is pure in `@marina/core/itemized.ts`: order-level discount/tax/fee
+is allocated across lines with an exact largest-remainder split, so Items/Details
+views, the merchandise category→product→variant roll-up, and the summary can
+never disagree. A `reconcileItemized` check-set (line coverage, allocation sums,
+the order identity `subtotal − discount + tax + fee + tip + charges = gross`)
+renders as a "Reconciled" badge and is enforced by a live API integration test
+(`apps/api/test/reports-reconciliation.integration.test.ts`) — reconciliation is
+the trust feature, proven not asserted. Post-trip `OrderCharge`s join the
+itemized views (they inflate order totals) under their own Charges group; fuel
+charges roll up with metered fuel merchandise under one Fuel product.
+
+**Why snapshots + no FK on package columns:** renames/archives must never rewrite
+or block on historical sales; the snapshot is the durable reporting label.
