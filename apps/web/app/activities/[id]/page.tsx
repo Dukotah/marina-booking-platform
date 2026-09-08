@@ -10,8 +10,9 @@ import {
   type ActivityDetail,
   type AvailabilityRangeDay,
 } from '@/lib/api';
-import { getBrandAsync, brandStyle, onBrandForeground } from '@/lib/brand';
+import { getBrandAsync, brandStyle } from '@/lib/brand';
 import { formatUSD } from '@/lib/format';
+import { operatorDayISO } from '@/lib/operatorDay';
 import { BookingWidget } from '@/components/activity/BookingWidget';
 import { InquiryPanel } from '@/components/activity/InquiryPanel';
 
@@ -37,6 +38,12 @@ const PhotoGallery = dynamic(() =>
 
 interface PageProps {
   params: { id: string };
+  /**
+   * Departures-board deep link: `?date=YYYY-MM-DD&slot=<timeslotId>&rate=<rateId>`
+   * preselects the booking card so board tap → checkout is two taps. Stale or
+   * sold-out params degrade silently inside the widget.
+   */
+  searchParams: { date?: string; slot?: string; rate?: string };
 }
 
 /** Human label for an activity category (sentence case, no platform terms). */
@@ -118,18 +125,17 @@ const PRE_HYDRATION_RADIOS = `
 `;
 
 /**
- * What "selected" looks like before React can say so.
+ * What "selected" looks like before React can say so: the same sage accent the
+ * hydrated RateCards paint, so the tap's feedback never changes color mid-load.
  *
- * `!important` is load-bearing rather than lazy: the rate cards paint their selected
- * border with an inline `style` driven by React state, and an inline style outranks a
- * stylesheet. Scoped to `data-hydrated="false"` so it applies only while nothing else
- * is painting the group — the moment React takes over, this rule stops matching and
- * the component's own styling is unopposed.
+ * `!important` guarantees the win over the Tailwind border utilities on the card
+ * regardless of stylesheet order. Scoped to `data-hydrated="false"` so it applies
+ * only while nothing else is painting the group — the moment React takes over,
+ * this rule stops matching and the component's own styling is unopposed.
  */
 const PRE_HYDRATION_STYLES = `
 [data-prehydration-radiogroup][data-hydrated='false'] [role='radio'][aria-checked='true'] {
-  border-color: var(--prehydration-accent, #0f172a) !important;
-  box-shadow: 0 0 0 1px var(--prehydration-accent, #0f172a) !important;
+  border-color: var(--accent, #5f7a5a) !important;
 }
 `;
 
@@ -164,37 +170,13 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 const STRIP_DAYS = 14;
 
 /**
- * The calendar day `offset` days from today, as `YYYY-MM-DD`, evaluated in `timeZone`.
- *
- * The strip the browser renders keys its first day off the BROWSER's local `new Date()`
- * (AvailabilityCalendar: `startOfDay(new Date())`), which for a guest at the marina is
- * the operator's local day. The server, however, runs in UTC — so `new Date()
- * .toISOString()` here is already TOMORROW for the whole evening in a west-coast zone.
- * Seeding the range off the UTC day leaves the strip's true first column (local today)
- * OUTSIDE `initialRange`: it paints as a permanent "checking availability" skeleton while
- * the client fetches the one day the server forgot, which on a weak connection is the
- * slowest, least-bookable the funnel ever looks. Bucketing the range in the operator's
- * zone makes the seeded days line up exactly with the columns the calendar shows.
- */
-function localDayISO(timeZone: string, offset = 0): string {
-  const base = new Date(Date.now() + offset * 86_400_000);
-  // en-CA renders YYYY-MM-DD; formatting in the operator zone gives that zone's calendar
-  // day for the instant, which is what the day strip is keyed on.
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(base);
-}
-
-/**
  * Availability for the strip window, fetched here so the page ships with its dates
  * already selectable. Never fatal: if it fails the calendar just loads them itself,
  * exactly as it did before.
  *
- * `timeZone` is the operator's, so the seeded window starts on the same local day the
- * client strip does rather than on the UTC day the server happens to be in.
+ * `timeZone` is the operator's, so the seeded window starts on the same local day
+ * the client strip does rather than on the UTC day the server happens to be in
+ * (`operatorDayISO`, shared with the client widgets — see lib/operatorDay).
  */
 async function loadStripRange(
   activityId: string,
@@ -203,15 +185,26 @@ async function loadStripRange(
   try {
     return await getAvailabilityRange(
       activityId,
-      localDayISO(timeZone, 0),
-      localDayISO(timeZone, STRIP_DAYS - 1),
+      operatorDayISO(timeZone, 0),
+      operatorDayISO(timeZone, STRIP_DAYS - 1),
     );
   } catch {
     return undefined;
   }
 }
 
-export default async function ActivityDetailPage({ params }: PageProps) {
+/**
+ * Estate override for this surface (same pattern as checkout): the operator
+ * brand color paints no chrome, so anything var-driven — focus rings, the
+ * pre-hydration selected border — resolves to the sage accent instead.
+ */
+const ESTATE_VARS = {
+  ['--brand-color' as string]: 'var(--accent)',
+  ['--brand-foreground' as string]: '#ffffff',
+  ['--brand-text' as string]: 'var(--accent-ink)',
+} as React.CSSProperties;
+
+export default async function ActivityDetailPage({ params, searchParams }: PageProps) {
   const activity = await loadActivity(params.id);
   if (!activity) notFound();
 
@@ -224,26 +217,32 @@ export default async function ActivityDetailPage({ params }: PageProps) {
   const initialRange = await loadStripRange(activity.id, operatorTimeZone);
 
   const brand = await getBrandAsync();
-  const accent = activity.color;
   const categoryLabel = CATEGORY_LABELS[activity.category];
   // Bookable online only when there is a real rate to charge. Otherwise the page
   // offers an inquiry path (call the marina) rather than a dead booking widget.
   const bookable = activity.fromPriceCents != null && activity.rates.length > 0;
 
   return (
-    <main id="main-content" tabIndex={-1} style={brandStyle(brand)} className="mx-auto w-full max-w-6xl px-4 py-8">
+    <main
+      id="main-content"
+      tabIndex={-1}
+      style={{ ...brandStyle(brand), ...ESTATE_VARS }}
+      // The generous bottom padding below lg clears the widget's fixed mobile
+      // price+CTA bar; DESIGN.md max content width is 1120px with 24px gutters.
+      className="mx-auto w-full max-w-[1120px] px-6 py-8 pb-28 lg:pb-12"
+    >
       <style dangerouslySetInnerHTML={{ __html: PRE_HYDRATION_STYLES }} />
       <script dangerouslySetInnerHTML={{ __html: PRE_HYDRATION_RADIOS }} />
 
       {/* Breadcrumb */}
-      <nav aria-label="Breadcrumb" className="mb-5 text-sm text-slate-500">
-        <Link href="/" className="transition-colors hover:text-slate-900">
+      <nav aria-label="Breadcrumb" className="mb-5 text-sm text-muted">
+        <Link href="/" className="transition-colors hover:text-ink">
           Book
         </Link>
         <span className="mx-2" aria-hidden>
           /
         </span>
-        <span className="text-slate-700">{activity.name}</span>
+        <span className="text-ink">{activity.name}</span>
       </nav>
 
       {/*
@@ -266,32 +265,29 @@ export default async function ActivityDetailPage({ params }: PageProps) {
           out between the rows and the media, title and description drift apart. Pinning
           the first two rows to their content and letting the last one absorb the slack
           keeps the left column reading exactly as it did before. */}
-      <div className="grid grid-cols-1 gap-8 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)] lg:grid-rows-[auto_auto_1fr]">
+      {/* Airbnb anatomy (DESIGN.md speed mechanics #2): photos + specs left at
+          ~64%, the sticky booking card right at ~32%. */}
+      <div className="grid grid-cols-1 gap-8 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] lg:grid-rows-[auto_auto_1fr]">
         <header className="min-w-0 lg:col-start-1 lg:row-start-2">
-          <span
-            className="inline-block rounded-full px-2.5 py-1 text-xs font-semibold uppercase tracking-wide"
-            // The activity's own colour, not the tenant brand, so derive a legible
-            // foreground for it rather than assuming white (2.77:1 on the seed blue).
-            style={{ backgroundColor: accent, color: onBrandForeground(accent) }}
-          >
+          <p className="text-[13px] font-semibold uppercase tracking-wide text-muted">
             {categoryLabel}
-          </span>
-          <h1 className="mt-3 text-3xl font-bold tracking-tight text-slate-900">
+          </p>
+          <h1 className="mt-2 font-display text-[28px] leading-[1.2] tracking-[0.02em] text-ink">
             {activity.name}
           </h1>
-          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-slate-600">
-            <span>
+          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted">
+            <span className="tnum">
               {activity.minParticipants === activity.maxParticipants
                 ? `${activity.maxParticipants} guests`
                 : `${activity.minParticipants}–${activity.maxParticipants} guests`}
             </span>
             {activity.fromPriceCents != null && (
-              <span className="font-medium text-slate-900">
+              <span className="tnum font-medium text-ink">
                 from {formatUSD(activity.fromPriceCents)}
               </span>
             )}
             {activity.waiverRequired && (
-              <span className="flex items-center gap-1 text-slate-500">
+              <span className="flex items-center gap-1">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                   <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
                   <polyline points="14 2 14 8 20 8" />
@@ -307,43 +303,45 @@ export default async function ActivityDetailPage({ params }: PageProps) {
             Activities with no online rate (e.g. the Grand Patio, "Pricing soon")
             have no bookable funnel, so they show an inquiry panel with the marina's
             phone instead of a booking widget that leads nowhere. */}
-        <div className="min-w-0 lg:col-start-2 lg:row-start-1 lg:row-span-3 lg:sticky lg:top-20 lg:self-start">
+        <div className="min-w-0 lg:col-start-2 lg:row-start-1 lg:row-span-3 lg:sticky lg:top-8 lg:self-start">
           {bookable ? (
-            <BookingWidget activity={activity} initialRange={initialRange} />
-          ) : (
-            <InquiryPanel
-              activityName={activity.name}
-              phone={brand.phone}
-              accentColor={accent}
+            <BookingWidget
+              activity={activity}
+              initialRange={initialRange}
+              timeZone={operatorTimeZone}
+              preselect={searchParams}
+              stickyMobileCta
             />
+          ) : (
+            <InquiryPanel activityName={activity.name} phone={brand.phone} />
           )}
         </div>
 
         {/* Media. Below the fold on a phone, and its client chunk is loaded lazily for
             the same reason: nothing here is needed to make the first booking choice. */}
         <div className="min-w-0 lg:col-start-1 lg:row-start-1">
-          <PhotoGallery
-            photoUrls={activity.photoUrls}
-            name={activity.name}
-            accentColor={accent}
-          />
+          <PhotoGallery photoUrls={activity.photoUrls} name={activity.name} />
         </div>
 
         <div className="flex min-w-0 flex-col gap-6 lg:col-start-1 lg:row-start-3">
           {/* Description */}
           {activity.descriptionHtml ? (
-            <div className="max-w-none text-slate-700">
-              <h2 className="mb-2 text-lg font-semibold text-slate-900">About this experience</h2>
+            <div className="max-w-none text-ink">
+              <h2 className="mb-2 font-display text-[22px] tracking-[0.02em] text-ink">
+                About this experience
+              </h2>
               <div
-                className="space-y-3 leading-relaxed [&_a]:text-[color:var(--brand-color)] [&_a]:underline [&_li]:ml-5 [&_li]:list-disc [&_ul]:space-y-1"
+                className="space-y-3 leading-[1.55] [&_a]:text-accent-ink [&_a]:underline [&_li]:ml-5 [&_li]:list-disc [&_ul]:space-y-1"
                 // Description is operator-authored rich text stored as sanitized HTML.
                 dangerouslySetInnerHTML={{ __html: activity.descriptionHtml }}
               />
             </div>
           ) : (
             <div>
-              <h2 className="mb-2 text-lg font-semibold text-slate-900">About this experience</h2>
-              <p className="text-slate-600">
+              <h2 className="mb-2 font-display text-[22px] tracking-[0.02em] text-ink">
+                About this experience
+              </h2>
+              <p className="leading-[1.55] text-muted">
                 Reserve {activity.name} for up to {activity.maxParticipants} guests. Choose a
                 rate, date, and time to book.
               </p>
@@ -351,8 +349,9 @@ export default async function ActivityDetailPage({ params }: PageProps) {
           )}
 
           {/* Policy note (white-label, pulled from activity config) */}
-          <p className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-            Free self-reschedule up to {activity.selfRescheduleHours} hours before your
+          <p className="border-t border-hairline pt-4 text-sm text-muted">
+            Free self-reschedule up to{' '}
+            <span className="tnum">{activity.selfRescheduleHours}</span> hours before your
             start time.
           </p>
         </div>

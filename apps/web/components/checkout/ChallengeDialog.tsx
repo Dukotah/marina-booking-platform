@@ -213,7 +213,9 @@ export function ChallengeDialog({
         : problem ?? '';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
+    // Espresso overlay + Estate sheet: radius 16, the two-layer overlay shadow,
+    // and no color in the chrome beyond the sage accent on the icon.
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/60 p-4">
       <div
         ref={dialogRef}
         role="dialog"
@@ -221,22 +223,18 @@ export function ChallengeDialog({
         aria-labelledby={titleId}
         aria-describedby={descriptionId}
         onKeyDown={onKeyDown}
-        className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl"
+        className="w-full max-w-md rounded-sheet bg-surface p-6 shadow-overlay"
       >
         <div className="flex items-start gap-3">
-          {/* The tenant's own accent, same CSS var the brand button uses. */}
-          <ShieldCheck
-            className="mt-0.5 h-6 w-6 shrink-0 text-[var(--brand-color,#0f766e)]"
-            aria-hidden
-          />
+          <ShieldCheck className="mt-0.5 h-6 w-6 shrink-0 text-accent-ink" aria-hidden />
           <div>
-            <h2 id={titleId} className="text-lg font-semibold text-slate-900">
+            <h2 id={titleId} className="text-lg font-semibold text-ink">
               Your bank needs to confirm this payment
             </h2>
-            <p id={descriptionId} className="mt-2 text-sm text-slate-600">
+            <p id={descriptionId} className="mt-2 text-sm text-muted">
               For your security, your bank asks for an extra check on some card
-              payments. Confirm {formatUSD(amountCents)} to finish your booking — your
-              reservation is held until you do.
+              payments. Confirm <span className="tnum">{formatUSD(amountCents)}</span> to
+              finish your booking — your reservation is held until you do.
             </p>
           </div>
         </div>
@@ -246,7 +244,7 @@ export function ChallengeDialog({
           at this dialog, so an interruption adds nothing, and an alert here would
           be indistinguishable from the checkout page's own failure banner.
         */}
-        <p role="status" aria-live="polite" className="mt-4 min-h-[1.25rem] text-sm text-slate-700">
+        <p role="status" aria-live="polite" className="mt-4 min-h-[1.25rem] text-sm text-ink">
           {status}
         </p>
 
@@ -274,7 +272,7 @@ export function ChallengeDialog({
           </Button>
         </div>
 
-        <p className="mt-3 text-center text-xs text-slate-500">
+        <p className="mt-3 text-center text-xs text-muted">
           Cancelling releases your reservation and charges you nothing.
         </p>
       </div>

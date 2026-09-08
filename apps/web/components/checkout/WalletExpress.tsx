@@ -70,10 +70,10 @@ type Status = 'probing' | 'unavailable' | 'ready' | 'paying';
 /** The "or pay with card" rule that keeps the card section visually secondary. */
 function CardDivider() {
   return (
-    <div className="flex items-center gap-3 text-xs font-medium uppercase tracking-wide text-slate-400">
-      <span className="h-px flex-1 bg-slate-200" aria-hidden />
+    <div className="flex items-center gap-3 text-xs font-medium uppercase tracking-wide text-muted">
+      <span className="h-px flex-1 bg-hairline" aria-hidden />
       or pay with card
-      <span className="h-px flex-1 bg-slate-200" aria-hidden />
+      <span className="h-px flex-1 bg-hairline" aria-hidden />
     </div>
   );
 }
@@ -89,7 +89,7 @@ function InertSeam() {
         <button
           type="button"
           disabled
-          className="flex min-h-[48px] items-center justify-center gap-2 rounded-xl bg-black px-4 text-sm font-semibold text-white opacity-40"
+          className="flex min-h-[48px] items-center justify-center gap-2 rounded-lg bg-ink px-4 text-sm font-semibold text-bg opacity-40"
         >
           <Apple className="h-4 w-4" aria-hidden />
           Apple&nbsp;Pay
@@ -97,13 +97,13 @@ function InertSeam() {
         <button
           type="button"
           disabled
-          className="flex min-h-[48px] items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-800 opacity-40"
+          className="flex min-h-[48px] items-center justify-center gap-2 rounded-lg border border-hairline bg-surface px-4 text-sm font-semibold text-ink opacity-40"
         >
           <Wallet className="h-4 w-4" aria-hidden />
           Google&nbsp;Pay
         </button>
       </div>
-      <p className="text-center text-xs text-slate-400">
+      <p className="text-center text-xs text-muted">
         Express wallet checkout is coming soon.
       </p>
       <CardDivider />
@@ -131,67 +131,68 @@ function SandboxSheet({
   }, []);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 p-0 sm:items-center sm:p-4">
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/50 p-0 sm:items-center sm:p-4">
       <div
         role="dialog"
         aria-modal="true"
         aria-label={request.label}
-        className="w-full max-w-sm rounded-t-2xl bg-white p-5 shadow-xl sm:rounded-2xl"
+        className="w-full max-w-sm rounded-t-sheet bg-surface p-5 shadow-overlay sm:rounded-sheet"
         onKeyDown={(e) => {
           if (e.key === 'Escape') onChoose({ action: 'cancel' });
         }}
       >
         <div className="flex items-center justify-between">
-          <p className="text-sm font-semibold text-slate-900">{request.label}</p>
+          <p className="text-sm font-semibold text-ink">{request.label}</p>
         </div>
 
         <dl className="mt-4 space-y-1.5">
           {request.lines.map((line) => (
             <div key={line.label} className="flex items-baseline justify-between text-sm">
-              <dt className="text-slate-600">{line.label}</dt>
-              <dd className="text-slate-900">
+              <dt className="text-muted">{line.label}</dt>
+              <dd className="tnum text-ink">
                 {line.amountCents < 0
                   ? `−${formatUSD(Math.abs(line.amountCents))}`
                   : formatUSD(line.amountCents)}
               </dd>
             </div>
           ))}
-          <div className="!mt-3 flex items-baseline justify-between border-t border-slate-200 pt-3 text-base font-semibold">
-            <dt className="text-slate-900">
+          <div className="!mt-3 flex items-baseline justify-between border-t border-hairline pt-3 text-base font-semibold">
+            <dt className="text-ink">
               {request.totals.estimated ? 'Total (estimated)' : 'Total'}
             </dt>
-            <dd className="text-slate-900">{formatUSD(request.totals.totalCents)}</dd>
+            <dd className="tnum text-ink">{formatUSD(request.totals.totalCents)}</dd>
           </div>
         </dl>
 
         <div className="mt-5 space-y-2">
+          {/* Wallet-brand black, as the real Apple/Google sheets render it. */}
           <button
             ref={payRef}
             type="button"
             onClick={() => onChoose({ action: 'pay' })}
-            className="min-h-[48px] w-full rounded-xl bg-black px-4 text-sm font-semibold text-white transition hover:opacity-90"
+            className="min-h-[48px] w-full rounded-lg bg-ink px-4 text-sm font-semibold text-bg transition-opacity hover:opacity-90"
           >
-            Authorize {formatUSD(request.totals.totalCents)}
+            Authorize <span className="tnum">{formatUSD(request.totals.totalCents)}</span>
           </button>
           <div className="grid grid-cols-2 gap-2">
             <button
               type="button"
               onClick={() => onChoose({ action: 'decline' })}
-              className="min-h-[40px] rounded-lg border border-slate-300 px-3 text-xs font-medium text-slate-600 transition hover:bg-slate-50"
+              className="min-h-[40px] rounded-lg border border-hairline px-3 text-xs font-medium text-muted transition-colors hover:bg-bg"
             >
               Simulate decline
             </button>
             <button
               type="button"
               onClick={() => onChoose({ action: 'cancel' })}
-              className="min-h-[40px] rounded-lg border border-slate-300 px-3 text-xs font-medium text-slate-600 transition hover:bg-slate-50"
+              className="min-h-[40px] rounded-lg border border-hairline px-3 text-xs font-medium text-muted transition-colors hover:bg-bg"
             >
               Cancel
             </button>
           </div>
         </div>
 
-        <p className="mt-3 text-center text-xs text-slate-400">
+        <p className="mt-3 text-center text-xs text-muted">
           No real wallet or card is involved. The charge is settled by the local
           payment simulator.
         </p>
@@ -343,10 +344,10 @@ export function WalletExpress({
         aria-busy={busy}
         aria-describedby={blocked ? 'wallet-blocked' : undefined}
         className={
-          'flex min-h-[48px] w-full items-center justify-center gap-2 rounded-xl px-4 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 ' +
+          'flex min-h-[48px] w-full items-center justify-center gap-2 rounded-lg px-4 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 ' +
           (isApple
-            ? 'bg-black text-white hover:opacity-90'
-            : 'border border-slate-300 bg-white text-slate-800 hover:bg-slate-50')
+            ? 'bg-ink text-bg hover:opacity-90'
+            : 'border border-hairline bg-surface text-ink hover:bg-bg')
         }
       >
         {busy ? (
@@ -360,13 +361,13 @@ export function WalletExpress({
       </button>
 
       {blocked && (
-        <p id="wallet-blocked" className="text-center text-xs text-slate-500">
+        <p id="wallet-blocked" className="text-center text-xs text-muted">
           {blockedReason}
         </p>
       )}
 
       {error && (
-        <p role="alert" className="text-center text-xs text-red-600">
+        <p role="alert" className="text-center text-xs text-danger">
           {error}
         </p>
       )}

@@ -13,13 +13,16 @@
 import { useRef } from 'react';
 import { formatUSD, formatDuration } from '@/lib/format';
 import type { CatalogRate } from '@/lib/api';
-import { onBrandForeground } from '@/lib/brand';
 
 interface RateCardsProps {
   rates: CatalogRate[];
   selectedRateId: string | null;
   onSelect: (rate: CatalogRate) => void;
-  accentColor: string;
+  /**
+   * Legacy prop, retained for call-site compatibility. Estate chrome no longer
+   * paints the operator/activity color; selection is always the sage accent.
+   */
+  accentColor?: string;
 }
 
 /** Per-hour price in cents, or null if duration is non-positive. */
@@ -28,7 +31,7 @@ function perHourCents(rate: CatalogRate): number | null {
   return Math.round((rate.priceCents / rate.durationMinutes) * 60);
 }
 
-export function RateCards({ rates, selectedRateId, onSelect, accentColor }: RateCardsProps) {
+export function RateCards({ rates, selectedRateId, onSelect }: RateCardsProps) {
   /*
    * Keyboard semantics for a radiogroup made of buttons.
    *
@@ -83,7 +86,7 @@ export function RateCards({ rates, selectedRateId, onSelect, accentColor }: Rate
 
   if (rates.length === 0) {
     return (
-      <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+      <div className="rounded-lg border border-hairline bg-surface p-4 text-sm text-muted">
         No rates are available for this activity yet. Please check back soon or
         contact us to book.
       </div>
@@ -122,39 +125,31 @@ export function RateCards({ rates, selectedRateId, onSelect, accentColor }: Rate
             aria-checked={selected}
             onClick={() => onSelect(rate)}
             onKeyDown={(event) => onKeyDown(event, index)}
-            className="relative flex flex-col rounded-xl border-2 bg-white p-4 text-left transition focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1"
-            style={{
-              borderColor: selected ? accentColor : '#e2e8f0',
-              boxShadow: selected ? `0 0 0 1px ${accentColor}` : undefined,
-            }}
+            // The selected border is also painted pre-hydration by the inline
+            // stylesheet in app/activities/[id]/page.tsx, which defaults to the
+            // same sage token — so a pre-React tap and this render agree.
+            className={`relative flex flex-col rounded-lg border-2 bg-surface p-4 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-ink focus-visible:ring-offset-1 ${
+              selected ? 'border-accent' : 'border-hairline hover:border-accent'
+            }`}
           >
             {(isCheapest || isLongest) && (
-              <span
-                // The accent here is the ACTIVITY's colour, not the tenant brand, so the
-                // stylesheet's --brand-foreground override cannot reach it. Derive a
-                // legible foreground for this specific colour instead of assuming white,
-                // which measured 2.77:1 on the seeded sky blue at 10px.
-                className="absolute -top-2 right-3 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
-                style={{ backgroundColor: accentColor, color: onBrandForeground(accentColor) }}
-              >
+              <span className="absolute -top-2 right-3 rounded-full border border-hairline bg-surface px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent-ink">
                 {isCheapest ? 'Best value' : 'Most time'}
               </span>
             )}
 
             <div className="flex items-start justify-between gap-3">
               <div>
-                <p className="font-semibold text-slate-900">{rate.name}</p>
-                <p className="mt-0.5 text-sm text-slate-500">
+                <p className="font-semibold text-ink">{rate.name}</p>
+                <p className="mt-0.5 text-sm text-muted">
                   {formatDuration(rate.durationMinutes) || 'Flexible duration'}
                 </p>
               </div>
               <span
                 aria-hidden
-                className="mt-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition"
-                style={{
-                  borderColor: selected ? accentColor : '#cbd5e1',
-                  backgroundColor: selected ? accentColor : 'transparent',
-                }}
+                className={`mt-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-colors ${
+                  selected ? 'border-accent bg-accent' : 'border-hairline bg-transparent'
+                }`}
               >
                 {selected && (
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
@@ -165,11 +160,11 @@ export function RateCards({ rates, selectedRateId, onSelect, accentColor }: Rate
             </div>
 
             <div className="mt-3 flex items-baseline gap-2">
-              <span className="text-2xl font-bold text-slate-900">
+              <span className="tnum text-xl font-semibold text-ink">
                 {formatUSD(rate.priceCents)}
               </span>
               {hourly != null && rate.durationMinutes !== 60 && (
-                <span className="text-xs text-slate-400">
+                <span className="tnum text-xs text-muted">
                   {formatUSD(hourly)}/hr
                 </span>
               )}

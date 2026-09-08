@@ -7,14 +7,15 @@
  * phone is configured it degrades to a plain "contact the marina" note so the
  * panel never promises an action it cannot fulfill. Server component — no state.
  */
-import { onBrandForeground } from '@/lib/brand';
-
 interface InquiryPanelProps {
   activityName: string;
   /** Operator phone, formatted for display, e.g. "(707) 433-2200". */
   phone: string | null;
-  /** The activity's accent color, for the call button. */
-  accentColor: string;
+  /**
+   * Legacy prop, retained for call-site compatibility. Estate chrome no longer
+   * paints the operator/activity color; the call action is the sage accent.
+   */
+  accentColor?: string;
 }
 
 /** Digits-only tel: href, e.g. "(707) 433-2200" -> "tel:+17074332200". */
@@ -24,17 +25,18 @@ function telHref(phone: string): string {
   return `tel:${e164}`;
 }
 
-export function InquiryPanel({ activityName, phone, accentColor }: InquiryPanelProps) {
+export function InquiryPanel({ activityName, phone }: InquiryPanelProps) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+    <div className="rounded-card border border-hairline bg-surface p-5 shadow-card sm:p-6">
       <div className="flex flex-col gap-4">
         <div>
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800">
-            <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+          <p className="text-[13px] font-semibold uppercase tracking-wide text-muted">
             By reservation
-          </span>
-          <h2 className="mt-3 text-lg font-semibold text-slate-900">Reserve the {activityName}</h2>
-          <p className="mt-1.5 text-sm leading-relaxed text-slate-600">
+          </p>
+          <h2 className="mt-2 font-display text-[19px] tracking-[0.02em] text-ink">
+            Reserve the {activityName}
+          </h2>
+          <p className="mt-1.5 text-sm leading-relaxed text-muted">
             This space is booked directly with the marina so we can match it to your group and
             date. Give us a call and we will get you set up.
           </p>
@@ -44,8 +46,7 @@ export function InquiryPanel({ activityName, phone, accentColor }: InquiryPanelP
           <>
             <a
               href={telHref(phone)}
-              className="flex min-h-[52px] w-full items-center justify-center gap-2 rounded-xl px-4 py-3 text-center text-base font-semibold shadow-sm transition hover:opacity-90"
-              style={{ backgroundColor: accentColor, color: onBrandForeground(accentColor) }}
+              className="flex min-h-[52px] w-full items-center justify-center gap-2 rounded-lg bg-accent px-4 py-3 text-center text-base font-semibold text-white transition-opacity hover:opacity-90"
             >
               <svg
                 width="18"
@@ -62,12 +63,12 @@ export function InquiryPanel({ activityName, phone, accentColor }: InquiryPanelP
               </svg>
               Call {phone}
             </a>
-            <p className="text-center text-xs text-slate-500">
-              Tap to call, or dial {phone}.
+            <p className="text-center text-xs text-muted">
+              Tap to call, or dial <span className="tnum">{phone}</span>.
             </p>
           </>
         ) : (
-          <p className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+          <p className="rounded-lg border border-hairline bg-surface px-4 py-3 text-sm text-muted">
             Contact the marina to reserve this space.
           </p>
         )}
