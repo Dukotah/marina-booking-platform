@@ -27,6 +27,17 @@ const nextConfig = {
       '.js': ['.ts', '.tsx', '.js'],
       '.jsx': ['.tsx', '.jsx'],
     };
+    // Namespace the webpack runtime globals per app. Next.js forces
+    // `output.library = "_N_E"` for every app, so out of the box BOTH the admin
+    // (:3002) and web (:3000) dev servers emit the SAME `webpackChunk_N_E`
+    // chunk-loading global and `webpackHotUpdate_N_E` HMR global. When a single
+    // browser session visits both origins, one app's HMR/chunk push is handled by
+    // the other app's webpack context, hard-navigating the tab across apps and
+    // producing ChunkLoadError staleness. Giving each app its own globals isolates
+    // the runtimes. This only changes the emitted global name, so it is safe in
+    // both dev and production builds.
+    config.output.chunkLoadingGlobal = 'webpackChunk_marina_admin';
+    config.output.hotUpdateGlobal = 'webpackHotUpdate_marina_admin';
     return config;
   },
 };
