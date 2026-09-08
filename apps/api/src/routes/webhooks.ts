@@ -1,34 +1,46 @@
 /**
- * Stripe webhooks — POST /webhooks/stripe
+ * Payment webhooks — POST /webhooks/stripe
  *
- * Stripe calls this endpoint server-to-server when payments and refunds change
- * state (a refund clears, a payment fails, a dispute adjusts the balance). We use
- * these events to keep our local `Payment` row in sync with Stripe's source of
- * truth so reconciliation and the admin UI never drift from reality.
+ * The payment processor calls this endpoint server-to-server when payments and
+ * refunds change state (a refund clears, a payment fails, a dispute adjusts the
+ * balance). We use these events to keep our local `Payment` row in sync with the
+ * processor's source of truth so reconciliation and the admin UI never drift from
+ * reality.
  *
- * TENANCY: Stripe has no concept of our operators, so the request arrives with NO
- * tenant context — it is mounted OUTSIDE the /api tenant middleware. We resolve the
- * operator from the linkage we already store: every Payment keeps the Stripe
- * PaymentIntent id in `processor_transaction_id`, so we look the row up (admin
- * client, by that id — the one intentionally cross-tenant lookup) to discover its
- * `operator_id`, then write through the tenant-scoped client `forOperator(...)` so
- * the RLS policies still apply on the mutation.
+ * PROVIDER SEAM: verification + parsing is owned by the resolved PaymentProvider
+ * (`getWebhookProvider().verifyAndParseWebhook`), which normalizes processor
+ * events to three facts — payment_succeeded, payment_failed, refund_completed —
+ * and this route only knows how to apply those to the ledger. The path stays
+ * `/webhooks/stripe` for back-compat (it is what live Stripe endpoints and the
+ * local simulator are pointed at); a second processor would mount its own path
+ * here and resolve its own provider.
  *
- * SECURITY: if `STRIPE_WEBHOOK_SECRET` is set the signature is verified on every
- * request (constructWebhookEvent throws on mismatch -> 401). If it is unset
- * (local/dev) we accept unverified events so the flow can be exercised against the
- * Stripe CLI without a registered endpoint.
+ * TENANCY: processors have no concept of our operators, so the request arrives
+ * with NO tenant context — it is mounted OUTSIDE the /api tenant middleware. We
+ * resolve the operator from the linkage we already store: every Payment keeps the
+ * processor's charge handle in `processor_transaction_id`, so we look the row up
+ * (admin client, by that id — the one intentionally cross-tenant lookup) to
+ * discover its `operator_id`, then write through the tenant-scoped client
+ * `forOperator(...)` so the RLS policies still apply on the mutation.
+ *
+ * SECURITY: the Stripe provider verifies the signature on every request when
+ * `STRIPE_WEBHOOK_SECRET` is set (throws → 401). When it is unset (local/dev) the
+ * body is parsed unverified so the flow can be exercised against the Stripe CLI —
+ * or the local simulator — without a registered endpoint.
  *
  * ROBUSTNESS: unknown event types, already-deleted payments, and payments we don't
- * recognize all return 200 — Stripe retries non-2xx responses with backoff, and we
- * never want to be retried for an event we have intentionally ignored. All money is
- * integer cents (Stripe's native unit).
+ * recognize all return 200 — processors retry non-2xx responses with backoff, and
+ * we never want to be retried for an event we have intentionally ignored. All
+ * money is integer cents.
  */
 import { Hono } from 'hono';
-import type Stripe from 'stripe';
 import { adminPrisma, forOperator, type PaymentStatus } from '@marina/database';
 import type { Env } from '../context.js';
-import { constructWebhookEvent, StripePaymentError } from '../services/stripe.js';
+import {
+  getWebhookProvider,
+  PaymentProviderError,
+  type NormalizedPaymentEvent,
+} from '../services/payments/index.js';
 
 export const webhooks = new Hono<Env>();
 
@@ -38,92 +50,83 @@ function statusFromRefundTotals(amountCents: number, refundedCents: number): Pay
   return refundedCents >= amountCents ? 'REFUNDED' : 'PARTIAL_REFUND';
 }
 
-/** Find our Payment row for a Stripe PaymentIntent id (cross-tenant admin lookup). */
-async function findPaymentByIntent(intentId: string | null | undefined) {
-  if (!intentId) return null;
+/** Find our Payment row for a processor charge handle (cross-tenant admin lookup). */
+async function findPaymentByRef(paymentRef: string | null | undefined) {
+  if (!paymentRef) return null;
   return adminPrisma.payment.findFirst({
-    where: { processor_transaction_id: intentId, processor: 'STRIPE' },
+    where: { processor_transaction_id: paymentRef, processor: 'STRIPE' },
     select: { id: true, operator_id: true, amount_cents: true, refunded_cents: true },
   });
 }
 
 /**
- * `charge.refunded` — Stripe sends the full Charge with its cumulative
- * `amount_refunded`. Sync that onto the Payment (monotonic + idempotent under
- * retries) and recompute status.
+ * Apply one normalized event to the ledger. Returns false when the payment is not
+ * ours to update (unknown ref) — acknowledged, never retried.
  */
-async function handleChargeRefunded(charge: Stripe.Charge): Promise<boolean> {
-  const intentId = typeof charge.payment_intent === 'string' ? charge.payment_intent : charge.payment_intent?.id;
-  const existing = await findPaymentByIntent(intentId);
-  if (!existing) return false;
-
-  const refundedCents = Math.min(
-    existing.amount_cents,
-    Math.max(existing.refunded_cents, charge.amount_refunded ?? 0),
-  );
-  const status = statusFromRefundTotals(existing.amount_cents, refundedCents);
-
-  const db = forOperator(existing.operator_id);
-  await db.payment.update({
-    where: { id: existing.id },
-    data: { status, refunded_cents: refundedCents },
-  });
-  return true;
-}
-
-/** `payment_intent.*` — sync the headline PAID/FAILED status. */
-async function handleIntentStatus(intent: Stripe.PaymentIntent, status: PaymentStatus): Promise<boolean> {
-  const existing = await findPaymentByIntent(intent.id);
+async function applyPaymentEvent(event: NormalizedPaymentEvent): Promise<boolean> {
+  const existing = await findPaymentByRef(event.paymentRef);
   if (!existing) return false;
   const db = forOperator(existing.operator_id);
-  await db.payment.update({ where: { id: existing.id }, data: { status } });
-  return true;
+
+  switch (event.type) {
+    case 'payment_succeeded':
+      await db.payment.update({ where: { id: existing.id }, data: { status: 'PAID' } });
+      return true;
+    case 'payment_failed':
+      await db.payment.update({ where: { id: existing.id }, data: { status: 'FAILED' } });
+      return true;
+    case 'refund_completed': {
+      // The event carries the CUMULATIVE refunded total. Sync it onto the Payment
+      // (monotonic + idempotent under retries) and recompute status.
+      const refundedCents = Math.min(
+        existing.amount_cents,
+        Math.max(existing.refunded_cents, event.refundedTotalCents),
+      );
+      await db.payment.update({
+        where: { id: existing.id },
+        data: {
+          status: statusFromRefundTotals(existing.amount_cents, refundedCents),
+          refunded_cents: refundedCents,
+        },
+      });
+      return true;
+    }
+  }
 }
 
 /**
- * POST /webhooks/stripe — receive and process Stripe event notifications.
+ * POST /webhooks/stripe — receive and process payment event notifications.
  *
  * Always 200 for events we successfully receive (verified or intentionally
- * ignored) so Stripe does not retry. 401 only for a failed signature check; 400
- * for a body that isn't JSON.
+ * ignored) so the processor does not retry. 401 only for a failed signature check;
+ * 400 for a body that isn't parseable or when no provider is configured.
  */
 webhooks.post('/stripe', async (c) => {
   // The signature is computed over the EXACT raw bytes — read text(), never the
   // re-serialized JSON (key order/whitespace would differ and break verification).
   const rawBody = await c.req.text();
-  const signature = c.req.header('stripe-signature');
+  const provider = await getWebhookProvider();
 
-  let event: Stripe.Event;
+  let parsed;
   try {
-    event = constructWebhookEvent(rawBody, signature);
+    parsed = provider.verifyAndParseWebhook(rawBody, (name) => c.req.header(name));
   } catch (err) {
-    if (err instanceof StripePaymentError) {
+    if (err instanceof PaymentProviderError) {
       return c.json({ error: err.message }, err.status === 401 ? 401 : 400);
     }
     return c.json({ error: 'Invalid webhook body' }, 400);
   }
 
   try {
-    switch (event.type) {
-      case 'charge.refunded':
-        await handleChargeRefunded(event.data.object as Stripe.Charge);
-        break;
-      case 'payment_intent.succeeded':
-        await handleIntentStatus(event.data.object as Stripe.PaymentIntent, 'PAID');
-        break;
-      case 'payment_intent.payment_failed':
-        await handleIntentStatus(event.data.object as Stripe.PaymentIntent, 'FAILED');
-        break;
-      default:
-        // Unknown/unhandled event type — acknowledge so Stripe stops retrying.
-        break;
+    for (const event of parsed.events) {
+      await applyPaymentEvent(event);
     }
   } catch (err) {
-    // A processing failure (e.g. transient DB error) SHOULD be retried by Stripe,
-    // so surface a 500 here rather than swallowing it.
-    console.error('stripe webhook processing failed', {
-      type: event.type,
-      eventId: event.id,
+    // A processing failure (e.g. transient DB error) SHOULD be retried by the
+    // processor, so surface a 500 here rather than swallowing it.
+    console.error('payment webhook processing failed', {
+      type: parsed.providerEventType,
+      eventId: parsed.providerEventId,
       error: err instanceof Error ? err.message : String(err),
     });
     return c.json({ error: 'Webhook processing failed' }, 500);

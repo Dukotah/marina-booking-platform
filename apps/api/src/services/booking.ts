@@ -24,7 +24,7 @@ import {
   type PricingPromo,
 } from '@marina/core';
 import { withTenant } from '@marina/database';
-import { createPayment, arePaymentsEnabled } from './stripe.js';
+import { getPaymentProvider, settledOrThrow } from './payments/index.js';
 import { reconcileSlotPrice } from './pricing-rules.js';
 import {
   activityResourcePools,
@@ -758,21 +758,27 @@ async function createBookingAttempt(
     //     matching Payment ledger row so the two never drift. In fake-payments dev
     //     mode this never touches Stripe; when payments aren't configured at all we
     //     still split the ledger but skip the Payment row (no processor to charge). ---
-    if (takeDeposit && arePaymentsEnabled()) {
+    const depositProvider = takeDeposit ? await getPaymentProvider(operatorId) : null;
+    if (takeDeposit && depositProvider && depositProvider.providerKey !== 'none') {
       // Derived from the order id, so it is stable across a retry of this order and
       // distinct from every other order's deposit. A replayed submit never reaches
       // here at all (the order insert above loses the race first), so this guards
       // the narrower case of a crash between "processor accepted" and "row written".
       const depositKey = `deposit-${order.id}`;
-      const charge = await createPayment({
-        orderId: order.id,
-        sourceId: 'deposit',
-        amountCents: depositCents,
-        idempotencyKey: depositKey,
-        // We are inside the transaction that created this order, so the simulator
-        // cannot look the tenant up yet — hand it over.
-        operatorId,
-      });
+      // settledOrThrow: a service-layer deposit has no route to answer a 3DS
+      // challenge from, so anything but success throws (exactly what the pre-seam
+      // driver did) and aborts the booking transaction cleanly.
+      const charge = settledOrThrow(
+        await depositProvider.charge({
+          orderId: order.id,
+          tokenizedSource: 'deposit',
+          amountCents: depositCents,
+          idempotencyKey: depositKey,
+          // We are inside the transaction that created this order, so the simulator
+          // cannot look the tenant up yet — hand it over.
+          operatorId,
+        }),
+      );
       await tx.payment.create({
         data: {
           operator_id: operatorId,
@@ -784,7 +790,7 @@ async function createBookingAttempt(
           card_last_four: charge.cardLastFour,
           cardholder_name: charge.cardholderName,
           processor: 'STRIPE',
-          processor_transaction_id: charge.paymentId,
+          processor_transaction_id: charge.paymentRef,
           idempotency_key: depositKey,
         },
       });
@@ -1103,7 +1109,8 @@ export async function collectBalance(
   orderId: string,
   options: { actor?: string; method?: 'CARD' | 'CASH' } = {},
 ): Promise<CollectBalanceResult> {
-  if (!arePaymentsEnabled() && (options.method ?? 'CARD') === 'CARD') {
+  const paymentProvider = await getPaymentProvider(operatorId);
+  if (paymentProvider.providerKey === 'none' && (options.method ?? 'CARD') === 'CARD') {
     throw new BookingError('PAYMENTS_NOT_CONFIGURED', 'Payments are not configured', 501);
   }
 
@@ -1136,17 +1143,21 @@ export async function collectBalance(
     let cardholderName: string | null = null;
     let processorTransactionId: string | null = null;
     if (method === 'CARD') {
-      const charge = await createPayment({
-        orderId: order.id,
-        sourceId: 'balance',
-        amountCents: balanceDue,
-        idempotencyKey: `balance-${order.id}-${order.amount_paid_cents}`,
-        operatorId,
-      });
+      // settledOrThrow: a staff balance-collection has no 3DS answer path either —
+      // anything but success throws and the caller reports it (pre-seam behavior).
+      const charge = settledOrThrow(
+        await paymentProvider.charge({
+          orderId: order.id,
+          tokenizedSource: 'balance',
+          amountCents: balanceDue,
+          idempotencyKey: `balance-${order.id}-${order.amount_paid_cents}`,
+          operatorId,
+        }),
+      );
       cardBrand = charge.cardBrand;
       cardLastFour = charge.cardLastFour;
       cardholderName = charge.cardholderName;
-      processorTransactionId = charge.paymentId;
+      processorTransactionId = charge.paymentRef;
     }
 
     const payment = await tx.payment.create({

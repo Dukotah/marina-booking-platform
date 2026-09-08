@@ -1,44 +1,42 @@
 /**
- * Stripe payments service (PaymentIntents, sandbox/test-first).
+ * Stripe low-level driver support — client construction, env detection, and the
+ * error/result shapes the rest of the payment layer shares.
  *
- * Thin, framework-agnostic wrapper around the Stripe Node SDK that the payments
- * routes call. It deliberately does NOT touch the database — the routes own the
- * Payment/Order/OrderEvent writes so they stay inside one tenant-scoped
- * transaction. This module only talks to Stripe and normalizes its results and
- * errors into plain shapes the routes can serialize to JSON.
+ * HISTORY: this module used to be the whole payment service (charge/refund/webhook
+ * verification with the sandbox + fake-payments dispatch inlined). That logic now
+ * lives behind the provider seam in `./payments/` — `stripe-provider.ts` owns every
+ * Stripe API call, `sandbox-provider.ts` owns the simulator, and `payments/index.ts`
+ * picks the provider per operator. What remains here is what BOTH sides still
+ * share:
  *
- * Configuration comes entirely from env:
- *   - STRIPE_SECRET_KEY   (required; if missing the platform is "not configured")
- *   - STRIPE_WEBHOOK_SECRET (optional; enables webhook signature verification)
+ *   - the error classes (`StripePaymentError` extends the provider-neutral
+ *     `PaymentProviderError`, so routes catch the neutral class and every existing
+ *     throw — including the sandbox simulator's — still lands),
+ *   - the result shapes the sandbox simulator returns (`StripePaymentResult`),
+ *   - env configuration detection (`isStripeConfigured` / `isFakePaymentsEnabled`
+ *     / `arePaymentsEnabled`), and
+ *   - the memoized Stripe client factory, now keyed by secret so a per-operator
+ *     key from an Integration record gets its own client.
  *
- * Charge model: the browser collects a card with Stripe.js / Elements and creates
- * a PaymentMethod, whose id is sent to us as `sourceId`. We create + confirm a
- * PaymentIntent with that payment method in one synchronous call. Cards that
- * require 3-D Secure / SCA would come back `requires_action`; we treat anything
- * other than `succeeded` as a decline for now (full SCA handling is a follow-up).
+ * Configuration comes from env (STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET) or from
+ * a per-operator `stripe` Integration record — see `payments/index.ts`.
  *
  * All amounts crossing this boundary are integer USD cents (the platform-wide
  * money convention) — which is exactly Stripe's unit, so no conversion is needed.
  */
 import Stripe from 'stripe';
-
-/** USD is the only supported settlement currency for now. */
-const CURRENCY = 'usd';
+import { PaymentProviderError, PaymentsNotConfiguredError } from './payments/types.js';
 
 /**
  * Thrown when a Stripe API call fails. Carries an HTTP-ish status and a clean,
  * customer-safe message so routes can turn it straight into JSON without leaking
- * SDK internals or stack traces.
+ * SDK internals or stack traces. Extends PaymentProviderError so provider-agnostic
+ * callers catch it without knowing Stripe exists.
  */
-export class StripePaymentError extends Error {
-  readonly status: number;
-  /** Stripe's machine-readable error code, when available. */
-  readonly code?: string;
+export class StripePaymentError extends PaymentProviderError {
   constructor(message: string, status = 502, code?: string) {
-    super(message);
+    super(message, status, code);
     this.name = 'StripePaymentError';
-    this.status = status;
-    this.code = code;
   }
 }
 
@@ -46,10 +44,9 @@ export class StripePaymentError extends Error {
  * Thrown (and surfaced as 501) when Stripe credentials are not configured. Lets
  * the rest of the app boot and run without payments wired up.
  */
-export class StripeNotConfiguredError extends Error {
-  readonly status = 501;
+export class StripeNotConfiguredError extends PaymentsNotConfiguredError {
   constructor() {
-    super('payments not configured');
+    super();
     this.name = 'StripeNotConfiguredError';
   }
 }
@@ -73,29 +70,31 @@ export function isFakePaymentsEnabled(): boolean {
   );
 }
 
-/** True when payments can be taken — real Stripe OR the dev simulator. */
+/** True when payments can be taken via ENV config — real Stripe OR the dev simulator. */
 export function arePaymentsEnabled(): boolean {
   return isStripeConfigured() || isFakePaymentsEnabled();
 }
 
-let cachedClient: Stripe | null = null;
-let cachedKey: string | null = null;
+/** One client per secret key. Keyed so a rotated (or per-operator) key gets a fresh client. */
+const clientCache = new Map<string, Stripe>();
 
 /**
- * Lazily construct (and memoize) the Stripe client, keyed on the secret so a
- * rotated key in dev is picked up without a restart.
+ * Lazily construct (and memoize) a Stripe client. With no argument the env
+ * STRIPE_SECRET_KEY is used; `payments/index.ts` passes a per-operator key when an
+ * Integration record supplies one.
  */
-export function getStripeClient(): Stripe {
-  const key = process.env.STRIPE_SECRET_KEY;
+export function getStripeClient(secretKey?: string): Stripe {
+  const key = secretKey ?? process.env.STRIPE_SECRET_KEY;
   if (!key) throw new StripeNotConfiguredError();
-  if (cachedClient && cachedKey === key) return cachedClient;
+  const cached = clientCache.get(key);
+  if (cached) return cached;
   // Pin nothing here — the installed SDK's default apiVersion is fine.
-  cachedClient = new Stripe(key);
-  cachedKey = key;
-  return cachedClient;
+  const client = new Stripe(key);
+  clientCache.set(key, client);
+  return client;
 }
 
-/** Normalized payment result the routes persist. */
+/** Normalized payment result the sandbox simulator returns and the ledger persists. */
 export interface StripePaymentResult {
   paymentId: string;
   status: string;
@@ -106,7 +105,7 @@ export interface StripePaymentResult {
   receiptUrl: string | null;
 }
 
-/** Normalized refund result the routes persist. */
+/** Normalized refund result the sandbox simulator returns. */
 export interface StripeRefundResult {
   refundId: string;
   status: string;
@@ -114,7 +113,7 @@ export interface StripeRefundResult {
 }
 
 /** Convert a Stripe failure into a clean StripePaymentError. */
-function toPaymentError(err: unknown): StripePaymentError {
+export function toPaymentError(err: unknown): StripePaymentError {
   if (err instanceof StripePaymentError) return err;
   if (err instanceof Stripe.errors.StripeError) {
     const code = err.code;
@@ -129,175 +128,4 @@ function toPaymentError(err: unknown): StripePaymentError {
     return new StripePaymentError(err.message || 'Stripe request failed', status, code);
   }
   return new StripePaymentError('Unexpected payment processing error', 502);
-}
-
-/**
- * Charge a card. `sourceId` is the PaymentMethod id produced client-side by
- * Stripe.js / Elements. `idempotencyKey` makes retries safe.
- */
-export async function createPayment(input: {
-  orderId: string;
-  sourceId: string;
-  amountCents: number;
-  idempotencyKey: string;
-  /**
-   * Optional and ignored by Stripe, which needs no tenant. The local payment
-   * simulator uses it to skip a cross-tenant order lookup — REQUIRED when charging
-   * from inside a transaction that created the order, because that lookup runs on a
-   * separate connection and cannot see the uncommitted row.
-   */
-  operatorId?: string;
-}): Promise<StripePaymentResult> {
-  if (!Number.isInteger(input.amountCents) || input.amountCents <= 0) {
-    throw new StripePaymentError('Charge amount must be a positive integer (cents)', 400);
-  }
-
-  // Local sandbox: hand the charge to the payment simulator, which models the real
-  // PaymentIntent state machine (3DS challenges, decline codes, timeouts, disputes,
-  // idempotent replay) instead of rubber-stamping every charge. It supersedes the
-  // crude always-succeed fake below. Imported dynamically because the simulator
-  // imports this module's error/result types — a static import would be circular.
-  {
-    const sandbox = await import('./payments-sandbox.js');
-    if (sandbox.sandboxPaymentsEnabled()) {
-      return sandbox.createPayment(input);
-    }
-  }
-
-  // Dev simulator: succeed without touching Stripe.
-  if (isFakePaymentsEnabled()) {
-    return {
-      paymentId: `dev_pi_${input.idempotencyKey}`,
-      status: 'succeeded',
-      amountCents: input.amountCents,
-      cardBrand: 'Visa',
-      cardLastFour: '4242',
-      cardholderName: 'Dev Tester',
-      receiptUrl: null,
-    };
-  }
-
-  const stripe = getStripeClient();
-  try {
-    const intent = await stripe.paymentIntents.create(
-      {
-        amount: input.amountCents,
-        currency: CURRENCY,
-        payment_method: input.sourceId,
-        confirm: true,
-        // Server-side confirm with no redirect-based methods (card only for now).
-        automatic_payment_methods: { enabled: true, allow_redirects: 'never' },
-        metadata: { orderId: input.orderId },
-        description: `Order ${input.orderId}`,
-        expand: ['latest_charge'],
-      },
-      { idempotencyKey: input.idempotencyKey },
-    );
-
-    if (intent.status !== 'succeeded') {
-      // requires_action (3DS), requires_payment_method (declined), etc.
-      throw new StripePaymentError(
-        intent.status === 'requires_action'
-          ? 'This card needs additional authentication. Please try another card.'
-          : 'The card was declined. Please try a different card.',
-        402,
-        intent.status,
-      );
-    }
-
-    const charge =
-      intent.latest_charge && typeof intent.latest_charge !== 'string'
-        ? intent.latest_charge
-        : null;
-    const card = charge?.payment_method_details?.card ?? null;
-
-    return {
-      paymentId: intent.id,
-      status: intent.status,
-      amountCents: typeof intent.amount_received === 'number' ? intent.amount_received : input.amountCents,
-      cardBrand: card?.brand ?? null,
-      cardLastFour: card?.last4 ?? null,
-      cardholderName: charge?.billing_details?.name ?? null,
-      receiptUrl: charge?.receipt_url ?? null,
-    };
-  } catch (err) {
-    throw toPaymentError(err);
-  }
-}
-
-/**
- * Refund a previously captured payment, fully or partially. `paymentId` is the
- * Stripe PaymentIntent id (our Payment.processor_transaction_id).
- */
-export async function refundPayment(input: {
-  paymentId: string;
-  amountCents: number;
-  reason?: string;
-  /** See createPayment: used by the local simulator, ignored by Stripe. */
-  operatorId?: string;
-}): Promise<StripeRefundResult> {
-  if (!Number.isInteger(input.amountCents) || input.amountCents <= 0) {
-    throw new StripePaymentError('Refund amount must be a positive integer (cents)', 400);
-  }
-
-  // Local sandbox: the simulator owns the charge, so it must own the refund too —
-  // otherwise a refund would succeed against a payment that never existed there.
-  {
-    const sandbox = await import('./payments-sandbox.js');
-    if (sandbox.sandboxPaymentsEnabled()) {
-      return sandbox.refundPayment(input);
-    }
-  }
-
-  // Dev simulator: refund without touching Stripe.
-  if (isFakePaymentsEnabled()) {
-    return {
-      refundId: `dev_re_${input.paymentId}_${input.amountCents}`,
-      status: 'succeeded',
-      amountCents: input.amountCents,
-    };
-  }
-
-  const stripe = getStripeClient();
-  try {
-    const refund = await stripe.refunds.create(
-      {
-        payment_intent: input.paymentId,
-        amount: input.amountCents,
-        // Stripe only accepts a fixed reason enum; keep the free-text in metadata.
-        reason: 'requested_by_customer',
-        ...(input.reason ? { metadata: { note: input.reason } } : {}),
-      },
-      { idempotencyKey: `refund-${input.paymentId}-${input.amountCents}` },
-    );
-
-    return {
-      refundId: refund.id,
-      status: refund.status ?? 'pending',
-      amountCents: typeof refund.amount === 'number' ? refund.amount : input.amountCents,
-    };
-  } catch (err) {
-    throw toPaymentError(err);
-  }
-}
-
-/**
- * Verify + parse a Stripe webhook. When STRIPE_WEBHOOK_SECRET is set we verify the
- * signature and throw on mismatch; when unset (dev) we parse the body unverified so
- * the flow can be exercised against the Stripe CLI without a registered endpoint.
- */
-export function constructWebhookEvent(rawBody: string, signature: string | undefined): Stripe.Event {
-  const secret = process.env.STRIPE_WEBHOOK_SECRET;
-  const stripe = getStripeClient();
-  if (!secret) {
-    return JSON.parse(rawBody) as Stripe.Event; // dev: accept unverified
-  }
-  if (!signature) {
-    throw new StripePaymentError('Missing Stripe signature', 401);
-  }
-  try {
-    return stripe.webhooks.constructEvent(rawBody, signature, secret);
-  } catch {
-    throw new StripePaymentError('Invalid Stripe signature', 401);
-  }
 }
