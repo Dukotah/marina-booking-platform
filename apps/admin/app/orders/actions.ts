@@ -32,6 +32,34 @@ export interface ActionResult {
 const ok = (message: string): ActionResult => ({ ok: true, message });
 const fail = (message: string): ActionResult => ({ ok: false, message });
 
+/**
+ * Headers for a trusted admin -> API call (the payment/processor paths the admin does
+ * NOT own, per D-007).
+ *
+ * Two things the API needs and the raw call was missing:
+ *   - `x-operator-id`: the operator PK, which the API's tenant middleware now resolves
+ *     for server-to-server calls.
+ *   - staff identity: `POST /collect-balance` is behind `requireStaff`. When Clerk is not
+ *     enforced (local dev, tests — REQUIRE_CLERK_AUTH unset/false) the API trusts the
+ *     `x-dev-staff-id` shim, so we forward the resolved staff id the same way the e2e
+ *     suite does; without it the call was rejected 401 the moment it reached the API.
+ *     Under enforced Clerk this is omitted (a real bearer token path would be wired
+ *     instead), so it can never weaken a production deployment.
+ */
+function internalApiHeaders(ctx: OperatorContext): Record<string, string> {
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+    'x-operator-id': ctx.operatorId,
+  };
+  if (process.env.REQUIRE_CLERK_AUTH !== 'true') {
+    headers['x-dev-staff-id'] = ctx.auth.userId;
+  }
+  if (process.env.INTERNAL_API_TOKEN) {
+    headers.authorization = `Bearer ${process.env.INTERNAL_API_TOKEN}`;
+  }
+  return headers;
+}
+
 /** Trim + bound a free-text reason so a malicious/huge value can't bloat a row. */
 function cleanReason(reason: unknown): string | undefined {
   if (typeof reason !== 'string') return undefined;
@@ -424,13 +452,7 @@ export async function collectBalanceAction(input: {
       `${base}/api/orders/${encodeURIComponent(input.orderId)}/collect-balance`,
       {
         method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'x-operator-id': ctx.operatorId,
-          ...(process.env.INTERNAL_API_TOKEN
-            ? { authorization: `Bearer ${process.env.INTERNAL_API_TOKEN}` }
-            : {}),
-        },
+        headers: internalApiHeaders(ctx),
         body: JSON.stringify({ method: input.method ?? 'CARD' }),
         cache: 'no-store',
       },

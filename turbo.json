@@ -10,6 +10,7 @@
     "DEV_FAKE_PAYMENTS",
     "PAYMENT_MODE",
     "API_URL",
+    "API_BASE_URL",
     "OPERATOR_SLUG",
     "APP_BASE_DOMAIN",
     "NODE_ENV",
