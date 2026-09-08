@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { cn } from '../../lib/cn';
 import { REPORT_KINDS, REPORT_LABEL, type ReportKind } from './kinds';
 
@@ -12,16 +13,24 @@ export interface ReportTabsProps {
 }
 
 /**
- * Tab strip switching between the revenue, taxes & fees, and occupancy reports.
- * Each tab is a real link that preserves the active date range in the URL, so the
- * report is shareable/bookmarkable and the server re-runs the scoped query.
+ * Tab strip switching between the report kinds. Each tab is a real link that
+ * preserves the active date range AND the shared controls (basis, compare,
+ * activity filter) in the URL, so switching tabs never resets the operator's
+ * context — shareable and bookmarkable, the server re-runs the scoped query.
+ * The sales sub-view (`view`) is sales-specific and is dropped when leaving.
  */
 export function ReportTabs({ active, from, to }: ReportTabsProps) {
+  const searchParams = useSearchParams();
+
   return (
     <div className="border-b border-slate-200">
-      <nav className="-mb-px flex gap-6" aria-label="Reports">
+      <nav className="-mb-px flex gap-6 overflow-x-auto" aria-label="Reports">
         {REPORT_KINDS.map((kind) => {
-          const params = new URLSearchParams({ report: kind, from, to });
+          const params = new URLSearchParams(searchParams.toString());
+          params.set('report', kind);
+          params.set('from', from);
+          params.set('to', to);
+          if (kind !== 'sales') params.delete('view');
           const isActive = kind === active;
           return (
             <Link

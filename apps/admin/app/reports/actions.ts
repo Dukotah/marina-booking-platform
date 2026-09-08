@@ -31,6 +31,7 @@ export async function exportReportCsv(
   rawTo?: string,
   rawBasis?: string,
   rawCompare?: string,
+  rawActivity?: string,
 ): Promise<ExportCsvResult> {
   try {
     await requirePermission('report:read');
@@ -42,7 +43,7 @@ export async function exportReportCsv(
   }
 
   const kind = resolveReportKind(rawKind);
-  const bundle = await getReportsBundle(rawFrom, rawTo, rawBasis, rawCompare);
+  const bundle = await getReportsBundle(rawFrom, rawTo, rawBasis, rawCompare, rawActivity);
 
   const csv = buildReportCsv(kind, bundle);
   const filename = reportFilename(REPORT_LABEL[kind], bundle.range.from, bundle.range.to);

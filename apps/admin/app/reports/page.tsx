@@ -9,15 +9,19 @@ import {
   resolveReportKind,
   type ReportKind,
 } from '../../components/reports/queries';
+import { resolveSalesView } from '../../components/reports/kinds';
 import { ReportTabs } from '../../components/reports/ReportTabs';
 import { ReportDateFilter } from '../../components/reports/ReportDateFilter';
-import { SalesControls } from '../../components/reports/SalesControls';
+import { ReportControls } from '../../components/reports/ReportControls';
 import { ExportButton } from '../../components/reports/ExportButton';
 import { RevenueReportView } from '../../components/reports/RevenueReportView';
 import { SalesReportView } from '../../components/reports/SalesReportView';
+import { MerchandiseReportView } from '../../components/reports/MerchandiseReportView';
 import { TaxesFeesReportView } from '../../components/reports/TaxesFeesReportView';
 import { OccupancyReportView } from '../../components/reports/OccupancyReportView';
 import { GiftCardReportView } from '../../components/reports/GiftCardReportView';
+import { EndOfDayReportView } from '../../components/reports/EndOfDayReportView';
+import { HeadCountReportView } from '../../components/reports/HeadCountReportView';
 
 export const metadata = {
   title: 'Reports',
@@ -36,11 +40,13 @@ function single(value: string | string[] | undefined): string | undefined {
 }
 
 /**
- * Reports page: revenue, taxes & fees, and occupancy over a selectable date
- * range, with CSV export. Every figure is tenant-scoped (RLS) and gated behind
- * `report:read`. Unlike the incumbent, this route never 404s — a missing/invalid
- * report kind falls back to revenue, an unknown range defaults to the last 30
- * days, and a permission failure renders a clear denied state in-page.
+ * Reports page: revenue, itemized sales, merchandise, taxes & fees, occupancy,
+ * gift cards, end-of-day, and head count over a selectable date range, with
+ * full-detail CSV export. Every figure is tenant-scoped (RLS) and gated behind
+ * `report:read`. Unlike the incumbent, this route never 404s — a
+ * missing/invalid report kind falls back to revenue, an unknown range defaults
+ * to the last 30 days, and a permission failure renders a clear denied state
+ * in-page.
  */
 export default async function ReportsPage({ searchParams }: ReportsPageProps) {
   // Gate the whole page on report:read. Render a denied state rather than letting
@@ -51,7 +57,7 @@ export default async function ReportsPage({ searchParams }: ReportsPageProps) {
     if (err instanceof AuthorizationError) {
       return (
         <AdminShell>
-          <PageHeader title="Reports" description="Revenue, taxes & fees, and occupancy." />
+          <PageHeader title="Reports" description="Revenue, sales, merchandise, and operations." />
           <EmptyState
             icon={AlertTriangle}
             title="You don't have access to reports"
@@ -68,15 +74,17 @@ export default async function ReportsPage({ searchParams }: ReportsPageProps) {
   const to = single(searchParams?.to);
   const basis = single(searchParams?.basis);
   const compare = single(searchParams?.compare);
+  const activity = single(searchParams?.activity);
+  const view = resolveSalesView(single(searchParams?.view));
 
-  const bundle = await getReportsBundle(from, to, basis, compare);
+  const bundle = await getReportsBundle(from, to, basis, compare, activity);
   const { range, brandColor } = bundle;
 
   return (
     <AdminShell>
       <PageHeader
         title="Reports"
-        description="Sales, revenue, taxes & fees, occupancy, and gift cards for your business."
+        description="Sales, revenue, merchandise, taxes & fees, occupancy, gift cards, and operations."
         actions={
           <ExportButton
             reportKind={reportKind}
@@ -84,6 +92,8 @@ export default async function ReportsPage({ searchParams }: ReportsPageProps) {
             to={range.to}
             basis={bundle.basis}
             compare={bundle.compare}
+            activityId={bundle.activityId}
+            view={view}
           />
         }
       />
@@ -92,11 +102,18 @@ export default async function ReportsPage({ searchParams }: ReportsPageProps) {
         <ReportDateFilter from={range.from} to={range.to} reportKind={reportKind} />
         <ReportTabs active={reportKind} from={range.from} to={range.to} />
 
-        {reportKind === 'sales' ? (
-          <>
-            <SalesControls basis={bundle.basis} compare={bundle.compare} />
-            <SalesReportView report={bundle.sales} />
-          </>
+        <ReportControls
+          reportKind={reportKind}
+          basis={bundle.basis}
+          compare={bundle.compare}
+          activityId={bundle.activityId}
+          activities={bundle.activities}
+          view={view}
+        />
+
+        {reportKind === 'sales' ? <SalesReportView report={bundle.sales} view={view} /> : null}
+        {reportKind === 'merchandise' ? (
+          <MerchandiseReportView report={bundle.merchandise} />
         ) : null}
         {reportKind === 'revenue' ? (
           <RevenueReportView report={bundle.revenue} brandColor={brandColor} />
@@ -110,6 +127,8 @@ export default async function ReportsPage({ searchParams }: ReportsPageProps) {
         {reportKind === 'gift-cards' ? (
           <GiftCardReportView report={bundle.giftCards} />
         ) : null}
+        {reportKind === 'end-of-day' ? <EndOfDayReportView report={bundle.endOfDay} /> : null}
+        {reportKind === 'head-count' ? <HeadCountReportView report={bundle.headCount} /> : null}
       </div>
     </AdminShell>
   );

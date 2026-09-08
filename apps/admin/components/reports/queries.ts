@@ -1,14 +1,21 @@
 import 'server-only';
 import {
+  buildItemizedDetails,
+  buildItemizedSales,
+  buildMerchandiseReport,
   computeDelta,
   previousPeriod,
   resolveDateBasis,
   rollUpByLocation,
   summarizePayments,
+  type AllocatedLine,
   type DateBasis,
   type Delta,
+  type ItemizedInput,
+  type ItemizedSales,
   type LocationMetricRow,
   type LocationRollUp,
+  type MerchandiseReportData,
   type PaymentsSummary,
 } from '@marina/core';
 import { getOperatorContext, getTenantDb } from '../../lib/session';
@@ -434,6 +441,7 @@ async function buildOccupancyReport(
   start: Date,
   endExclusive: Date,
   range: DateRange,
+  activityId?: string | null,
 ): Promise<OccupancyReport> {
   // Occupancy is keyed by the timeslot's scheduled datetime (when the activity
   // actually runs), not order created_at — that's what "occupancy on a day" means.
@@ -442,6 +450,7 @@ async function buildOccupancyReport(
       operator_id: operatorId,
       status: { not: 'CANCELLED' },
       datetime: { gte: start, lt: endExclusive },
+      ...(activityId ? { activity_id: activityId } : {}),
     },
     select: {
       datetime: true,
@@ -563,7 +572,27 @@ async function resolveOrderDates(
     const cur = earliest.get(it.order_id);
     if (!cur || dt.getTime() < cur.getTime()) earliest.set(it.order_id, dt);
   }
-  return new Map(Array.from(earliest.entries()).map(([id, dt]) => [id, isoDate(startOfDay(dt))]));
+  const result = new Map(
+    Array.from(earliest.entries()).map(([id, dt]) => [id, isoDate(startOfDay(dt))]),
+  );
+
+  // Orders with NO booking items (register merch/misc-only sales) have no
+  // appointment to attribute to — fall back to created_at so they don't
+  // silently vanish from appointment-basis reports.
+  const itemless = await db.order.findMany({
+    where: {
+      operator_id: operatorId,
+      status: { in: [...REVENUE_STATUSES] },
+      created_at: { gte: start, lt: endExclusive },
+      items: { none: {} },
+    },
+    select: { id: true, created_at: true },
+  });
+  for (const o of itemless) {
+    if (!result.has(o.id)) result.set(o.id, isoDate(startOfDay(o.created_at)));
+  }
+
+  return result;
 }
 
 export interface SalesTotals {
@@ -583,18 +612,23 @@ export interface SalesTotals {
 export interface SalesReport {
   range: DateRange;
   basis: DateBasis;
+  /** Activity filter applied (orders that include this activity), if any. */
+  activityId: string | null;
   totals: SalesTotals;
   /** Payments rolled up by tender method (card / cash / gift card / comp). */
   payments: PaymentsSummary;
-  /**
-   * Merchandise + packages breakouts. The current data model records merchandise
-   * only as inventory decrements and order subtotal (no per-order merch line),
-   * and there is no packages feature at all — so these are reported as
-   * unavailable rather than shown as a misleading $0. `null` = feature/data not
-   * tracked (render a graceful "not tracked" note); a number = tracked value.
-   */
-  merchandiseCents: number | null;
-  packagesCents: number | null;
+  /** Gross line value of plain activity (seat) lines. */
+  activitiesCents: number;
+  /** Gross line value of package-bundle booking lines. */
+  packagesCents: number;
+  /** Gross line value of merchandise + misc + add-on lines. */
+  merchandiseCents: number;
+  /** Post-booking charges (fuel used, cleaning, damage, late). */
+  chargesCents: number;
+  /** Aggregated Items view (Activities / Packages / Merchandise / Charges). */
+  itemized: ItemizedSales;
+  /** Line-level Details view (every allocated sale line, traceable to orders). */
+  details: AllocatedLine[];
   /** Present only in comparison mode: same totals for the prior window + deltas. */
   comparison?: {
     range: DateRange;
@@ -609,16 +643,127 @@ export interface SalesReport {
   };
 }
 
-async function computeSalesTotals(
+/**
+ * Restrict a set of order ids to those containing at least one booking line for
+ * the given activity ("orders including this activity"). Order-level money is
+ * not split per-activity — the filter keeps whole orders, honestly labeled.
+ */
+async function filterOrderIdsByActivity(
+  db: Db,
+  operatorId: string,
+  orderIds: string[],
+  activityId: string,
+): Promise<string[]> {
+  if (orderIds.length === 0) return orderIds;
+  const items = await db.orderItem.findMany({
+    where: { operator_id: operatorId, order_id: { in: orderIds }, activity_id: activityId },
+    select: { order_id: true },
+    distinct: ['order_id'],
+  });
+  const keep = new Set(items.map((i) => i.order_id));
+  return orderIds.filter((id) => keep.has(id));
+}
+
+/**
+ * Fetch everything the itemized builders need for the in-window order set:
+ * order money rows (with their basis-attributed date), booking lines (with
+ * add-on/package attribution), persisted merchandise/misc lines, and charges.
+ * One fetch feeds the sales summary, Items/Details views, the merchandise
+ * report, and the reconciliation checks — they can never disagree.
+ */
+async function fetchItemizedInput(
   db: Db,
   operatorId: string,
   start: Date,
   endExclusive: Date,
   basis: DateBasis,
-): Promise<{ totals: SalesTotals; payments: PaymentsSummary }> {
+  activityId?: string | null,
+): Promise<ItemizedInput> {
   const orderDates = await resolveOrderDates(db, operatorId, start, endExclusive, basis);
-  const orderIds = Array.from(orderDates.keys());
+  let orderIds = Array.from(orderDates.keys());
+  if (activityId) {
+    orderIds = await filterOrderIdsByActivity(db, operatorId, orderIds, activityId);
+  }
+  if (orderIds.length === 0) {
+    return { orders: [], activityLines: [], merchLines: [], charges: [] };
+  }
 
+  const [orders, items, merchLines, charges] = await Promise.all([
+    db.order.findMany({
+      where: { operator_id: operatorId, id: { in: orderIds } },
+      select: {
+        id: true,
+        order_number: true,
+        subtotal_cents: true,
+        discount_cents: true,
+        tax_cents: true,
+        processing_fee_cents: true,
+        tip_cents: true,
+        total_cents: true,
+      },
+    }),
+    db.orderItem.findMany({
+      where: { operator_id: operatorId, order_id: { in: orderIds } },
+      select: {
+        order_id: true,
+        quantity: true,
+        unit_price_cents: true,
+        add_on_id: true,
+        add_on_name: true,
+        package_id: true,
+        package_name: true,
+        activity: { select: { id: true, name_external: true } },
+        rate: { select: { name_external: true } },
+      },
+    }),
+    db.orderMerchandiseLine.findMany({
+      where: { operator_id: operatorId, order_id: { in: orderIds } },
+      select: {
+        order_id: true,
+        kind: true,
+        name: true,
+        category: true,
+        variant: true,
+        quantity: true,
+        unit_price_cents: true,
+      },
+    }),
+    db.orderCharge.findMany({
+      where: { operator_id: operatorId, order_id: { in: orderIds } },
+      select: { order_id: true, category: true, label: true, amount_cents: true },
+    }),
+  ]);
+
+  return {
+    orders: orders.map((o) => ({
+      id: o.id,
+      order_number: o.order_number,
+      date: orderDates.get(o.id) ?? '',
+      subtotal_cents: o.subtotal_cents,
+      discount_cents: o.discount_cents,
+      tax_cents: o.tax_cents,
+      processing_fee_cents: o.processing_fee_cents,
+      tip_cents: o.tip_cents,
+      total_cents: o.total_cents,
+    })),
+    activityLines: items.map((it) => ({
+      order_id: it.order_id,
+      activity_id: it.activity.id,
+      activity_name: it.activity.name_external,
+      rate_name: it.rate.name_external,
+      quantity: it.quantity,
+      unit_price_cents: it.unit_price_cents,
+      add_on_id: it.add_on_id,
+      add_on_name: it.add_on_name,
+      package_id: it.package_id,
+      package_name: it.package_name,
+    })),
+    merchLines,
+    charges,
+  };
+}
+
+function sumSalesTotals(input: ItemizedInput): SalesTotals {
   const totals: SalesTotals = {
     grossSalesCents: 0,
     subtotalCents: 0,
@@ -630,30 +775,7 @@ async function computeSalesTotals(
     netSalesCents: 0,
     orders: 0,
   };
-
-  if (orderIds.length === 0) {
-    return { totals, payments: summarizePayments([]) };
-  }
-
-  const [orders, payments] = await Promise.all([
-    db.order.findMany({
-      where: { operator_id: operatorId, id: { in: orderIds } },
-      select: {
-        subtotal_cents: true,
-        discount_cents: true,
-        tax_cents: true,
-        processing_fee_cents: true,
-        tip_cents: true,
-        total_cents: true,
-      },
-    }),
-    db.payment.findMany({
-      where: { operator_id: operatorId, order_id: { in: orderIds }, status: { not: 'FAILED' } },
-      select: { method: true, amount_cents: true, refunded_cents: true },
-    }),
-  ]);
-
-  for (const o of orders) {
+  for (const o of input.orders) {
     totals.grossSalesCents += o.total_cents;
     totals.subtotalCents += o.subtotal_cents;
     totals.discountCents += o.discount_cents;
@@ -664,8 +786,7 @@ async function computeSalesTotals(
   }
   totals.taxesAndFeesCents = totals.taxCents + totals.processingFeeCents;
   totals.netSalesCents = totals.subtotalCents - totals.discountCents;
-
-  return { totals, payments: summarizePayments(payments) };
+  return totals;
 }
 
 async function buildSalesReport(
@@ -676,40 +797,348 @@ async function buildSalesReport(
   range: DateRange,
   basis: DateBasis,
   compare: boolean,
+  activityId?: string | null,
 ): Promise<SalesReport> {
-  const current = await computeSalesTotals(db, operatorId, start, endExclusive, basis);
+  const input = await fetchItemizedInput(db, operatorId, start, endExclusive, basis, activityId);
+  const totals = sumSalesTotals(input);
+  const orderIds = input.orders.map((o) => o.id);
+
+  const payments =
+    orderIds.length === 0
+      ? summarizePayments([])
+      : summarizePayments(
+          await db.payment.findMany({
+            where: {
+              operator_id: operatorId,
+              order_id: { in: orderIds },
+              status: { not: 'FAILED' },
+            },
+            select: { method: true, amount_cents: true, refunded_cents: true },
+          }),
+        );
+
+  const itemized = buildItemizedSales(input);
+  const groupGross = (key: string) =>
+    itemized.groups.find((g) => g.key === key)?.totals.grossCents ?? 0;
 
   const report: SalesReport = {
     range,
     basis,
-    totals: current.totals,
-    payments: current.payments,
-    // No per-order merchandise line and no packages feature in the data model;
-    // report as untracked rather than a misleading $0 (skip gracefully).
-    merchandiseCents: null,
-    packagesCents: null,
+    activityId: activityId ?? null,
+    totals,
+    payments,
+    activitiesCents: groupGross('activity'),
+    packagesCents: groupGross('packages'),
+    merchandiseCents: groupGross('merchandise'),
+    chargesCents: groupGross('charges'),
+    itemized,
+    details: buildItemizedDetails(input),
   };
 
   if (compare) {
     const prev = previousPeriod(start, endExclusive);
-    const prevTotals = await computeSalesTotals(db, operatorId, prev.start, prev.endExclusive, basis);
+    const prevInput = await fetchItemizedInput(
+      db,
+      operatorId,
+      prev.start,
+      prev.endExclusive,
+      basis,
+      activityId,
+    );
+    const prevTotals = sumSalesTotals(prevInput);
     report.comparison = {
       range: { from: isoDate(prev.start), to: isoDate(addDays(prev.endExclusive, -1)) },
-      totals: prevTotals.totals,
+      totals: prevTotals,
       deltas: {
-        grossSalesCents: computeDelta(current.totals.grossSalesCents, prevTotals.totals.grossSalesCents),
-        taxesAndFeesCents: computeDelta(
-          current.totals.taxesAndFeesCents,
-          prevTotals.totals.taxesAndFeesCents,
-        ),
-        tipCents: computeDelta(current.totals.tipCents, prevTotals.totals.tipCents),
-        netSalesCents: computeDelta(current.totals.netSalesCents, prevTotals.totals.netSalesCents),
-        orders: computeDelta(current.totals.orders, prevTotals.totals.orders),
+        grossSalesCents: computeDelta(totals.grossSalesCents, prevTotals.grossSalesCents),
+        taxesAndFeesCents: computeDelta(totals.taxesAndFeesCents, prevTotals.taxesAndFeesCents),
+        tipCents: computeDelta(totals.tipCents, prevTotals.tipCents),
+        netSalesCents: computeDelta(totals.netSalesCents, prevTotals.netSalesCents),
+        orders: computeDelta(totals.orders, prevTotals.orders),
       },
     };
   }
 
   return report;
+}
+
+// ---------------------------------------------------------------------------
+// Merchandise report (category → product → variant roll-up)
+// ---------------------------------------------------------------------------
+
+export interface MerchandiseReport {
+  range: DateRange;
+  basis: DateBasis;
+  activityId: string | null;
+  data: MerchandiseReportData;
+  /** Present only in comparison mode. */
+  comparison?: {
+    range: DateRange;
+    totals: MerchandiseReportData['totals'];
+    deltas: { totalCents: Delta; grossCents: Delta; quantity: Delta; };
+  };
+}
+
+async function buildMerchandiseTabReport(
+  db: Db,
+  operatorId: string,
+  start: Date,
+  endExclusive: Date,
+  range: DateRange,
+  basis: DateBasis,
+  compare: boolean,
+  activityId?: string | null,
+): Promise<MerchandiseReport> {
+  const input = await fetchItemizedInput(db, operatorId, start, endExclusive, basis, activityId);
+  const data = buildMerchandiseReport(input);
+
+  const report: MerchandiseReport = {
+    range,
+    basis,
+    activityId: activityId ?? null,
+    data,
+  };
+
+  if (compare) {
+    const prev = previousPeriod(start, endExclusive);
+    const prevInput = await fetchItemizedInput(
+      db,
+      operatorId,
+      prev.start,
+      prev.endExclusive,
+      basis,
+      activityId,
+    );
+    const prevData = buildMerchandiseReport(prevInput);
+    report.comparison = {
+      range: { from: isoDate(prev.start), to: isoDate(addDays(prev.endExclusive, -1)) },
+      totals: prevData.totals,
+      deltas: {
+        totalCents: computeDelta(data.totals.totalCents, prevData.totals.totalCents),
+        grossCents: computeDelta(data.totals.grossCents, prevData.totals.grossCents),
+        quantity: computeDelta(data.totals.quantity, prevData.totals.quantity),
+      },
+    };
+  }
+
+  return report;
+}
+
+// ---------------------------------------------------------------------------
+// End-of-day / register summary (payments by processed date)
+// ---------------------------------------------------------------------------
+
+export interface EndOfDayReport {
+  range: DateRange;
+  /** Tender roll-up (collected / refunded / net per method) for the window. */
+  payments: PaymentsSummary;
+  /** Zero-filled daily series of money movement (by Payment.processed_at). */
+  daily: Array<{
+    date: string;
+    collectedCents: number;
+    refundedCents: number;
+    netCents: number;
+    count: number;
+  }>;
+  /** Every refund in the window (what left the drawer/processor). */
+  refunds: Array<{
+    orderNumber: string;
+    method: string;
+    processedAt: string; // ISO datetime
+    amountCents: number;
+    refundedCents: number;
+  }>;
+  /** Individual tender rows, newest first (the register tape). */
+  transactions: Array<{
+    orderNumber: string;
+    method: string;
+    processedAt: string; // ISO datetime
+    amountCents: number;
+    refundedCents: number;
+    netCents: number;
+    manuallyKeyed: boolean;
+  }>;
+}
+
+/**
+ * The register/End-of-Day view: everything is keyed by when the MONEY moved
+ * (Payment.processed_at), not when the order was created — so a deposit taken
+ * Friday and its balance collected Saturday land on the days the drawer saw
+ * them. Cash net = expected drawer movement for the window.
+ */
+async function buildEndOfDayReport(
+  db: Db,
+  operatorId: string,
+  start: Date,
+  endExclusive: Date,
+  range: DateRange,
+): Promise<EndOfDayReport> {
+  const payments = await db.payment.findMany({
+    where: {
+      operator_id: operatorId,
+      status: { not: 'FAILED' },
+      processed_at: { gte: start, lt: endExclusive },
+    },
+    select: {
+      method: true,
+      amount_cents: true,
+      refunded_cents: true,
+      processed_at: true,
+      is_manually_keyed: true,
+      order: { select: { order_number: true } },
+    },
+    orderBy: { processed_at: 'desc' },
+  });
+
+  const buckets = new Map<string, EndOfDayReport['daily'][number]>();
+  for (let cur = new Date(start); cur < endExclusive; cur = addDays(cur, 1)) {
+    const key = isoDate(cur);
+    buckets.set(key, { date: key, collectedCents: 0, refundedCents: 0, netCents: 0, count: 0 });
+  }
+  for (const p of payments) {
+    const bucket = buckets.get(isoDate(startOfDay(p.processed_at)));
+    if (bucket) {
+      bucket.collectedCents += p.amount_cents;
+      bucket.refundedCents += p.refunded_cents;
+      bucket.netCents += p.amount_cents - p.refunded_cents;
+      bucket.count += 1;
+    }
+  }
+
+  return {
+    range,
+    payments: summarizePayments(payments),
+    daily: Array.from(buckets.values()),
+    refunds: payments
+      .filter((p) => p.refunded_cents > 0)
+      .map((p) => ({
+        orderNumber: p.order.order_number,
+        method: p.method,
+        processedAt: p.processed_at.toISOString(),
+        amountCents: p.amount_cents,
+        refundedCents: p.refunded_cents,
+      })),
+    transactions: payments.map((p) => ({
+      orderNumber: p.order.order_number,
+      method: p.method,
+      processedAt: p.processed_at.toISOString(),
+      amountCents: p.amount_cents,
+      refundedCents: p.refunded_cents,
+      netCents: p.amount_cents - p.refunded_cents,
+      manuallyKeyed: p.is_manually_keyed,
+    })),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Head count / booking summary (guests by day + activity, manifest data)
+// ---------------------------------------------------------------------------
+
+export interface HeadCountReport {
+  range: DateRange;
+  activityId: string | null;
+  totals: {
+    guests: number;
+    bookings: number;
+    /** Distinct orders (a party may book multiple slots). */
+    orders: number;
+    avgPartySize: number;
+  };
+  /** Zero-filled daily guests/bookings by scheduled (timeslot) date. */
+  daily: Array<{ date: string; guests: number; bookings: number }>;
+  byActivity: Array<{
+    activityId: string;
+    activityName: string;
+    color: string;
+    guests: number;
+    bookings: number;
+    avgPartySize: number;
+  }>;
+}
+
+/**
+ * Head count: how many PEOPLE are on the water each day, from the manifest's
+ * own data — seat lines only (add-ons are coolers, not people), keyed by the
+ * timeslot's scheduled date. The ops twin of the money reports: staffing,
+ * fuel, and safety planning run off this.
+ */
+async function buildHeadCountReport(
+  db: Db,
+  operatorId: string,
+  start: Date,
+  endExclusive: Date,
+  range: DateRange,
+  activityId?: string | null,
+): Promise<HeadCountReport> {
+  const items = await db.orderItem.findMany({
+    where: {
+      operator_id: operatorId,
+      add_on_id: null,
+      order: { status: { in: [...REVENUE_STATUSES] } },
+      timeslot: { datetime: { gte: start, lt: endExclusive } },
+      ...(activityId ? { activity_id: activityId } : {}),
+    },
+    select: {
+      order_id: true,
+      quantity: true,
+      timeslot: { select: { datetime: true } },
+      activity: { select: { id: true, name_external: true, color: true } },
+    },
+  });
+
+  const buckets = new Map<string, { date: string; guests: number; bookings: number }>();
+  for (let cur = new Date(start); cur < endExclusive; cur = addDays(cur, 1)) {
+    const key = isoDate(cur);
+    buckets.set(key, { date: key, guests: 0, bookings: 0 });
+  }
+
+  const byActivity = new Map<string, HeadCountReport['byActivity'][number]>();
+  const orders = new Set<string>();
+  let guests = 0;
+
+  for (const it of items) {
+    guests += it.quantity;
+    orders.add(it.order_id);
+
+    const day = buckets.get(isoDate(startOfDay(it.timeslot.datetime)));
+    if (day) {
+      day.guests += it.quantity;
+      day.bookings += 1;
+    }
+
+    const a = it.activity;
+    const row = byActivity.get(a.id);
+    if (row) {
+      row.guests += it.quantity;
+      row.bookings += 1;
+    } else {
+      byActivity.set(a.id, {
+        activityId: a.id,
+        activityName: a.name_external,
+        color: a.color,
+        guests: it.quantity,
+        bookings: 1,
+        avgPartySize: 0,
+      });
+    }
+  }
+
+  const byActivityList = Array.from(byActivity.values())
+    .map((a) => ({ ...a, avgPartySize: a.bookings ? a.guests / a.bookings : 0 }))
+    .sort((x, y) => y.guests - x.guests);
+
+  return {
+    range,
+    activityId: activityId ?? null,
+    totals: {
+      guests,
+      bookings: items.length,
+      orders: orders.size,
+      avgPartySize: items.length ? guests / items.length : 0,
+    },
+    daily: Array.from(buckets.values()),
+    byActivity: byActivityList,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -910,11 +1339,18 @@ export interface ReportsBundle {
   basis: DateBasis;
   /** Whether comparison-vs-prior-period mode is on. */
   compare: boolean;
+  /** Active activity filter (validated against the catalog), or null. */
+  activityId: string | null;
+  /** Activity list for the shared filter control. */
+  activities: Array<{ id: string; name: string }>;
   revenue: RevenueReport;
   sales: SalesReport;
+  merchandise: MerchandiseReport;
   taxesFees: TaxesFeesReport;
   occupancy: OccupancyReport;
   giftCards: GiftCardReport;
+  endOfDay: EndOfDayReport;
+  headCount: HeadCountReport;
 }
 
 /**
@@ -929,6 +1365,7 @@ export async function getReportsBundle(
   rawTo?: string,
   rawBasis?: string,
   rawCompare?: string,
+  rawActivity?: string,
 ): Promise<ReportsBundle> {
   const { operatorId } = await getOperatorContext();
   const db = await getTenantDb();
@@ -936,27 +1373,46 @@ export async function getReportsBundle(
   const basis = resolveDateBasis(rawBasis);
   const compare = rawCompare === '1' || rawCompare === 'true';
 
-  const [operator, revenue, sales, taxesFees, occupancy, giftCards] = await Promise.all([
-    db.operator.findUnique({
-      where: { id: operatorId },
-      select: { brand_color: true },
-    }),
-    buildRevenueReport(db, operatorId, start, endExclusive, range),
-    buildSalesReport(db, operatorId, start, endExclusive, range, basis, compare),
-    buildTaxesFeesReport(db, operatorId, start, endExclusive, range),
-    buildOccupancyReport(db, operatorId, start, endExclusive, range),
-    buildGiftCardReport(db, operatorId, start, endExclusive, range),
-  ]);
+  // Validate the raw activity filter against the catalog (never trust the URL);
+  // an unknown id silently clears the filter rather than erroring the page.
+  const activities = await db.activity.findMany({
+    where: { operator_id: operatorId },
+    select: { id: true, name_external: true },
+    orderBy: { name_external: 'asc' },
+  });
+  const activityId =
+    rawActivity && activities.some((a) => a.id === rawActivity) ? rawActivity : null;
+
+  const [operator, revenue, sales, merchandise, taxesFees, occupancy, giftCards, endOfDay, headCount] =
+    await Promise.all([
+      db.operator.findUnique({
+        where: { id: operatorId },
+        select: { brand_color: true },
+      }),
+      buildRevenueReport(db, operatorId, start, endExclusive, range),
+      buildSalesReport(db, operatorId, start, endExclusive, range, basis, compare, activityId),
+      buildMerchandiseTabReport(db, operatorId, start, endExclusive, range, basis, compare, activityId),
+      buildTaxesFeesReport(db, operatorId, start, endExclusive, range),
+      buildOccupancyReport(db, operatorId, start, endExclusive, range, activityId),
+      buildGiftCardReport(db, operatorId, start, endExclusive, range),
+      buildEndOfDayReport(db, operatorId, start, endExclusive, range),
+      buildHeadCountReport(db, operatorId, start, endExclusive, range, activityId),
+    ]);
 
   return {
     brandColor: operator?.brand_color || '#0ea5e9',
     range,
     basis,
     compare,
+    activityId,
+    activities: activities.map((a) => ({ id: a.id, name: a.name_external })),
     revenue,
     sales,
+    merchandise,
     taxesFees,
     occupancy,
     giftCards,
+    endOfDay,
+    headCount,
   };
 }
