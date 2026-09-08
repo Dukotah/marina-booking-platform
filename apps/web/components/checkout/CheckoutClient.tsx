@@ -495,15 +495,16 @@ export function CheckoutClient({
           orderNumber: result.order.orderNumber,
           amountCents: result.payment.amountCents,
           handoff: {
-            // The charge response names its own driver, but the checkout action
-            // narrows that response to `PaymentResult` before we see it, so the
-            // provider is inferred from whether a real Stripe key is configured.
-            // Widening `submitPayment` in lib/orders.ts to pass `authentication`
-            // through would make this exact — and would also supply the client
-            // secret Stripe.js needs in cloud mode.
-            provider: stripe.configured ? 'stripe' : 'sandbox',
-            intentId: result.payment.paymentId || null,
-            clientSecret: null,
+            // The charge response names its own driver and carries the challenge
+            // affordance (`authentication`, passed through by lib/orders.ts) —
+            // including the client secret Stripe.js needs in cloud mode. The
+            // pre-seam inference from the configured key remains as a fallback.
+            provider:
+              result.payment.authentication?.provider ??
+              (stripe.configured ? 'stripe' : 'sandbox'),
+            intentId:
+              result.payment.authentication?.intentId ?? (result.payment.paymentId || null),
+            clientSecret: result.payment.authentication?.clientSecret ?? null,
             publishableKey: stripe.publishableKey,
           },
           guest,

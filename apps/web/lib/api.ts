@@ -233,6 +233,19 @@ export interface OrderSummary {
   createdAt: string;
 }
 
+/**
+ * The 3DS/SCA challenge affordance the charge response carries when the bank asks
+ * for a second factor. Passed through to the ChallengeDialog so Stripe.js gets the
+ * client secret it needs in cloud mode (the API now preserves it for BOTH drivers).
+ */
+export interface PaymentAuthentication {
+  /** Which driver raised the challenge — decides whether Stripe.js is involved. */
+  provider: 'sandbox' | 'stripe';
+  intentId: string | null;
+  clientSecret: string | null;
+  returnUrl: string | null;
+}
+
 /** Outcome of submitting a payment for an order (maps the API charge response). */
 export interface PaymentResult {
   paymentId: string;
@@ -251,6 +264,8 @@ export interface PaymentResult {
   cardLastFour: string | null;
   cardBrand: string | null;
   receiptUrl: string | null;
+  /** Present only when status is REQUIRES_ACTION. */
+  authentication?: PaymentAuthentication | null;
 }
 
 // ---------------------------------------------------------------------------

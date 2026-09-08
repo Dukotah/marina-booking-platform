@@ -103,6 +103,8 @@ export async function submitPayment(
       receiptUrl: string | null;
     };
     order: { id: string; amountPaidCents: number; balanceDueCents: number };
+    /** Present only on a REQUIRES_ACTION (3DS challenge) response. */
+    authentication?: PaymentResult['authentication'];
   }>('/api/payments/charge', {
     method: 'POST',
     body: { orderId, sourceId },
@@ -115,5 +117,8 @@ export async function submitPayment(
     cardLastFour: data.payment.cardLastFour,
     cardBrand: data.payment.cardBrand,
     receiptUrl: data.payment.receiptUrl,
+    // Carry the challenge affordance through so the ChallengeDialog gets the
+    // client secret Stripe.js needs in cloud mode (previously dropped here).
+    authentication: data.authentication ?? null,
   };
 }

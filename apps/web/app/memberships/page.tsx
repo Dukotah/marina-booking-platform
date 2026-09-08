@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { getBrandAsync, brandStyle } from '@/lib/brand';
 import SiteHeader from '@/components/layout/SiteHeader';
 import SiteFooter from '@/components/layout/SiteFooter';
-import { getStripeConfig } from '@/app/checkout/stripe-config';
+import { getPaymentConfig } from '@/app/checkout/payment-config';
 import {
   getMembershipOffers,
   getMyHoldings,
@@ -35,7 +35,8 @@ export const dynamic = 'force-dynamic';
  */
 export default async function MembershipsPage() {
   const brand = await getBrandAsync();
-  const stripe = getStripeConfig();
+  // API-resolved provider config (env fallback) — same seam the checkout uses.
+  const { stripe } = await getPaymentConfig();
 
   const [{ offers, failed }, { signedIn, holdings }] = await Promise.all([
     getMembershipOffers(),
