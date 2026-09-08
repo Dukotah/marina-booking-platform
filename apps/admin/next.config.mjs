@@ -3,6 +3,10 @@
 // with a "Live data unavailable" notice so the UI/structure can be evaluated first.
 const nextConfig = {
   reactStrictMode: true,
+  // CI/verification builds can run WHILE `next dev` is serving the operator by
+  // pointing at a separate dist dir (NEXT_DIST_DIR=.next-build) — a plain
+  // `next build` would clobber the dev server's .next cache mid-session.
+  distDir: process.env.NEXT_DIST_DIR || '.next',
   // All @marina/* workspace packages ship TypeScript source — webpack must
   // transpile them. This includes @marina/database; listing it in
   // serverComponentsExternalPackages would make Next.js try to require() the
@@ -43,3 +47,6 @@ const nextConfig = {
 };
 
 export default nextConfig;
+
+// Touched 2026-09-08: Prisma client regenerated (OrderMerchandiseLine) — this
+// comment change makes `next dev` restart itself so the fresh client loads.
