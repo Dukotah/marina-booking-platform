@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { AlertTriangle, Check, UserX, RotateCcw, Phone } from 'lucide-react';
 import { formatUSD } from '../../lib/format';
 import { localMinutesOfDay, todayIsoIn } from './tz';
+import { SignLinkActions } from '../waiver/SignLinkActions';
 import type { ManifestRow, ManifestListItem } from './types';
 import {
   checkInOrderItem,
@@ -64,12 +65,16 @@ export function ManifestList({
   rows,
   timeZone,
   isoDate,
+  signLinkBase,
 }: {
   rows: ManifestRow[];
   /** Operator IANA timezone — the lens "now" is measured through. */
   timeZone: string;
   /** The day being shown, YYYY-MM-DD. Overdue only means anything on today. */
   isoDate: string;
+  /** Customer web base URL — unsigned rows get copy-link + QR so staff can hand
+   *  the guest the standalone signer instead of paper. */
+  signLinkBase: string;
 }) {
   const [error, setError] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState('');
@@ -344,8 +349,15 @@ export function ManifestList({
                         <Check className="h-3 w-3" aria-hidden /> Waiver signed
                       </span>
                     ) : (
-                      <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800">
-                        Waiver needed
+                      <span className="inline-flex items-center gap-1.5">
+                        <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800">
+                          Waiver needed
+                        </span>
+                        <SignLinkActions
+                          signUrl={`${signLinkBase}/waiver/${it.orderItemId}`}
+                          label={`${it.customerName}, ${it.activityName}`}
+                          compact
+                        />
                       </span>
                     )}
                     {it.balanceDueCents > 0 ? (
@@ -366,8 +378,17 @@ export function ManifestList({
                       <Check className="h-3 w-3" aria-hidden /> Signed
                     </span>
                   ) : (
-                    <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
-                      Needed
+                    <span className="inline-flex flex-col items-center gap-1">
+                      <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
+                        Needed
+                      </span>
+                      {/* Hand the guest the standalone signer: copy the link to
+                          text it, or show a QR they scan at the counter. */}
+                      <SignLinkActions
+                        signUrl={`${signLinkBase}/waiver/${it.orderItemId}`}
+                        label={`${it.customerName}, ${it.activityName}`}
+                        compact
+                      />
                     </span>
                   )}
                 </td>

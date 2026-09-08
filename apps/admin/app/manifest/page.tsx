@@ -11,6 +11,7 @@ import { loadManifest, loadGuideRoster } from './data';
 import { currentPermissions, getOperatorContext, getTenantDb } from '../../lib/session';
 import { normalizeIsoDate, todayIsoIn } from '../../components/manifest/tz';
 import { formatShortDate } from '../../lib/format';
+import { customerWebBaseUrl } from '../../lib/customer-web';
 
 export const dynamic = 'force-dynamic';
 
@@ -74,7 +75,12 @@ export default async function ManifestPage({ searchParams }: ManifestPageProps) 
       {/* The day's departures + per-booking ops (check-in, returns, fuel/charges) —
           the real work of the manifest. Utilization is now a summary chip above,
           not the hero it used to be. */}
-      <ManifestViews rows={rows} timeZone={timeZone} isoDate={isoDate} />
+      <ManifestViews
+        rows={rows}
+        timeZone={timeZone}
+        isoDate={isoDate}
+        signLinkBase={customerWebBaseUrl()}
+      />
 
       <Legend />
 

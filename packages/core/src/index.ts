@@ -110,3 +110,15 @@ export {
   type LocationRollUpRow,
   type LocationRollUp,
 } from './reports.js';
+
+// Dependency-free QR encoder (byte mode, EC level M) + SVG renderer, used for
+// the admin waiver sign-link QR the dock crew shows to guests.
+export {
+  encodeQr,
+  qrToSvg,
+  qrSvg,
+  formatInfoBits,
+  EC_BLOCKS_M,
+  type QrMatrix,
+  type QrSvgOptions,
+} from './qr.js';

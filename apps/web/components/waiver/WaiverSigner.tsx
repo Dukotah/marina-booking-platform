@@ -225,15 +225,25 @@ export function WaiverSigner({ orderItemId, activityId, onSigned }: WaiverSigner
   if (!waiver) return null;
 
   if (signed) {
+    // Kiosk/dock-friendly success: big, unambiguous, and deliberately free of
+    // order or payment details — this screen is often on a staff device that
+    // gets handed straight back at the counter.
     return (
       <div
         ref={signedRef}
         tabIndex={-1}
         role="status"
-        className="flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 focus-visible:ring-offset-2"
+        className="rounded-lg border border-emerald-200 bg-emerald-50 px-6 py-10 text-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 focus-visible:ring-offset-2"
       >
-        <CheckCircle2 className="h-5 w-5 shrink-0" aria-hidden />
-        <span>Thank you — your waiver has been signed and recorded.</span>
+        <CheckCircle2 className="mx-auto h-14 w-14 text-emerald-600" aria-hidden />
+        <p className="mt-4 text-2xl font-bold text-emerald-900">You&apos;re all set!</p>
+        <p className="mt-2 text-base text-emerald-800">
+          Your waiver has been signed and recorded.
+        </p>
+        <p className="mt-4 text-sm text-emerald-700">
+          If a staff member handed you this device, you can hand it back now —
+          there&apos;s nothing else to do here.
+        </p>
       </div>
     );
   }

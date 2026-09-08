@@ -17,6 +17,7 @@ export function ManifestViews({
   rows,
   timeZone,
   isoDate,
+  signLinkBase,
 }: {
   rows: ManifestRow[];
   /** Operator IANA timezone. The list measures "overdue" against this clock, not the
@@ -25,6 +26,8 @@ export function ManifestViews({
   timeZone: string;
   /** The day on screen, YYYY-MM-DD, so yesterday's manifest is history and not alarm. */
   isoDate: string;
+  /** Customer web base URL for waiver sign links (copy/QR on unsigned rows). */
+  signLinkBase: string;
 }) {
   const [view, setView] = useState<'day' | 'list' | 'timeline'>('day');
 
@@ -52,7 +55,7 @@ export function ManifestViews({
       {view === 'day' ? (
         <DaySchedule rows={rows} timeZone={timeZone} isoDate={isoDate} />
       ) : view === 'list' ? (
-        <ManifestList rows={rows} timeZone={timeZone} isoDate={isoDate} />
+        <ManifestList rows={rows} timeZone={timeZone} isoDate={isoDate} signLinkBase={signLinkBase} />
       ) : (
         <GanttManifest rows={rows} />
       )}

@@ -33,6 +33,8 @@ import {
   currentPermissions,
 } from '../../../lib/session';
 import { formatUSD, formatDateTime, formatDate, formatTime } from '../../../lib/format';
+import { waiverSignLink } from '../../../lib/customer-web';
+import { SignLinkActions } from '../../../components/waiver/SignLinkActions';
 
 export const dynamic = 'force-dynamic';
 
@@ -455,6 +457,28 @@ export default async function OrderDetailPage({
                     {waiverComplete ? ' — all set' : ''}
                   </span>
                 </div>
+                {/* Unsigned items: hand the guest the standalone signer — copy the
+                    link to text it, or show a QR they scan on their own phone. */}
+                {waiverItems.some((i) => !i.waiver_signed) ? (
+                  <ul className="mt-3 space-y-2">
+                    {waiverItems
+                      .filter((i) => !i.waiver_signed)
+                      .map((item) => (
+                        <li
+                          key={item.id}
+                          className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50/60 px-3 py-2"
+                        >
+                          <span className="text-xs font-medium text-slate-700">
+                            {item.activity.name_external}
+                          </span>
+                          <SignLinkActions
+                            signUrl={waiverSignLink(item.id)}
+                            label={`${customerName}, ${item.activity.name_external}`}
+                          />
+                        </li>
+                      ))}
+                  </ul>
+                ) : null}
                 {waiversSigned > 0 ? (
                   <Link
                     href={`/orders/${order.id}/waiver-packet`}
