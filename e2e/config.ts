@@ -44,6 +44,50 @@ export const TIMEZONE = process.env.E2E_TIMEZONE ?? 'America/Los_Angeles';
  */
 export const MOBILE_FUNNEL_BUDGET_MS = Number(process.env.E2E_FUNNEL_BUDGET_MS ?? 30_000);
 
+/**
+ * The checkout payment mode the stack under test is running.
+ *
+ *   card    — a card is taken online; the submit button reads "Complete booking".
+ *   reserve — no card online, pay at the marina; the button reads "Reserve my spot".
+ *
+ * This is not a test switch — it is a real per-deployment choice (docs mirror
+ * apps/web/app/checkout/payment-mode.ts). The suite must assert the label the guest
+ * actually sees, so a run against a reserve-mode stack (PAYMENT_MODE=reserve, which is
+ * the LakeSonoma go-live configuration) asserts the reserve copy rather than failing to
+ * find a button that was never rendered. Resolution mirrors the app: PAYMENT_MODE, then
+ * NEXT_PUBLIC_PAYMENT_MODE, defaulting to "card".
+ */
+export type PaymentMode = 'card' | 'reserve';
+
+function normalizePaymentMode(value: string | undefined): PaymentMode | null {
+  const v = value?.trim().toLowerCase();
+  if (v === 'reserve') return 'reserve';
+  if (v === 'card') return 'card';
+  return null;
+}
+
+export const PAYMENT_MODE: PaymentMode =
+  normalizePaymentMode(process.env.E2E_PAYMENT_MODE) ??
+  normalizePaymentMode(process.env.PAYMENT_MODE) ??
+  normalizePaymentMode(process.env.NEXT_PUBLIC_PAYMENT_MODE) ??
+  'card';
+
+/**
+ * The checkout submit button's accessible name, both its idle and its in-flight label,
+ * for the active payment mode — kept as one regex so a locator matches whichever the
+ * button currently shows. Mirrors `submitLabel` in
+ * apps/web/components/checkout/CheckoutClient.tsx.
+ */
+export const CHECKOUT_SUBMIT_NAME =
+  PAYMENT_MODE === 'reserve' ? /Reserve my spot|Reserving/ : /Complete booking|Processing/;
+
+/**
+ * What the checkout's live region announces while the booking is being submitted, for
+ * the active payment mode. Mirrors the `role="status"` copy in CheckoutClient.
+ */
+export const CHECKOUT_SUBMITTING_STATUS =
+  PAYMENT_MODE === 'reserve' ? /Reserving your spot/ : /Processing your booking/;
+
 /** Absolute URL into the admin app (the `page` baseURL points at the customer site). */
 export function adminUrl(path: string): string {
   return `${ADMIN_URL}${path.startsWith('/') ? path : `/${path}`}`;

@@ -23,7 +23,7 @@
  * that is unreachable or unreadably small on a phone.
  */
 import { expect, test } from '../fixtures/test';
-import { MOBILE_FUNNEL_BUDGET_MS } from '../config';
+import { MOBILE_FUNNEL_BUDGET_MS, PAYMENT_MODE } from '../config';
 import { SLOW_4G, throttle, warmRoutes } from '../helpers/network';
 
 test.describe('mobile funnel under throttling', () => {
@@ -65,9 +65,18 @@ test.describe('mobile funnel under throttling', () => {
       description: `${SLOW_4G.name} + 4x CPU: activity page → confirmation in ${(elapsedMs / 1000).toFixed(1)}s (budget ${MOBILE_FUNNEL_BUDGET_MS / 1000}s)`,
     });
 
-    // The booking has to be real, not just fast.
+    // The booking has to be real, not just fast — and "real" means different balances in
+    // the two payment modes. Card mode charges online, so the order is paid in full and
+    // nothing is owed. Reserve mode ("pay at the marina") takes no card online and leaves
+    // the whole total as balance due; asserting a zero balance there would fail a booking
+    // that is exactly as real, just unpaid until check-in.
     const order = await api.order(orderNumber);
-    expect(order.balanceDueCents).toBe(0);
+    if (PAYMENT_MODE === 'reserve') {
+      expect(order.balanceDueCents).toBe(order.totalCents);
+      expect(order.totalCents).toBeGreaterThan(0);
+    } else {
+      expect(order.balanceDueCents).toBe(0);
+    }
 
     expect(
       elapsedMs,

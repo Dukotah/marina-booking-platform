@@ -31,7 +31,7 @@ import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import type { Locator, Page } from '@playwright/test';
 import { expect, test as base } from '../fixtures/test';
-import { WEB_URL } from '../config';
+import { CHECKOUT_SUBMITTING_STATUS, WEB_URL } from '../config';
 import type { BookingSelection } from '../fixtures/booking-data';
 import { rx, type ActivityPage } from '../helpers/customer';
 import {
@@ -714,7 +714,7 @@ test.describe('beyond axe — keyboard, focus and announcements', () => {
     await checkoutPage.openDirect(selection);
     const checkoutControls: Array<[string, Locator]> = [
       ['the first name field', page.locator('#firstName')],
-      ['Complete booking', checkoutPage.submitButton()],
+      ['the checkout submit button', checkoutPage.submitButton()],
     ];
     for (const [label, locator] of checkoutControls) {
       const indicator = await focusIndicator(page, locator);
@@ -832,7 +832,7 @@ test.describe('beyond axe — keyboard, focus and announcements', () => {
     await page.keyboard.press('Enter');
 
     await expect(
-      page.getByRole('status').filter({ hasText: /Processing your booking/ }),
+      page.getByRole('status').filter({ hasText: CHECKOUT_SUBMITTING_STATUS }),
       'submitting must announce that something is happening — the wait is several seconds on ' +
         'rural cell service and a silent button reads as broken',
     ).toBeAttached({ timeout: 15_000 });

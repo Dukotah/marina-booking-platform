@@ -12,6 +12,7 @@
  */
 import { expect, type Locator, type Page } from '@playwright/test';
 import type { BookingSelection, Guest } from '../fixtures/booking-data';
+import { CHECKOUT_SUBMIT_NAME } from '../config';
 import { dayLabel, timeLabel } from './datetime';
 
 /** Escape a literal string for use inside a RegExp. */
@@ -91,14 +92,43 @@ export class ActivityPage {
   }
 
   /**
-   * Pick a calendar day from the 14-day strip. The strip renders a skeleton until the
-   * range request resolves, so this waits for the day to become enabled rather than
-   * clicking into a disabled button.
+   * Pick a calendar day from the 14-day strip.
+   *
+   * Two waits, not one, because "enabled" and "will honour a tap" are different states
+   * for this control. The strip is server-rendered from `initialRange`, so every day
+   * paints ENABLED on first byte — but the calendar is a `dynamic()` import
+   * (BookingWidget) whose `onClick` is not wired until that chunk hydrates. A click that
+   * lands before hydration hits a live-looking button that does nothing, and the day
+   * never becomes `aria-checked`. `toBeEnabled` cannot see this: the DOM says enabled the
+   * whole time. The gap is a sliver on a fast connection and, on the throttled mobile run
+   * (Slow 4G + 4x CPU) against `next dev`, whole seconds — either way the tap is silently
+   * dropped.
+   *
+   * So this waits for React to have CLAIMED the day before tapping it, the same signal
+   * the checkout form's `waitForFormReady` uses: React stamps a `__reactProps$…` key onto
+   * a host node when its ref (and with it the onClick) is attached. Only then is the click
+   * dispatched into a live handler.
    */
   async chooseDate(slotDatetime: string): Promise<void> {
     const label = new RegExp(`^${rx(dayLabel(slotDatetime))}\\b`);
     const day = this.dateStrip().getByRole('radio', { name: label });
     await expect(day).toBeEnabled();
+    // Wait for the calendar chunk to hydrate this button — see the note above. Polls
+    // React's own attachment marker rather than sleeping.
+    await this.page.waitForFunction(
+      (name: string) => {
+        const groups = Array.from(document.querySelectorAll('[role="radiogroup"]'));
+        const strip = groups.find((g) => g.getAttribute('aria-label') === 'Choose a date');
+        if (!strip) return false;
+        const re = new RegExp(name);
+        const btn = Array.from(strip.querySelectorAll('[role="radio"]')).find((el) =>
+          re.test(el.getAttribute('aria-label') ?? ''),
+        );
+        return Boolean(btn) && Object.keys(btn as object).some((k) => k.startsWith('__reactProps$'));
+      },
+      label.source,
+      { timeout: 60_000 },
+    );
     await day.click();
     await expect(day).toHaveAttribute('aria-checked', 'true');
   }
@@ -188,7 +218,11 @@ export class CheckoutPage {
   }
 
   submitButton(): Locator {
-    return this.page.getByRole('button', { name: /Complete booking|Processing/ });
+    // Mode-aware: reserve-mode checkout reads "Reserve my spot", card-mode reads
+    // "Complete booking" (see CHECKOUT_SUBMIT_NAME / CheckoutClient submitLabel). A
+    // hard-coded label here fails to find a button that was rendered with the other
+    // wording, which is exactly what a reserve-mode stack does.
+    return this.page.getByRole('button', { name: CHECKOUT_SUBMIT_NAME });
   }
 
   /**

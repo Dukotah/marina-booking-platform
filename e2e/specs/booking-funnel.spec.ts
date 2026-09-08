@@ -9,6 +9,7 @@
  * instead of the entire suite.
  */
 import { expect, test } from '../fixtures/test';
+import { CHECKOUT_SUBMIT_NAME, PAYMENT_MODE } from '../config';
 import { formatUSD, parseUSD, percentDiscountCents } from '../helpers/money';
 import { longDateLabel, timeLabel } from '../helpers/datetime';
 import { rx } from '../helpers/customer';
@@ -84,8 +85,19 @@ test.describe('booking funnel', () => {
     expect(order.discountCents, 'the promo must be applied server-side, not only in the UI').toBe(
       expectedDiscount,
     );
-    expect(order.balanceDueCents, 'a completed checkout must leave nothing owing').toBe(0);
-    expect(order.amountPaidCents).toBe(order.totalCents);
+    // What "completed" settles to depends on the payment mode. Card mode charges online,
+    // so nothing is owed and the total is paid. Reserve mode ("pay at the marina") takes
+    // no card online: the order is created with the full total as balance due and nothing
+    // paid yet. Both are a real, completed booking.
+    if (PAYMENT_MODE === 'reserve') {
+      expect(order.balanceDueCents, 'reserve mode collects at the marina, so the total is still owed').toBe(
+        order.totalCents,
+      );
+      expect(order.amountPaidCents, 'reserve mode takes no payment online').toBe(0);
+    } else {
+      expect(order.balanceDueCents, 'a card checkout must leave nothing owing').toBe(0);
+      expect(order.amountPaidCents).toBe(order.totalCents);
+    }
     expect(order.items).toHaveLength(1);
     expect(order.items[0]!.quantity).toBe(selection.quantity);
   });
@@ -104,18 +116,30 @@ test.describe('booking funnel', () => {
     await checkoutPage.openDirect(selection);
     await checkoutPage.fillAll(selection, guest);
 
+    // The total row's LABEL depends on whether the API handed the checkout the operator's
+    // fees. With fees it can show the real, final figure and labels it "Total"; without
+    // them it shows the pre-fee figure and labels it "Estimated total" with a disclaimer
+    // (PriceBreakdown.tsx). Match either, and remember which, because the value they carry
+    // is a different number and the ledger assertion below has to compare like with like.
+    const estimatedRow = page.getByText('Estimated total');
+    const isEstimate = await estimatedRow.isVisible().catch(() => false);
+    const totalLabel = isEstimate ? estimatedRow : page.getByText('Total', { exact: true }).first();
     const shown = parseUSD(
-      await page.getByText('Estimated total').locator('xpath=following-sibling::span[1]').innerText(),
+      await totalLabel.locator('xpath=following-sibling::span[1]').innerText(),
     );
-    expect(shown, 'the checkout must show an estimated total').not.toBeNull();
+    expect(shown, 'the checkout must show a total').not.toBeNull();
 
     const orderNumber = await checkoutPage.submitAndConfirm();
     const order = await api.order(orderNumber);
 
-    // The checkout labels its figure an *estimate* because operator taxes and fees are
-    // applied server-side, so the assertion is that the estimate is the pre-tax truth,
-    // not that it equals the final total.
-    expect(order.subtotalCents - order.discountCents + order.tipCents).toBe(shown);
+    // Two truths, one per label. When the figure is an *estimate*, taxes and fees are
+    // applied server-side, so the estimate is the pre-tax subtotal (after discount + tip).
+    // When it is the real *total*, it already includes them, so it equals the order total.
+    if (isEstimate) {
+      expect(order.subtotalCents - order.discountCents + order.tipCents).toBe(shown);
+    } else {
+      expect(order.totalCents).toBe(shown);
+    }
     expect(order.totalCents).toBe(
       order.subtotalCents - order.discountCents + order.taxCents + order.processingFeeCents + order.tipCents,
     );
@@ -138,6 +162,7 @@ test.describe('booking funnel', () => {
     await expect(page.getByRole('heading', { level: 1 })).toHaveText(
       /That time is no longer available/,
     );
-    await expect(page.getByRole('button', { name: /Complete booking/ })).toHaveCount(0);
+    // The submit button — whatever the mode calls it — must not exist on the error frame.
+    await expect(page.getByRole('button', { name: CHECKOUT_SUBMIT_NAME })).toHaveCount(0);
   });
 });
