@@ -405,12 +405,27 @@ timeslot reset. The customer must re-select from scratch. Fix: persist selection
 `sessionStorage` keyed by `activityId` and restore on mount, or encode
 rate/date/timeslot in the URL query string.
 
-### Turbopack HMR cross-contamination in dev (booking app and LakeSonoma open simultaneously)
+### Turbopack HMR cross-contamination in dev (booking app and LakeSonoma open simultaneously) — SEVERITY: HIGH for demos
 
 When both dev servers (:3000 with webpack, :3005 with Turbopack) are open in the same
 browser session, Turbopack HMR WebSocket events from :3005 can cause the active :3000
-tab to navigate away. Workaround: stop :3005 while testing :3000 pages. Production
-builds are unaffected.
+tab to navigate away. Production builds are unaffected.
+
+**This is worse than a stop-:3005-once workaround suggests.** In practice turborepo
+restarts :3000 automatically within seconds of it being killed, so the redirect
+recurs on roughly a ~15s cadence — killing :3000/:3005 once does NOT hold. Any click
+on the admin app (:3002) that triggers a navigation event can make the browser session
+jump to :3000's checkout page; during one QA pass this happened 6+ times and required
+a browser restart each time. Any open browser tab on :3000 will break an admin (:3002)
+session mid-interaction.
+
+Mitigation for a demo (pick one, do not rely on kill-once):
+- Run the customer web dev server in a SEPARATE browser profile from the admin app so
+  their HMR WebSockets cannot cross-contaminate a single session, OR
+- Disable HMR on :3000 for the duration of the demo (serve a production build:
+  `pnpm --filter @marina/web build && pnpm --filter @marina/web start`, which has no
+  HMR socket at all), OR
+- Simply do not keep a :3000 tab open while driving the admin app.
 
 ### Confirmation page shows total (tax + fee) as balance due, not base rental price
 
