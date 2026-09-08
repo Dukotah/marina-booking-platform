@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useRef, useState, useTransition, type KeyboardEvent } from 'react';
 import { useRouter } from 'next/navigation';
-import { Ban, Mail, Undo2, Loader2, X, Wallet } from 'lucide-react';
+import { Ban, Mail, Undo2, Loader2, X, Wallet, Plus } from 'lucide-react';
 import { formatUSD } from '../../lib/format';
 import { cn } from '../../lib/cn';
 import {
@@ -10,6 +10,7 @@ import {
   resendConfirmationAction,
   refundPaymentAction,
   collectBalanceAction,
+  addOrderChargeAction,
   type ActionResult,
 } from '../../app/orders/actions';
 
@@ -67,13 +68,24 @@ export function OrderActions({
   const [banner, setBanner] = useState<Banner>(null);
   const [showCancel, setShowCancel] = useState(false);
   const [showRefund, setShowRefund] = useState(false);
+  const [showCharge, setShowCharge] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
-  const [returnFocusTo, setReturnFocusTo] = useState<'cancel' | 'refund' | null>(null);
+  const [returnFocusTo, setReturnFocusTo] = useState<'cancel' | 'refund' | 'charge' | null>(null);
+
+  // Track the balance locally so a charge added here raises the "Collect balance"
+  // figure immediately — before the server revalidation round-trips back. Re-seeded
+  // whenever the server prop changes (after router.refresh() commits the new total).
+  const [balanceCents, setBalanceCents] = useState(balanceDueCents);
+  useEffect(() => {
+    setBalanceCents(balanceDueCents);
+  }, [balanceDueCents]);
 
   const cancelPanelId = useId();
   const refundPanelId = useId();
+  const chargePanelId = useId();
   const cancelTriggerRef = useRef<HTMLButtonElement>(null);
   const refundTriggerRef = useRef<HTMLButtonElement>(null);
+  const chargeTriggerRef = useRef<HTMLButtonElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
 
   function run(action: () => Promise<ActionResult>) {
@@ -85,8 +97,10 @@ export function OrderActions({
         // inside it; hand the keyboard back before that happens.
         if (showCancel) setReturnFocusTo('cancel');
         else if (showRefund) setReturnFocusTo('refund');
+        else if (showCharge) setReturnFocusTo('charge');
         setShowCancel(false);
         setShowRefund(false);
+        setShowCharge(false);
         setCancelReason('');
         router.refresh();
       }
@@ -100,14 +114,33 @@ export function OrderActions({
     // it sits immediately before the result banner the reader needs to hear.
     if (!returnFocusTo || pending) return;
     const trigger =
-      returnFocusTo === 'cancel' ? cancelTriggerRef.current : refundTriggerRef.current;
+      returnFocusTo === 'cancel'
+        ? cancelTriggerRef.current
+        : returnFocusTo === 'refund'
+          ? refundTriggerRef.current
+          : chargeTriggerRef.current;
     const target = trigger && !trigger.disabled ? trigger : rootRef.current;
     target?.focus();
     setReturnFocusTo(null);
   }, [returnFocusTo, pending]);
 
+  // Calendar deep-link: a block clicked in the week grid links here with #add-charge,
+  // so staff land with the charge panel already open and scrolled into view — the
+  // one-tap "add a charge from the calendar" path.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (window.location.hash !== '#add-charge') return;
+    if (!canWrite || isCancelled) return;
+    setShowCharge(true);
+    setShowCancel(false);
+    setShowRefund(false);
+    rootRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    // Clear the hash so a later manual refresh doesn't re-pop the panel.
+    window.history.replaceState(null, '', window.location.pathname + window.location.search);
+  }, [canWrite, isCancelled]);
+
   const hasRefundable = refundablePayments.length > 0;
-  const hasBalanceDue = balanceDueCents > 0 && !isCancelled;
+  const hasBalanceDue = balanceCents > 0 && !isCancelled;
 
   return (
     <div className="space-y-3" ref={rootRef} tabIndex={-1}>
@@ -158,7 +191,7 @@ export function OrderActions({
             type="button"
             disabled={pending}
             onClick={() => run(() => collectBalanceAction({ orderId, method: 'CARD' }))}
-            title={`Charge the remaining ${formatUSD(balanceDueCents)} balance`}
+            title={`Charge the remaining ${formatUSD(balanceCents)} balance`}
             className={cn(
               'inline-flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800 shadow-sm',
               'hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50',
@@ -169,7 +202,30 @@ export function OrderActions({
             ) : (
               <Wallet className="h-4 w-4" aria-hidden />
             )}
-            Collect balance ({formatUSD(balanceDueCents)})
+            Collect balance ({formatUSD(balanceCents)})
+          </button>
+        ) : null}
+
+        {canWrite ? (
+          <button
+            type="button"
+            ref={chargeTriggerRef}
+            disabled={pending || isCancelled}
+            aria-expanded={isCancelled ? undefined : showCharge}
+            aria-controls={showCharge ? chargePanelId : undefined}
+            onClick={() => {
+              setShowCharge((v) => !v);
+              setShowCancel(false);
+              setShowRefund(false);
+            }}
+            title={isCancelled ? 'Order is cancelled' : 'Add a fuel, cleaning, damage or late charge'}
+            className={cn(
+              'inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm',
+              'hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50',
+            )}
+          >
+            <Plus className="h-4 w-4" aria-hidden />
+            Add fuel / charge
           </button>
         ) : null}
 
@@ -244,6 +300,23 @@ export function OrderActions({
           onClose={() => {
             setShowRefund(false);
             setReturnFocusTo('refund');
+          }}
+        />
+      ) : null}
+
+      {showCharge && canWrite ? (
+        <ChargePanel
+          id={chargePanelId}
+          pending={pending}
+          onSubmit={(category, amountCents, label) => {
+            // Optimistically raise the balance so "Collect balance" reflects the new
+            // charge the instant it lands, before the revalidation returns.
+            setBalanceCents((c) => c + amountCents);
+            run(() => addOrderChargeAction({ orderId, category, amountCents, label }));
+          }}
+          onClose={() => {
+            setShowCharge(false);
+            setReturnFocusTo('charge');
           }}
         />
       ) : null}
@@ -506,6 +579,139 @@ function RefundPanel({
         >
           {pending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
           Refund {amountValid ? formatUSD(parsedAmountCents) : ''}
+        </button>
+        <button
+          type="button"
+          disabled={pending}
+          onClick={onClose}
+          className="rounded-lg px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** The post-trip charge kinds — same set the manifest offers, so a fuel charge added
+ *  from the order page and one added from the dock land identically. */
+const CHARGE_CATEGORIES: { value: string; label: string }[] = [
+  { value: 'FUEL', label: 'Fuel' },
+  { value: 'CLEANING', label: 'Cleaning' },
+  { value: 'DAMAGE', label: 'Damage' },
+  { value: 'LATE', label: 'Late return' },
+  { value: 'OTHER', label: 'Other' },
+];
+
+/**
+ * Add an ad-hoc charge (fuel, cleaning, damage, late) to this order — the same
+ * post-trip flow the manifest runs when a boat returns, reachable here on the order's
+ * own page. It lands on the balance via addOrderChargeAction; the staff then settle it
+ * with "Collect balance" above, whose figure updates the instant the charge posts.
+ *
+ * Same disclosure contract as the cancel/refund panels: focused on open so its name is
+ * announced, Escape closes, focus returns to the trigger on close. (2.4.3, 4.1.3)
+ */
+function ChargePanel({
+  id,
+  pending,
+  onSubmit,
+  onClose,
+}: {
+  id: string;
+  pending: boolean;
+  onSubmit: (category: string, amountCents: number, label?: string) => void;
+  onClose: () => void;
+}) {
+  const [category, setCategory] = useState('FUEL');
+  const [amountInput, setAmountInput] = useState('');
+  const [note, setNote] = useState('');
+  const categoryFieldId = useId();
+  const amountFieldId = useId();
+  const noteFieldId = useId();
+  const titleId = useId();
+  const { ref, onKeyDown } = useConfirmPanel(onClose);
+
+  const parsedAmountCents = Math.round(
+    parseFloat(amountInput.replace(/[^0-9.]/g, '') || '0') * 100,
+  );
+  const amountValid = parsedAmountCents > 0;
+
+  return (
+    <div
+      id={id}
+      ref={ref}
+      role="group"
+      aria-labelledby={titleId}
+      tabIndex={-1}
+      onKeyDown={onKeyDown}
+      className="rounded-lg border border-slate-200 bg-slate-50/60 p-4"
+    >
+      <p id={titleId} className="text-sm font-medium text-slate-900">
+        Add a charge
+      </p>
+      <p className="mt-1 text-xs text-slate-600">
+        Adds to this order&rsquo;s balance. Settle it with &ldquo;Collect balance&rdquo; above.
+      </p>
+
+      <div className="mt-3 flex flex-wrap items-end gap-3">
+        <div>
+          <label htmlFor={amountFieldId} className="block text-xs font-medium text-slate-600">
+            Amount (USD)
+          </label>
+          <div className="mt-1 flex w-32 items-center rounded-lg border border-slate-200 bg-white px-3 focus-within:border-slate-300 focus-within:ring-2 focus-within:ring-slate-200">
+            <span className="text-slate-500">$</span>
+            <input
+              id={amountFieldId}
+              inputMode="decimal"
+              value={amountInput}
+              onChange={(e) => setAmountInput(e.target.value)}
+              placeholder="0.00"
+              className="w-full border-0 bg-transparent py-2 pl-1 text-sm text-slate-700 placeholder:text-slate-500 focus:outline-none focus:ring-0"
+            />
+          </div>
+        </div>
+
+        <div>
+          <label htmlFor={categoryFieldId} className="block text-xs font-medium text-slate-600">
+            For
+          </label>
+          <select
+            id={categoryFieldId}
+            value={category}
+            onChange={(e) => setCategory(e.target.value)}
+            className="mt-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-200"
+          >
+            {CHARGE_CATEGORIES.map((c) => (
+              <option key={c.value} value={c.value}>
+                {c.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      <label htmlFor={noteFieldId} className="mt-3 block text-xs font-medium text-slate-600">
+        Note (optional)
+      </label>
+      <input
+        id={noteFieldId}
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+        maxLength={200}
+        placeholder="e.g. half tank"
+        className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 placeholder:text-slate-500 focus:border-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-200"
+      />
+
+      <div className="mt-3 flex gap-2">
+        <button
+          type="button"
+          disabled={pending || !amountValid}
+          onClick={() => onSubmit(category, parsedAmountCents, note.trim() || undefined)}
+          className="inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {pending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
+          Add charge {amountValid ? formatUSD(parsedAmountCents) : ''}
         </button>
         <button
           type="button"
