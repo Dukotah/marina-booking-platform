@@ -9,12 +9,18 @@ import {
   AUDIT_ACTIONS,
   SYSTEM_ACTOR,
   customerActor,
+  staffActor,
   recordAudit,
 } from '../services/audit.js';
 import {
   getActiveWaiverWithClauses,
   signWaiver,
   getWaiverPacket,
+  updateWaiver,
+  createWaiverClause,
+  updateWaiverClause,
+  deleteWaiverClause,
+  moveWaiverClause,
   WaiverError,
 } from '../services/waivers-service.js';
 
@@ -27,6 +33,14 @@ import {
  *   POST /sign    — public: capture a signature for an order item, flip the item's
  *                   waiver flags, and mark the customer's waiver as on file.
  *   GET  /        — staff (order:read): all signatures captured for an order.
+ *
+ * Waiver editor (staff, operator:manage). Every text edit bumps Waiver.version in
+ * the same transaction (see waivers-service.ts); signed records are never touched.
+ *   PATCH  /manage/:waiverId               — edit name / intro / minor policy
+ *   POST   /manage/:waiverId/clauses       — add a clause (appended last)
+ *   PATCH  /manage/clauses/:clauseId       — edit a clause
+ *   DELETE /manage/clauses/:clauseId       — delete a clause
+ *   POST   /manage/clauses/:clauseId/move  — move a clause up/down
  */
 export const waivers = new Hono<Env>();
 
@@ -255,4 +269,120 @@ waivers.get('/', requireStaff, async (c) => {
       guardianName: s.guardian_name,
     })),
   });
+});
+
+// ===========================================================================
+// Waiver editor (staff CRUD). All gated on operator:manage. Version bumps and
+// signature immutability are enforced in the service, inside one transaction.
+// ===========================================================================
+
+/** Body for PATCH /manage/:waiverId. */
+const updateWaiverSchema = z.object({
+  name: z.string().trim().min(1).max(200).optional(),
+  /** Preamble HTML shown above the clause list; empty string clears it. */
+  introHtml: z.string().max(50_000).optional(),
+  requiresMinorSignature: z.boolean().optional(),
+});
+
+/** Body for creating a clause. */
+const createClauseSchema = z.object({
+  title: z.string().trim().min(1, 'title is required').max(200),
+  bodyHtml: z.string().trim().min(1, 'bodyHtml is required').max(50_000),
+  requiresInitials: z.boolean().default(true),
+  isRequired: z.boolean().default(true),
+});
+
+/** Body for editing a clause — same fields, all optional. */
+const updateClauseSchema = z.object({
+  title: z.string().trim().min(1).max(200).optional(),
+  bodyHtml: z.string().trim().min(1).max(50_000).optional(),
+  requiresInitials: z.boolean().optional(),
+  isRequired: z.boolean().optional(),
+});
+
+/** Body for moving a clause. */
+const moveClauseSchema = z.object({ direction: z.enum(['up', 'down']) });
+
+/**
+ * Shared wrapper for the editor mutations: permission gate, WaiverError → clean
+ * HTTP status, and a waiver.edit audit row describing what changed (never the
+ * signatures — they are the untouchable record).
+ */
+async function runEditorMutation(
+  c: Context<Env>,
+  what: Record<string, unknown>,
+  fn: () => Promise<{ waiverId: string; version: number }>,
+) {
+  assertPermission(c.var.auth, 'operator:manage');
+  try {
+    const result = await fn();
+    await recordAudit({
+      operatorId: c.var.operatorId,
+      actor: staffActor(c.var.auth, clientIp(c)),
+      action: AUDIT_ACTIONS.WAIVER_EDIT,
+      entityType: 'Waiver',
+      entityId: result.waiverId,
+      after: { version: result.version },
+      context: what,
+    });
+    return c.json({ waiver: result });
+  } catch (err) {
+    if (err instanceof WaiverError) {
+      return c.json({ error: err.message, code: err.code }, err.status as 400 | 404);
+    }
+    throw err;
+  }
+}
+
+waivers.patch('/manage/:waiverId', requireStaff, async (c) => {
+  const parsed = updateWaiverSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) {
+    return c.json({ error: 'Invalid request', issues: parsed.error.issues }, 400);
+  }
+  const waiverId = c.req.param('waiverId');
+  return runEditorMutation(c, { op: 'update_waiver', waiver_id: waiverId }, () =>
+    updateWaiver(c.var.operatorId, waiverId, parsed.data),
+  );
+});
+
+waivers.post('/manage/:waiverId/clauses', requireStaff, async (c) => {
+  const parsed = createClauseSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) {
+    return c.json({ error: 'Invalid request', issues: parsed.error.issues }, 400);
+  }
+  const waiverId = c.req.param('waiverId');
+  return runEditorMutation(c, { op: 'create_clause', waiver_id: waiverId, title: parsed.data.title }, () =>
+    createWaiverClause(c.var.operatorId, waiverId, parsed.data),
+  );
+});
+
+waivers.patch('/manage/clauses/:clauseId', requireStaff, async (c) => {
+  const parsed = updateClauseSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) {
+    return c.json({ error: 'Invalid request', issues: parsed.error.issues }, 400);
+  }
+  const clauseId = c.req.param('clauseId');
+  return runEditorMutation(c, { op: 'update_clause', clause_id: clauseId }, () =>
+    updateWaiverClause(c.var.operatorId, clauseId, parsed.data),
+  );
+});
+
+waivers.delete('/manage/clauses/:clauseId', requireStaff, async (c) => {
+  const clauseId = c.req.param('clauseId');
+  return runEditorMutation(c, { op: 'delete_clause', clause_id: clauseId }, () =>
+    deleteWaiverClause(c.var.operatorId, clauseId),
+  );
+});
+
+waivers.post('/manage/clauses/:clauseId/move', requireStaff, async (c) => {
+  const parsed = moveClauseSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) {
+    return c.json({ error: 'Invalid request', issues: parsed.error.issues }, 400);
+  }
+  const clauseId = c.req.param('clauseId');
+  return runEditorMutation(
+    c,
+    { op: 'move_clause', clause_id: clauseId, direction: parsed.data.direction },
+    () => moveWaiverClause(c.var.operatorId, clauseId, parsed.data.direction),
+  );
 });

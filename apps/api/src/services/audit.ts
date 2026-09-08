@@ -53,6 +53,7 @@ export const AUDIT_ACTIONS = {
   CUSTOMER_DELETE: 'customer.delete',
   CUSTOMER_EXPORT: 'customer.export',
   WAIVER_SIGN: 'waiver.sign',
+  WAIVER_EDIT: 'waiver.edit',
   STAFF_INVITE: 'staff.invite',
   STAFF_ROLE_CHANGE: 'staff.role_change',
   STAFF_DEACTIVATE: 'staff.deactivate',

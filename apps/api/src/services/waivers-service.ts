@@ -351,6 +351,236 @@ export async function signWaiver(
 }
 
 // ---------------------------------------------------------------------------
+// Admin CRUD (operator waiver editor)
+//
+// The legal-critical invariant lives HERE, in one place: any change to the text a
+// customer is shown — the waiver's name, its intro, or any clause (content, flags,
+// order, existence) — bumps `Waiver.version` in the SAME transaction as the edit.
+// Existing WaiverSignature rows are never touched: their snapshot_html +
+// waiver_version are the immutable record of what was actually agreed to.
+// ---------------------------------------------------------------------------
+
+export interface UpdateWaiverInput {
+  name?: string;
+  introHtml?: string | null;
+  requiresMinorSignature?: boolean;
+}
+
+export interface WaiverClauseInput {
+  title: string;
+  bodyHtml: string;
+  requiresInitials: boolean;
+  isRequired: boolean;
+}
+
+/** What every mutation returns: enough for the caller to show the new version. */
+export interface WaiverMutationResult {
+  waiverId: string;
+  version: number;
+}
+
+/**
+ * Edit the waiver's own fields (name, intro, minor-signature policy). The version
+ * bumps only when customer-visible TEXT changed (name / intro) — flipping the
+ * minor-signature toggle doesn't rewrite what a past signer read.
+ */
+export async function updateWaiver(
+  operatorId: string,
+  waiverId: string,
+  input: UpdateWaiverInput,
+): Promise<WaiverMutationResult> {
+  return withTenant(operatorId, async (tx) => {
+    const waiver = await tx.waiver.findFirst({
+      where: { id: waiverId },
+      select: { id: true, name: true, intro_html: true, version: true },
+    });
+    if (!waiver) throw new WaiverError('WAIVER_NOT_FOUND', 'Waiver not found.', 404);
+
+    const textChanged =
+      (input.name !== undefined && input.name !== waiver.name) ||
+      (input.introHtml !== undefined && (input.introHtml || null) !== waiver.intro_html);
+
+    const updated = await tx.waiver.update({
+      where: { id: waiver.id },
+      data: {
+        ...(input.name !== undefined ? { name: input.name } : {}),
+        ...(input.introHtml !== undefined ? { intro_html: input.introHtml || null } : {}),
+        ...(input.requiresMinorSignature !== undefined
+          ? { requires_minor_signature: input.requiresMinorSignature }
+          : {}),
+        ...(textChanged ? { version: { increment: 1 } } : {}),
+      },
+      select: { id: true, version: true },
+    });
+    return { waiverId: updated.id, version: updated.version };
+  });
+}
+
+/** Append a clause at the end of the waiver. Always a text change → version bump. */
+export async function createWaiverClause(
+  operatorId: string,
+  waiverId: string,
+  input: WaiverClauseInput,
+): Promise<WaiverMutationResult & { clauseId: string }> {
+  return withTenant(operatorId, async (tx) => {
+    const waiver = await tx.waiver.findFirst({ where: { id: waiverId }, select: { id: true } });
+    if (!waiver) throw new WaiverError('WAIVER_NOT_FOUND', 'Waiver not found.', 404);
+
+    const last = await tx.waiverClause.findFirst({
+      where: { waiver_id: waiver.id },
+      orderBy: { sort_order: 'desc' },
+      select: { sort_order: true },
+    });
+
+    const clause = await tx.waiverClause.create({
+      data: {
+        operator_id: operatorId,
+        waiver_id: waiver.id,
+        sort_order: (last?.sort_order ?? -1) + 1,
+        title: input.title,
+        body_html: input.bodyHtml,
+        requires_initials: input.requiresInitials,
+        is_required: input.isRequired,
+      },
+      select: { id: true },
+    });
+
+    const bumped = await tx.waiver.update({
+      where: { id: waiver.id },
+      data: { version: { increment: 1 } },
+      select: { id: true, version: true },
+    });
+    return { waiverId: bumped.id, version: bumped.version, clauseId: clause.id };
+  });
+}
+
+/** Edit a clause. Bumps the version only when something actually changed. */
+export async function updateWaiverClause(
+  operatorId: string,
+  clauseId: string,
+  input: Partial<WaiverClauseInput>,
+): Promise<WaiverMutationResult> {
+  return withTenant(operatorId, async (tx) => {
+    const clause = await tx.waiverClause.findFirst({
+      where: { id: clauseId },
+      select: {
+        id: true,
+        waiver_id: true,
+        title: true,
+        body_html: true,
+        requires_initials: true,
+        is_required: true,
+      },
+    });
+    if (!clause) throw new WaiverError('CLAUSE_NOT_FOUND', 'Clause not found.', 404);
+
+    const changed =
+      (input.title !== undefined && input.title !== clause.title) ||
+      (input.bodyHtml !== undefined && input.bodyHtml !== clause.body_html) ||
+      (input.requiresInitials !== undefined && input.requiresInitials !== clause.requires_initials) ||
+      (input.isRequired !== undefined && input.isRequired !== clause.is_required);
+
+    if (changed) {
+      await tx.waiverClause.update({
+        where: { id: clause.id },
+        data: {
+          ...(input.title !== undefined ? { title: input.title } : {}),
+          ...(input.bodyHtml !== undefined ? { body_html: input.bodyHtml } : {}),
+          ...(input.requiresInitials !== undefined
+            ? { requires_initials: input.requiresInitials }
+            : {}),
+          ...(input.isRequired !== undefined ? { is_required: input.isRequired } : {}),
+        },
+      });
+    }
+
+    const waiver = changed
+      ? await tx.waiver.update({
+          where: { id: clause.waiver_id },
+          data: { version: { increment: 1 } },
+          select: { id: true, version: true },
+        })
+      : await tx.waiver.findFirstOrThrow({
+          where: { id: clause.waiver_id },
+          select: { id: true, version: true },
+        });
+    return { waiverId: waiver.id, version: waiver.version };
+  });
+}
+
+/** Delete a clause. Removing presented text is a text change → version bump. */
+export async function deleteWaiverClause(
+  operatorId: string,
+  clauseId: string,
+): Promise<WaiverMutationResult> {
+  return withTenant(operatorId, async (tx) => {
+    const clause = await tx.waiverClause.findFirst({
+      where: { id: clauseId },
+      select: { id: true, waiver_id: true },
+    });
+    if (!clause) throw new WaiverError('CLAUSE_NOT_FOUND', 'Clause not found.', 404);
+
+    await tx.waiverClause.delete({ where: { id: clause.id } });
+    const waiver = await tx.waiver.update({
+      where: { id: clause.waiver_id },
+      data: { version: { increment: 1 } },
+      select: { id: true, version: true },
+    });
+    return { waiverId: waiver.id, version: waiver.version };
+  });
+}
+
+/**
+ * Move a clause one step up or down in display order. Sort orders are normalized
+ * to their index positions first, so gaps/duplicates from older data can't make a
+ * swap ambiguous. Reordering changes the document a signer reads → version bump.
+ * Moving past the ends is a no-op (no bump).
+ */
+export async function moveWaiverClause(
+  operatorId: string,
+  clauseId: string,
+  direction: 'up' | 'down',
+): Promise<WaiverMutationResult> {
+  return withTenant(operatorId, async (tx) => {
+    const clause = await tx.waiverClause.findFirst({
+      where: { id: clauseId },
+      select: { id: true, waiver_id: true },
+    });
+    if (!clause) throw new WaiverError('CLAUSE_NOT_FOUND', 'Clause not found.', 404);
+
+    const siblings = await tx.waiverClause.findMany({
+      where: { waiver_id: clause.waiver_id },
+      orderBy: [{ sort_order: 'asc' }, { created_at: 'asc' }],
+      select: { id: true, sort_order: true },
+    });
+    const index = siblings.findIndex((s) => s.id === clause.id);
+    const target = direction === 'up' ? index - 1 : index + 1;
+
+    if (target < 0 || target >= siblings.length) {
+      const w = await tx.waiver.findFirstOrThrow({
+        where: { id: clause.waiver_id },
+        select: { id: true, version: true },
+      });
+      return { waiverId: w.id, version: w.version };
+    }
+
+    // Normalize every sibling to its index, with the moved pair swapped.
+    const order = siblings.map((s) => s.id);
+    [order[index], order[target]] = [order[target]!, order[index]!];
+    for (let i = 0; i < order.length; i++) {
+      await tx.waiverClause.update({ where: { id: order[i]! }, data: { sort_order: i } });
+    }
+
+    const waiver = await tx.waiver.update({
+      where: { id: clause.waiver_id },
+      data: { version: { increment: 1 } },
+      select: { id: true, version: true },
+    });
+    return { waiverId: waiver.id, version: waiver.version };
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Packet (staff / check-in printout)
 // ---------------------------------------------------------------------------
 
