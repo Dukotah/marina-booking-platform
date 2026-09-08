@@ -43,6 +43,7 @@ import {
   loadOrderBundle,
   type OrderBundle,
   bookingFacts,
+  unsignedWaiverLinks,
 } from './notification-data.js';
 import { sendReminderSms } from './sms.js';
 import { loadTemplateOverride, resolveTemplate } from './message-templates.js';
@@ -249,6 +250,10 @@ export async function sendBookingConfirmation(input: {
     const brand = brandFromOperator(order.operator);
     const facts = bookingFacts(order);
 
+    // Items still needing a signed liability waiver get a prominent
+    // "sign before you arrive" link to the standalone clause-level signer.
+    const waiverLinks = unsignedWaiverLinks(order);
+
     const element = BookingConfirmation({
       ...brand,
       orderNumber: order.order_number,
@@ -264,6 +269,7 @@ export async function sendBookingConfirmation(input: {
       // then states the amount owed on arrival and what to bring.
       balanceDueCents: order.balance_due_cents,
       cancellationPolicy,
+      ...(waiverLinks.length > 0 ? { waiverLinks } : {}),
     });
 
     const [html, text] = await Promise.all([renderEmail(element), renderEmailText(element)]);
@@ -411,6 +417,9 @@ export async function sendReminder(input: {
             'Closed-toe shoes and a change of clothes',
           ];
 
+    // The reminder is the last chance to sign at home instead of at the dock.
+    const waiverLinks = unsignedWaiverLinks(order);
+
     const element = BookingReminder({
       ...brand,
       orderNumber: order.order_number,
@@ -421,6 +430,7 @@ export async function sendReminder(input: {
       checkInTimeLabel,
       locationLabel: facts.locationLabel,
       whatToBring,
+      ...(waiverLinks.length > 0 ? { waiverLinks } : {}),
     });
 
     const [html, text] = await Promise.all([renderEmail(element), renderEmailText(element)]);

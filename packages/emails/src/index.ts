@@ -20,6 +20,7 @@ export {
   BookingConfirmation,
   type BookingConfirmationProps,
   type PriceLine,
+  type WaiverLink,
 } from './BookingConfirmation.js';
 export {
   BookingReminder,

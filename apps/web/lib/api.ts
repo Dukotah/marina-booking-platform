@@ -209,6 +209,10 @@ export interface OrderLineItem {
   durationMinutes: number;
   quantity: number;
   unitPriceCents: number;
+  /** Whether this item's activity requires a signed liability waiver. */
+  waiverRequired: boolean;
+  /** Whether a waiver signature is already on file for this item. */
+  waiverSigned: boolean;
 }
 
 export interface OrderSummary {
@@ -282,6 +286,9 @@ export interface ApiOrder {
     id: string;
     quantity: number;
     unitPriceCents: number;
+    /** Optional so older API responses without waiver fields still parse. */
+    waiverRequired?: boolean;
+    waiverSigned?: boolean;
     activity: { id: string; name: string };
     rate: { id: string; name: string; durationMinutes: number };
     timeslot: { id: string; datetime: string };
@@ -313,6 +320,10 @@ export function mapApiOrder(o: ApiOrder): OrderSummary {
       durationMinutes: it.rate.durationMinutes,
       quantity: it.quantity,
       unitPriceCents: it.unitPriceCents,
+      // Default missing waiver fields to "nothing outstanding" so an older API
+      // response can never conjure a false "sign your waiver" nag.
+      waiverRequired: it.waiverRequired ?? false,
+      waiverSigned: it.waiverSigned ?? false,
     })),
   };
 }

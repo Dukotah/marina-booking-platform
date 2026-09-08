@@ -353,6 +353,30 @@ describe('render guard', () => {
     const html = await renderEmail(BookingConfirmation(CONFIRMATION_PROPS));
     expect(html).not.toContain('Due at the marina');
   });
+
+  it('carries the waiver sign link (HTML + plain text) when items are unsigned', async () => {
+    const waiverLinks = [
+      { label: SEEDED_ACTIVITY, url: 'https://book.example.com/waiver/clx123abc' },
+    ];
+    const confirmation = () => BookingConfirmation({ ...CONFIRMATION_PROPS, waiverLinks });
+    const html = await renderEmail(confirmation());
+    const text = await renderEmailText(confirmation());
+    expect(html).toContain('Sign your waiver before you arrive');
+    expect(html).toContain('https://book.example.com/waiver/clx123abc');
+    // The raw URL is printed too, for clients that strip button links.
+    expect(text).toContain('https://book.example.com/waiver/clx123abc');
+
+    const reminder = await renderEmail(BookingReminder({ ...REMINDER_PROPS, waiverLinks }));
+    expect(reminder).toContain('Sign your waiver before you arrive');
+    expect(reminder).toContain('https://book.example.com/waiver/clx123abc');
+  });
+
+  it('omits the waiver call-to-action when nothing is unsigned', async () => {
+    const html = await renderEmail(BookingConfirmation(CONFIRMATION_PROPS));
+    expect(html).not.toContain('Sign your waiver');
+    const reminder = await renderEmail(BookingReminder(REMINDER_PROPS));
+    expect(reminder).not.toContain('Sign your waiver');
+  });
 });
 
 describe('stripUnsafeControlChars', () => {

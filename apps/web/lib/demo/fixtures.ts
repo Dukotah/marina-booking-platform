@@ -323,6 +323,10 @@ export function computeDemoOrder(payload: CreateBookingPayload): OrderSummary {
         durationMinutes: rate?.durationMinutes ?? 60,
         quantity,
         unitPriceCents,
+        waiverRequired: activity?.waiverRequired ?? false,
+        // The inline checkout waiver marks the demo booking signed, mirroring
+        // what the real API does with waiverAcceptance.
+        waiverSigned: Boolean(payload.waiverAcceptance?.accepted),
       },
     ],
     createdAt: now,

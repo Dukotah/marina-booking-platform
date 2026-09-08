@@ -49,7 +49,7 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { createId } from '@marina/core';
 import type { TenantClient } from '@marina/database';
-import { type NotificationResult, skipped } from './notification-data.js';
+import { type NotificationResult, skipped, customerPortalBaseUrl } from './notification-data.js';
 import { captureMessage, sandboxEnabled } from './sandbox.js';
 import { sandboxNow } from './payments-sandbox.js';
 
@@ -569,19 +569,6 @@ export function escapeHtml(value: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
-}
-
-/** Absolute base URL of the customer portal. Derived from what local dev already
- *  sets (`APP_BASE_DOMAIN=localhost:3000`) so the sandbox link works with no new
- *  env var; `CUSTOMER_PORTAL_URL` overrides it for a real deployment. */
-export function customerPortalBaseUrl(): string {
-  const explicit = (process.env.CUSTOMER_PORTAL_URL ?? process.env.APP_BASE_URL ?? '')
-    .trim()
-    .replace(/\/+$/, '');
-  if (explicit) return explicit;
-  const domain = (process.env.APP_BASE_DOMAIN ?? 'localhost:3000').trim().replace(/\/+$/, '');
-  const scheme = /^(localhost|127\.0\.0\.1)/.test(domain) ? 'http' : 'https';
-  return `${scheme}://${domain}`;
 }
 
 export function buildMagicLinkUrl(token: string, baseUrl = customerPortalBaseUrl()): string {

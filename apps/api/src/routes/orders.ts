@@ -107,6 +107,10 @@ function serializeOrder(order: OrderWithRelations) {
       unitPriceCents: item.unit_price_cents,
       status: item.status,
       driverName: item.driver_name,
+      // Waiver state per item, so the confirmation page can show a "sign your
+      // waiver" call-to-action linking the standalone signer for unsigned items.
+      waiverRequired: item.activity.waiver_required,
+      waiverSigned: item.waiver_signed,
       activity: { id: item.activity.id, name: item.activity.name_external },
       rate: {
         id: item.rate.id,

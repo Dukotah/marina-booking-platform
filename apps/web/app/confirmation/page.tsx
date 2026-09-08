@@ -132,6 +132,12 @@ export default async function ConfirmationPage({
 
   const guests = partySize(order);
   const isCancelled = order.status === 'CANCELLED';
+  // Items whose activity requires a liability waiver but has no signature on file
+  // yet — e.g. reserve-mode or phone bookings that skipped the inline checkout
+  // waiver. Each gets a link to the standalone clause-level signer.
+  const unsignedWaiverItems = isCancelled
+    ? []
+    : order.items.filter((item) => item.waiverRequired && !item.waiverSigned);
   // Reserve-now / pay-at-the-marina: nothing charged online, full amount owed on
   // arrival. Drives the "what to bring / due at the marina" messaging below.
   const isReserveOnly =
@@ -198,6 +204,35 @@ export default async function ConfirmationPage({
             </div>
           </div>
         </section>
+
+        {/* Waiver call-to-action — only when a signature is still outstanding
+            (the inline checkout waiver usually covers this; reserve-mode and
+            phone bookings are the ones that land here unsigned). */}
+        {unsignedWaiverItems.length > 0 ? (
+          <section className="mt-6 rounded-2xl border border-amber-300 bg-amber-50 p-6 shadow-sm">
+            <h2 className="text-base font-semibold text-amber-900">
+              One more step: sign your waiver
+            </h2>
+            <p className="mt-1 text-sm text-amber-800">
+              Every rental needs a signed liability waiver before you get on the
+              water. Sign now on your phone and skip the paperwork at check-in.
+            </p>
+            <ul className="mt-4 space-y-2">
+              {unsignedWaiverItems.map((item) => (
+                <li key={item.id}>
+                  <a
+                    href={`/waiver/${item.id}`}
+                    className="inline-flex min-h-11 w-full items-center justify-center rounded-lg px-4 py-2.5 text-sm font-semibold text-on-brand shadow-sm hover:opacity-90 sm:w-auto"
+                    style={{ backgroundColor: 'var(--brand-color)' }}
+                  >
+                    Sign waiver
+                    {unsignedWaiverItems.length > 1 ? ` — ${item.activityName}` : ' now'}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
 
         {/* Reservation details */}
         <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">

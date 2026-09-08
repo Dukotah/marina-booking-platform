@@ -24,6 +24,7 @@ import {
   brandFromOperator,
   bookingFacts,
   loadOrderBundle,
+  unsignedWaiverLinks,
 } from './notification-data.js';
 import { sandboxEnabled, captureMessage } from './sandbox.js';
 import { captureError } from './errors.js';
@@ -220,10 +221,16 @@ export async function sendBookingConfirmationSms(input: {
       ? `${shortDate(facts.slotDate, facts.timezone)} at ${facts.timeLabel}`
       : 'see your confirmation';
 
+    // One short sign-link line when a waiver is still outstanding. SMS stays
+    // compact: a single link (the first unsigned item) — the signer page and the
+    // confirmation email cover multi-item orders in full.
+    const waiverLinks = unsignedWaiverLinks(order);
+    const waiverLine = waiverLinks.length > 0 ? ` Sign your waiver: ${waiverLinks[0]!.url}` : '';
+
     const body =
       `${brand.brandName}: booking confirmed for ${facts.activityName} — ${when}` +
       `${facts.partySize > 1 ? `, party of ${facts.partySize}` : ''}. ` +
-      `Ref ${order.order_number}.`;
+      `Ref ${order.order_number}.${waiverLine}`;
 
     return sendSms(input.operatorId, order.customer.phone, body, 'booking_confirmation');
   } catch (err) {

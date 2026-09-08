@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Column, Heading, Hr, Row, Section, Text } from '@react-email/components';
+import { Button, Column, Heading, Hr, Row, Section, Text } from '@react-email/components';
 import { formatUSD } from '@marina/types';
 import { BrandLayout, type BrandProps } from './components/BrandLayout.js';
 
@@ -7,6 +7,14 @@ import { BrandLayout, type BrandProps } from './components/BrandLayout.js';
 export interface PriceLine {
   label: string;
   amountCents: number;
+}
+
+/** One outstanding waiver: which rental it covers + the absolute signing URL. */
+export interface WaiverLink {
+  /** Activity the waiver covers, e.g. "24' Pontoon Rental". */
+  label: string;
+  /** Absolute customer signing URL (`{web base}/waiver/{orderItemId}`). */
+  url: string;
 }
 
 export interface BookingConfirmationProps extends BrandProps {
@@ -35,6 +43,12 @@ export interface BookingConfirmationProps extends BrandProps {
   balanceDueCents?: number;
   /** Cancellation policy text to display to the guest. */
   cancellationPolicy: string;
+  /**
+   * Sign-before-you-arrive links, one per booked item that still needs a signed
+   * liability waiver. When present, the email renders a prominent call-to-action
+   * so the guest signs on their own phone instead of at the dock.
+   */
+  waiverLinks?: WaiverLink[];
 }
 
 const heading: React.CSSProperties = {
@@ -115,6 +129,37 @@ const dueBox: React.CSSProperties = {
   padding: '16px',
 };
 
+const waiverBox: React.CSSProperties = {
+  backgroundColor: '#eff6ff',
+  border: '1px solid #bfdbfe',
+  borderRadius: '8px',
+  margin: '16px 0',
+  padding: '16px',
+  textAlign: 'center',
+};
+
+const waiverHeading: React.CSSProperties = {
+  color: '#1e3a8a',
+  fontSize: '15px',
+  fontWeight: 700,
+  margin: '0 0 4px',
+};
+
+const waiverText: React.CSSProperties = {
+  color: '#1e40af',
+  fontSize: '13px',
+  lineHeight: '20px',
+  margin: '4px 0 12px',
+};
+
+const waiverUrlText: React.CSSProperties = {
+  color: '#6b7280',
+  fontSize: '12px',
+  lineHeight: '18px',
+  margin: '8px 0 0',
+  wordBreak: 'break-all',
+};
+
 const dueAmount: React.CSSProperties = {
   color: '#92400e',
   fontSize: '18px',
@@ -151,8 +196,20 @@ export function BookingConfirmation({
   totalCents,
   balanceDueCents = 0,
   cancellationPolicy,
+  waiverLinks,
 }: BookingConfirmationProps): React.ReactElement {
   const owesAtMarina = balanceDueCents > 0;
+  const needsWaiver = Boolean(waiverLinks && waiverLinks.length > 0);
+  const waiverButton: React.CSSProperties = {
+    backgroundColor: brandColor,
+    borderRadius: '8px',
+    color: '#ffffff',
+    display: 'inline-block',
+    fontSize: '15px',
+    fontWeight: 700,
+    padding: '12px 24px',
+    textDecoration: 'none',
+  };
   return (
     <BrandLayout
       brandName={brandName}
@@ -166,6 +223,24 @@ export function BookingConfirmation({
           ? `Hi ${customerName}, thanks for reserving with ${brandName}. Your spot is held — nothing was charged today, and you'll pay when you arrive. Here are your details.`
           : `Hi ${customerName}, thanks for booking with ${brandName}. Your reservation is confirmed. Here are your details.`}
       </Text>
+
+      {needsWaiver && (
+        <Section style={waiverBox}>
+          <Text style={waiverHeading}>Sign your waiver before you arrive</Text>
+          <Text style={waiverText}>
+            Every rental needs a signed liability waiver. Sign now on your phone
+            and skip the paperwork at check-in.
+          </Text>
+          {waiverLinks!.map((link) => (
+            <React.Fragment key={link.url}>
+              <Button href={link.url} style={waiverButton}>
+                {waiverLinks!.length > 1 ? `Sign waiver — ${link.label}` : 'Sign your waiver'}
+              </Button>
+              <Text style={waiverUrlText}>{link.url}</Text>
+            </React.Fragment>
+          ))}
+        </Section>
+      )}
 
       <Section style={{ margin: '16px 0' }}>
         <Text style={label}>Confirmation number</Text>

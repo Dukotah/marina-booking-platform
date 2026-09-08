@@ -1,6 +1,7 @@
 import * as React from 'react';
-import { Column, Heading, Row, Section, Text } from '@react-email/components';
+import { Button, Column, Heading, Row, Section, Text } from '@react-email/components';
 import { BrandLayout, type BrandProps } from './components/BrandLayout.js';
+import type { WaiverLink } from './BookingConfirmation.js';
 
 export interface BookingReminderProps extends BrandProps {
   /** Order/confirmation number, e.g. "LSRA260604001". */
@@ -19,6 +20,12 @@ export interface BookingReminderProps extends BrandProps {
   locationLabel?: string;
   /** Items the guest should bring. */
   whatToBring: string[];
+  /**
+   * Sign-before-you-arrive links, one per booked item still missing a signed
+   * liability waiver. When present, the reminder tells the guest to sign now so
+   * check-in is paperwork-free.
+   */
+  waiverLinks?: WaiverLink[];
 }
 
 const heading: React.CSSProperties = {
@@ -74,7 +81,27 @@ export function BookingReminder({
   checkInTimeLabel,
   locationLabel,
   whatToBring,
+  waiverLinks,
 }: BookingReminderProps): React.ReactElement {
+  const needsWaiver = Boolean(waiverLinks && waiverLinks.length > 0);
+  const waiverButton: React.CSSProperties = {
+    backgroundColor: brandColor,
+    borderRadius: '8px',
+    color: '#ffffff',
+    display: 'inline-block',
+    fontSize: '15px',
+    fontWeight: 700,
+    padding: '12px 24px',
+    textDecoration: 'none',
+  };
+  const waiverBox: React.CSSProperties = {
+    backgroundColor: '#eff6ff',
+    border: '1px solid #bfdbfe',
+    borderRadius: '8px',
+    margin: '16px 0',
+    padding: '16px',
+    textAlign: 'center',
+  };
   const checkInBox: React.CSSProperties = {
     backgroundColor: '#f9fafb',
     border: `1px solid ${brandColor}`,
@@ -121,6 +148,36 @@ export function BookingReminder({
         <Text style={label}>Confirmation number</Text>
         <Text style={{ ...value, color: brandColor }}>{orderNumber}</Text>
       </Section>
+
+      {needsWaiver && (
+        <Section style={waiverBox}>
+          <Text style={{ color: '#1e3a8a', fontSize: '15px', fontWeight: 700, margin: '0 0 4px' }}>
+            Sign your waiver before you arrive
+          </Text>
+          <Text style={{ color: '#1e40af', fontSize: '13px', lineHeight: '20px', margin: '4px 0 12px' }}>
+            We still need a signed liability waiver for this trip. Sign now on your
+            phone and skip the paperwork at check-in.
+          </Text>
+          {waiverLinks!.map((link) => (
+            <React.Fragment key={link.url}>
+              <Button href={link.url} style={waiverButton}>
+                {waiverLinks!.length > 1 ? `Sign waiver — ${link.label}` : 'Sign your waiver'}
+              </Button>
+              <Text
+                style={{
+                  color: '#6b7280',
+                  fontSize: '12px',
+                  lineHeight: '18px',
+                  margin: '8px 0 0',
+                  wordBreak: 'break-all',
+                }}
+              >
+                {link.url}
+              </Text>
+            </React.Fragment>
+          ))}
+        </Section>
+      )}
 
       <Section style={checkInBox}>
         <Text style={{ ...label, margin: 0 }}>Please check in by</Text>

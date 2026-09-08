@@ -32,6 +32,28 @@ export const skipped = (reason: string): NotificationResult => ({
 });
 
 // ---------------------------------------------------------------------------
+// Customer-portal URLs (shared by email, SMS, and magic-link flows)
+// ---------------------------------------------------------------------------
+
+/** Absolute base URL of the customer portal. Derived from what local dev already
+ *  sets (`APP_BASE_DOMAIN=localhost:3000`) so the sandbox link works with no new
+ *  env var; `CUSTOMER_PORTAL_URL` overrides it for a real deployment. */
+export function customerPortalBaseUrl(): string {
+  const explicit = (process.env.CUSTOMER_PORTAL_URL ?? process.env.APP_BASE_URL ?? '')
+    .trim()
+    .replace(/\/+$/, '');
+  if (explicit) return explicit;
+  const domain = (process.env.APP_BASE_DOMAIN ?? 'localhost:3000').trim().replace(/\/+$/, '');
+  const scheme = /^(localhost|127\.0\.0\.1)/.test(domain) ? 'http' : 'https';
+  return `${scheme}://${domain}`;
+}
+
+/** Absolute URL of the standalone clause-level waiver signer for one order item. */
+export function waiverSignUrl(orderItemId: string): string {
+  return `${customerPortalBaseUrl()}/waiver/${encodeURIComponent(orderItemId)}`;
+}
+
+// ---------------------------------------------------------------------------
 // Branding & formatting
 // ---------------------------------------------------------------------------
 
@@ -97,6 +119,26 @@ export async function loadOrderBundle(db: TenantClient, orderId: string) {
 }
 
 export type OrderBundle = NonNullable<Awaited<ReturnType<typeof loadOrderBundle>>>;
+
+/**
+ * Pre-arrival sign links for every live item that requires a liability waiver and
+ * doesn't have a signed one yet. Empty when nothing is outstanding — the inline
+ * checkout waiver (or a prior standalone signature) already flipped
+ * `waiver_signed`, so a signed booking never gets nagged.
+ */
+export function unsignedWaiverLinks(
+  order: OrderBundle,
+): Array<{ label: string; url: string }> {
+  return order.items
+    .filter(
+      (item) =>
+        item.activity.waiver_required && !item.waiver_signed && item.status !== 'CANCELLED',
+    )
+    .map((item) => ({
+      label: item.activity.name_external,
+      url: waiverSignUrl(item.id),
+    }));
+}
 
 /** Derive activity/date/time/party labels from the order's first/primary item. */
 export function bookingFacts(order: OrderBundle) {
