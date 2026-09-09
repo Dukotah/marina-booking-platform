@@ -82,7 +82,10 @@ export function DaySchedule({
   /** Show one-tap check-in / no-show controls (on for the ops manifest). */
   showCheckIn?: boolean;
 }) {
-  const [onlyBooked, setOnlyBooked] = useState(false);
+  // Booked-only by default: a marina day can carry 100+ sellable timeslots, and a
+  // wall of "Open — no bookings yet" cards buried the dozen departures that matter.
+  // One untick still shows everything sellable.
+  const [onlyBooked, setOnlyBooked] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState('');
   const [focusAfterId, setFocusAfterId] = useState<string | null>(null);
@@ -106,7 +109,9 @@ export function DaySchedule({
     const out: Departure[] = [];
     for (const row of rows) {
       const byId = new Map<string, ManifestBooking[]>();
-      for (const b of row.bookings) {
+      // Cancelled bookings ride along in the data (for the list view's toggle) but a
+      // departure card is about who is actually coming.
+      for (const b of row.bookings.filter((x) => x.status !== 'CANCELLED')) {
         const list = byId.get(b.timeslotId);
         if (list) list.push(b);
         else byId.set(b.timeslotId, [b]);
@@ -506,7 +511,7 @@ function StatusPill({ status }: { status: ManifestBooking['status'] }) {
  * that balance with cash or card right here. This is the manifest's real job once the
  * "utilization" novelty wears off — running the dock when boats return.
  */
-function BookingCharge({
+export function BookingCharge({
   orderId,
   balanceDueCents,
   run,

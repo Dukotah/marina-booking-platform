@@ -68,8 +68,10 @@ export async function loadManifest(isoDate: string): Promise<ManifestData> {
             },
             orderBy: { created_at: 'asc' },
           },
+          // Cancelled items ARE loaded (the list view can reveal them behind a
+          // toggle); every count below still excludes them, and the other views
+          // filter them out, so nothing else changes.
           order_items: {
-            where: { status: { not: 'CANCELLED' } },
             select: {
               id: true,
               quantity: true,
@@ -159,7 +161,7 @@ export async function loadManifest(isoDate: string): Promise<ManifestData> {
           customerPhone: item.order.customer.phone ?? null,
         });
 
-        totalBookings += 1;
+        if (item.status !== 'CANCELLED') totalBookings += 1;
         if (item.status === 'CHECKED_IN') checkedIn += 1;
       }
     }
