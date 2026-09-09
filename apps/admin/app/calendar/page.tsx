@@ -63,14 +63,17 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
     <AdminShell>
       <PageHeader
         title="Calendar"
-        description="A real week grid of every booking — color-coded by activity."
+        description="The week at a glance — every departure as a one-line chip, by day."
         actions={<DateNav date={isoDate} stepDays={7} label={label} />}
       />
       <ViewToggle view="week" isoDate={isoDate} />
-      <div className="mb-5 mt-5 flex flex-wrap gap-3">
-        <SummaryChip label="This week" value={`${totalBookings} bookings`} />
+      <p className="mt-4 text-sm text-slate-600">
+        <span className="font-semibold tabular-nums text-slate-900">{totalBookings}</span>{' '}
+        {totalBookings === 1 ? 'booking' : 'bookings'} this week
+      </p>
+      <div className="mt-2">
+        <WeekCalendar days={days} events={events} />
       </div>
-      <WeekCalendar days={days} events={events} />
     </AdminShell>
   );
 }
@@ -99,15 +102,6 @@ function ViewToggle({ view, isoDate }: { view: 'day' | 'week'; isoDate: string }
       >
         <CalendarRange className="h-4 w-4" aria-hidden /> Week
       </Link>
-    </div>
-  );
-}
-
-function SummaryChip({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-lg border border-slate-200 bg-white px-4 py-2 shadow-sm">
-      <div className="text-xs font-medium text-slate-500">{label}</div>
-      <div className="text-lg font-semibold tabular-nums text-slate-800">{value}</div>
     </div>
   );
 }

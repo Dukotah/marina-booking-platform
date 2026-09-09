@@ -52,10 +52,12 @@ export async function loadWeek(weekStartIso: string): Promise<WeekData> {
   });
   const isoToIndex = new Map(days.map((d, i) => [d.iso, i]));
 
+  // Cancelled order items ARE loaded — the week grid hides cancelled/no-show
+  // behind an off-by-default toggle instead of pretending they never happened.
+  // The headline count still excludes them.
   const items = await db.orderItem.findMany({
     where: {
       operator_id: operatorId,
-      status: { not: 'CANCELLED' },
       timeslot: { datetime: { gte: startUtc, lt: endUtc }, status: { not: 'CANCELLED' } },
     },
     select: {
@@ -108,5 +110,10 @@ export async function loadWeek(weekStartIso: string): Promise<WeekData> {
     });
   }
 
-  return { timeZone, days, events, totalBookings: events.length };
+  return {
+    timeZone,
+    days,
+    events,
+    totalBookings: events.filter((e) => e.status !== 'CANCELLED').length,
+  };
 }
