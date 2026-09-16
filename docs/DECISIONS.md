@@ -366,3 +366,35 @@ charges roll up with metered fuel merchandise under one Fuel product.
 
 **Why snapshots + no FK on package columns:** renames/archives must never rewrite
 or block on historical sales; the snapshot is the durable reporting label.
+
+## D-018 — Repeating schedules materialize timeslots; rules are recipes, never the read path (2026-09-15) — Accepted
+
+Per-vessel scheduling had to reach FareHarbor's bar (each boat different, seasons,
+weekday sets, explicit start times, blackouts) while staying simple enough that a
+50-year-old owner can drive it. **Decision: a `ScheduleRule` is a named per-activity
+recipe (inclusive YYYY-MM-DD season strings, weekday set, explicit `start_minutes`
+list, optional capacity override) that GENERATES `Timeslot` rows over a rolling
+60-day horizon — the booking engine keeps reading only Timeslots.** Materialization
+(`packages/database/src/schedule.ts`, shared by admin server actions per D-007 and
+the API's `POST /internal/schedules/run` cron) is idempotent under five invariants:
+booked slots are never deleted/closed/shrunk below booked; one-off slots
+(schedule_rule_id null) are never touched; hand-closed times stay closed; blackout
+days beat rules; removing/pausing a rule withdraws only future UNBOOKED slots
+(booked departures survive as one-offs). Rules compose as a union of departures with
+the highest capacity winning a shared instant.
+
+Schema choices: `Timeslot.schedule_rule_id` is a plain NO ACTION FK (a composite
+SET NULL would null `operator_id`; NO ACTION keeps Activity cascade deletes legal —
+services detach before deleting a rule). `BlackoutDate` was EXTENDED (not
+duplicated) with an optional composite-FK `activity_id` scope; its stored
+UTC-midnight day is now read back via `toISOString()` everywhere, fixing an
+off-by-one that shifted blackouts a day early west of Greenwich. Season bounds are
+calendar-day STRINGS so a typed date can never move under a timezone conversion.
+
+UX (the dad test): rules render as one plain sentence; the builder is chips and
+steppers with a "how this works" line per control; capacity override hides behind
+progressive disclosure; a live two-week preview shows exactly what saving will do
+(green add / gray exists / amber remove / red closed) BEFORE anything writes; and
+"Copy schedule from…" clones another boat's rules (a null capacity keeps following
+the TARGET boat's capacity, which is what makes cross-size copying safe). The
+one-off day-by-day editor stays alongside for surgical edits.

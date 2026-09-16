@@ -82,6 +82,23 @@ I will build against sandboxes/free tiers and flag exactly when each is needed.
 
 ## Changelog
 
+- **2026-09-15** — **Per-vessel repeating schedules (FareHarbor-grade, D-018).**
+  New `ScheduleRule` model (per-activity season range + weekday set + explicit
+  start-time list + optional capacity override) materializes Timeslots over a
+  rolling 60-day horizon via `packages/database/src/schedule.ts` — idempotent,
+  booked-slot-protected, one-off-slot-safe, blackout-aware. `BlackoutDate` gained
+  per-activity scope (and the availability read path a west-of-Greenwich
+  off-by-one fix). Cron top-up: `POST /internal/schedules/run`. Admin: new
+  "Repeating schedule" builder on the activity page — sentence-shaped rule cards,
+  weekday/time chips, capacity behind progressive disclosure, live two-week
+  preview (green add / gray exists / amber remove / red closed) BEFORE saving,
+  closed-dates picker (per-boat or marina-wide, with reason), copy-schedule-from-
+  another-boat. Existing one-off day-by-day editor untouched below it. API suite
+  472/472 (9 new schedule-rule integration tests) and 9/9 typecheck.
+  NOTE: the dev DB was fully reseeded (db:reset + lakesonoma-catalog) on
+  2026-09-15 after a test-cleanup accident deleted activities; order/customer
+  history regenerated deterministically by seed-season.
+
 - **2026-07-07** — **Phase 3: automated pre-arrival reminders (parity moat #3 start, D-015).**
   Built the reminder automation the app was missing: `selectDueReminderOrderIds` /
   `runDueReminders` / `runAllDueReminders` in the notifications service select UPCOMING

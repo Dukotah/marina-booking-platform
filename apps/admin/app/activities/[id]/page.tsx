@@ -9,6 +9,12 @@ import {
   type ScheduleDefaults,
   type ScheduleSnapshot,
 } from '../../../components/activities/ScheduleEditor';
+import {
+  RuleScheduler,
+  type BlackoutGroupView,
+  type CopyOption,
+} from '../../../components/activities/RuleScheduler';
+import type { RuleView } from '../schedule-rules-actions';
 import { addIsoDays, localDayRangeUtc, toLocalParts, todayIsoIn } from '../../../components/manifest/tz';
 import { loadActivityForm, loadLocationOptions } from '../loaders';
 import { getTenantDb, requirePermission } from '../../../lib/session';
@@ -178,10 +184,103 @@ function mostCommon(entries: Array<[number, number]>): number | null {
   return best;
 }
 
+/** Data the repeating-schedule builder needs: rules, closed dates, copy sources. */
+async function loadRuleSchedulerData(activityId: string): Promise<{
+  boatCapacity: number;
+  today: string;
+  rules: RuleView[];
+  blackouts: BlackoutGroupView[];
+  copyOptions: CopyOption[];
+} | null> {
+  const db = await getTenantDb();
+  const activity = await db.activity.findUnique({
+    where: { id: activityId },
+    select: {
+      max_participants: true,
+      location_id: true,
+      location: { select: { timezone: true } },
+      operator: { select: { timezone: true } },
+    },
+  });
+  if (!activity) return null;
+
+  const timezone = activity.location?.timezone ?? activity.operator.timezone;
+  const today = todayIsoIn(timezone);
+
+  const [ruleRows, blackoutRows, ruleCounts, otherActivities] = await Promise.all([
+    db.scheduleRule.findMany({
+      where: { activity_id: activityId },
+      orderBy: { created_at: 'asc' },
+    }),
+    db.blackoutDate.findMany({
+      where: {
+        date: { gte: new Date(`${today}T00:00:00.000Z`) },
+        OR: [
+          { activity_id: activityId },
+          {
+            activity_id: null,
+            ...(activity.location_id
+              ? { OR: [{ location_id: null }, { location_id: activity.location_id }] }
+              : { location_id: null }),
+          },
+        ],
+      },
+      orderBy: { date: 'asc' },
+    }),
+    db.scheduleRule.groupBy({ by: ['activity_id'], _count: { _all: true } }),
+    db.activity.findMany({
+      where: { id: { not: activityId } },
+      select: { id: true, name_internal: true },
+      orderBy: { sort_index: 'asc' },
+    }),
+  ]);
+
+  // Group consecutive closed days sharing a scope + reason into one line.
+  const blackouts: BlackoutGroupView[] = [];
+  for (const row of blackoutRows) {
+    const date = row.date.toISOString().slice(0, 10);
+    const scope: BlackoutGroupView['scope'] = row.activity_id ? 'activity' : 'operator';
+    const last = blackouts[blackouts.length - 1];
+    if (
+      last &&
+      last.scope === scope &&
+      last.reason === row.reason &&
+      addIsoDays(last.endDate, 1) === date
+    ) {
+      last.endDate = date;
+      last.ids.push(row.id);
+    } else {
+      blackouts.push({ ids: [row.id], startDate: date, endDate: date, reason: row.reason, scope });
+    }
+  }
+
+  const counts = new Map(ruleCounts.map((r) => [r.activity_id, r._count._all]));
+  const copyOptions: CopyOption[] = otherActivities
+    .map((a) => ({ id: a.id, name: a.name_internal, ruleCount: counts.get(a.id) ?? 0 }))
+    .filter((a) => a.ruleCount > 0);
+
+  return {
+    boatCapacity: activity.max_participants,
+    today,
+    rules: ruleRows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      startDate: r.start_date,
+      endDate: r.end_date,
+      weekdays: r.weekdays,
+      startMinutes: r.start_minutes,
+      capacity: r.capacity,
+      isActive: r.is_active,
+    })),
+    blackouts,
+    copyOptions,
+  };
+}
+
 /**
- * Edit an existing activity. The 4-step wizard covers details and rates; below it the
- * schedule editor covers hours, days of the week and closed dates for a date range —
- * the things that change with the season and used to be fixed at creation. Gated by
+ * Edit an existing activity. The 4-step wizard covers details and rates; below it
+ * the repeating-schedule builder (rules that keep the calendar filled) and the
+ * day-by-day editor (one-off changes to a stretch of dates). Gated by
  * `activity:write`.
  */
 export default async function EditActivityPage({ params }: { params: { id: string } }) {
@@ -196,7 +295,10 @@ export default async function EditActivityPage({ params }: { params: { id: strin
     notFound();
   }
 
-  const schedule = await loadScheduleSnapshot(params.id, defaultValues.schedule);
+  const [schedule, ruleData] = await Promise.all([
+    loadScheduleSnapshot(params.id, defaultValues.schedule),
+    loadRuleSchedulerData(params.id),
+  ]);
 
   return (
     <AdminShell>
@@ -221,6 +323,8 @@ export default async function EditActivityPage({ params }: { params: { id: strin
           defaultValues={defaultValues}
           locations={locations}
         />
+
+        {ruleData ? <RuleScheduler activityId={params.id} {...ruleData} /> : null}
 
         {schedule ? (
           <ScheduleEditor
