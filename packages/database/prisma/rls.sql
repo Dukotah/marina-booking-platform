@@ -22,7 +22,8 @@ DO $$
 DECLARE
   t text;
   tenant_tables text[] := ARRAY[
-    'Location', 'StaffMember', 'Activity', 'Rate', 'Timeslot', 'Resource',
+    'Location', 'StaffMember', 'Activity', 'Rate', 'Timeslot', 'ScheduleRule',
+    'Resource',
     'ResourceBooking', 'Customer', 'Order', 'OrderItem', 'OrderMerchandiseLine',
     'Payment', 'Note',
     'OrderEvent', 'OrderCharge', 'Fee', 'MerchandiseItem', 'PromoCode', 'Waiver',

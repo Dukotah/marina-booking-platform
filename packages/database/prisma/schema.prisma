@@ -372,6 +372,8 @@ model Activity {
   pricing_rules PricingRule[]
   customer_questions CustomerQuestion[]
   channel_listings ChannelListing[]
+  schedule_rules ScheduleRule[]
+  blackout_dates BlackoutDate[] @relation("ActivityBlackouts")
 
   // Target of tenant-composite FKs (D-010 / 0.13): children reference
   // [operator_id, id] so the DB refuses a child whose parent is another tenant's.
@@ -415,6 +417,14 @@ model Timeslot {
   capacity_booked Int            @default(0)
   is_overnight    Boolean        @default(false)
   status          TimeslotStatus @default(AVAILABLE)
+  /// Set when this slot was materialized by a repeating ScheduleRule; null = one-off
+  /// (seeded / wizard / manual). Rule-generated slots are the ONLY ones the schedule
+  /// materializer may remove or resize; one-offs are never touched by rules.
+  /// Plain (non-composite) FK on purpose: a composite SET NULL would null
+  /// operator_id too, and NO ACTION keeps Activity-cascade deletes working —
+  /// the materializer detaches/cleans slots before a rule row is ever deleted.
+  schedule_rule_id String?
+  schedule_rule    ScheduleRule?  @relation(fields: [schedule_rule_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   created_at      DateTime       @default(now())
   order_items     OrderItem[]
   guide_assignments GuideAssignment[]
@@ -422,6 +432,49 @@ model Timeslot {
   @@unique([operator_id, id])
   @@index([operator_id])
   @@index([activity_id, datetime])
+  @@index([schedule_rule_id])
+}
+
+// ===========================================================================
+// Repeating schedules (FareHarbor-style "availabilities")
+//
+// A ScheduleRule is a named, per-activity repeating pattern: a season (inclusive
+// local calendar-date range), a weekday set, an explicit list of departure times,
+// and an optional per-slot capacity override. Rules GENERATE Timeslot rows over a
+// rolling horizon (idempotently — see packages/database/src/schedule.ts). Multiple
+// active rules per activity compose: the union of their departures, with the
+// highest capacity winning where two rules land on the same instant. Timeslots
+// stay the single source of truth the booking engine reads; rules are the recipe.
+// ===========================================================================
+
+model ScheduleRule {
+  id            String   @id @default(cuid())
+  operator_id   String
+  activity_id   String
+  // Tenant-composite FK: (operator_id, activity_id) -> Activity(operator_id, id).
+  activity      Activity @relation(fields: [operator_id, activity_id], references: [operator_id, id], onDelete: Cascade)
+  /// Operator-facing label, e.g. "Summer weekdays".
+  name          String
+  /// Inclusive season bounds as YYYY-MM-DD calendar days in the activity's
+  /// operating timezone. Stored as strings (not DATE/timestamp) so a day the
+  /// operator typed can never shift under a timezone conversion.
+  start_date    String
+  end_date      String
+  /// Days of week the rule fires on: 0 = Sunday … 6 = Saturday.
+  weekdays      Int[]
+  /// Departure times as minutes since local midnight, ascending (e.g. 480 = 8:00 AM).
+  start_minutes Int[]
+  /// Per-slot capacity. Null = follow the activity's max_participants.
+  capacity      Int?
+  /// Paused rules stop generating; their future unbooked slots are withdrawn.
+  is_active     Boolean  @default(true)
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+  timeslots     Timeslot[]
+
+  @@unique([operator_id, id])
+  @@index([operator_id])
+  @@index([operator_id, activity_id])
 }
 
 // Physical inventory (boats, rooms, equipment) that backs activity capacity.
@@ -1652,17 +1705,24 @@ model BlackoutDate {
   id          String    @id @default(cuid())
   operator_id String
   operator    Operator  @relation(fields: [operator_id], references: [id], onDelete: Cascade)
-  /// Calendar day, stored as UTC-midnight instant. Interpreted in operator/location tz.
+  /// Calendar day, stored as UTC-midnight instant for the typed YYYY-MM-DD.
+  /// Read it back with .toISOString().slice(0, 10) — NEVER through a timezone
+  /// projection, which shifts it a day west of Greenwich.
   date        DateTime
   /// Optional location scope; null = applies to every location.
   location_id String?
   location    Location? @relation(fields: [location_id], references: [id])
+  /// Optional activity scope (composite tenant FK, PricingRule pattern):
+  /// set = closes ONLY this activity that day; null = operator/location-wide.
+  activity_id String?
+  activity    Activity? @relation("ActivityBlackouts", fields: [operator_id, activity_id], references: [operator_id, id], onDelete: Cascade)
   reason      String?
   created_at  DateTime  @default(now())
 
   @@unique([operator_id, id])
   @@index([operator_id])
   @@index([operator_id, date])
+  @@index([operator_id, activity_id])
 }
 
 /**

@@ -14,6 +14,7 @@
 import { Hono } from 'hono';
 import type { Env } from '../context.js';
 import { runAllDueReminders } from '../services/notifications.js';
+import { runScheduleSweep } from '../services/schedules.js';
 
 export const internal = new Hono<Env>();
 
@@ -43,4 +44,22 @@ internal.post('/reminders/run', async (c) => {
 
   const result = await runAllDueReminders({ withinHours });
   return c.json({ ok: true, withinHours, ...result });
+});
+
+/**
+ * Top up the rolling schedule horizon: re-materialize every activity that has an
+ * active ScheduleRule, for every active operator. Idempotent — a day with its
+ * slots already in place is left untouched, so running this hourly or daily is
+ * equally safe. Optional `?horizonDays=` overrides the look-ahead (1–366 days).
+ */
+internal.post('/schedules/run', async (c) => {
+  if (!authorized((name) => c.req.header(name))) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  const raw = Number.parseInt(c.req.query('horizonDays') ?? '', 10);
+  const horizonDays = Number.isFinite(raw) ? Math.min(366, Math.max(1, raw)) : undefined;
+
+  const result = await runScheduleSweep({ horizonDays });
+  return c.json({ ok: true, ...result });
 });

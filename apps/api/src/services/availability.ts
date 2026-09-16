@@ -188,15 +188,19 @@ async function resolveActivityTimezone(db: TenantClient, activityId: string): Pr
 }
 
 /**
- * The set of blackout calendar days (YYYY-MM-DD, operator/location timezone) that
- * overlap [rangeStart, rangeEnd). A blackout scoped to a location applies only when
- * the activity belongs to that location; unscoped (location_id null) blackouts apply
- * everywhere. Availability queries drop any slot whose day is in this set.
+ * The set of blackout calendar days (YYYY-MM-DD) that overlap [rangeStart,
+ * rangeEnd). A blackout scoped to THIS activity always applies; an unscoped one
+ * (activity_id null) applies when it is location-unscoped or scoped to the
+ * activity's location. Availability queries drop any slot whose day is in this set.
+ *
+ * The stored UTC-midnight instant is read back with toISOString() — the calendar
+ * day the operator typed — NOT projected through the operator timezone, which
+ * shifted the day for anyone west of Greenwich (that was a real off-by-one).
  */
 async function blackoutDayKeys(
   db: TenantClient,
   activityId: string,
-  timeZone: string,
+  _timeZone: string,
   rangeStart: Date,
   rangeEnd: Date,
 ): Promise<Set<string>> {
@@ -208,14 +212,27 @@ async function blackoutDayKeys(
 
   const rows = await db.blackoutDate.findMany({
     where: {
-      date: { gte: startOfDay(rangeStart), lt: rangeEnd },
-      OR: [{ location_id: null }, ...(locationId ? [{ location_id: locationId }] : [])],
+      // Widened a day each side: the UTC-midnight storage day and the operator-local
+      // day the range bounds fall on can differ by one.
+      date: {
+        gte: new Date(startOfDay(rangeStart).getTime() - 86_400_000),
+        lt: new Date(rangeEnd.getTime() + 86_400_000),
+      },
+      OR: [
+        { activity_id: activityId },
+        {
+          activity_id: null,
+          ...(locationId
+            ? { OR: [{ location_id: null }, { location_id: locationId }] }
+            : { location_id: null }),
+        },
+      ],
     },
     select: { date: true },
   });
 
   const keys = new Set<string>();
-  for (const r of rows) keys.add(dayKey(timeZone, r.date));
+  for (const r of rows) keys.add(r.date.toISOString().slice(0, 10));
   return keys;
 }
 
