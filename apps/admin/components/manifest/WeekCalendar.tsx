@@ -5,14 +5,16 @@ import Link from 'next/link';
 import { Plus } from 'lucide-react';
 import { cn } from '../../lib/cn';
 import { formatTime } from '../../lib/format';
+import { ReservationCard } from '../calendar/ReservationCard';
 
 /**
  * The week at a glance, the way a phone receptionist reads it: seven day columns of
  * quiet one-line chips in departure order — time + boat, a thin activity-colour tick
  * on the left, and a muted fill only when a booking is NOT simply upcoming. Days
  * with more chips than fit collapse behind "+N more"; cancelled and no-shows hide
- * behind an off-by-default toggle. A chip deep-links to its order, and hovering one
- * reveals the "+ add charge" shortcut straight into the order's charge panel.
+ * behind an off-by-default toggle. Clicking a chip opens the reservation card — the
+ * edit-everything slide-over — and hovering one reveals the "+ add charge" shortcut
+ * straight into the order's charge panel.
  *
  * (This replaces the pixel-positioned lane grid: eight concurrent 8 AM departures
  * used to split a column into unreadable 20px slivers of saturated colour.)
@@ -68,6 +70,8 @@ export function WeekCalendar({ days, events }: WeekCalendarProps) {
   // Cancelled/no-show are noise on a planning glance but must stay reachable.
   const [showInactive, setShowInactive] = useState(false);
   const [expandedDays, setExpandedDays] = useState<Set<string>>(new Set());
+  // The reservation card open for a clicked chip (null = closed).
+  const [openItemId, setOpenItemId] = useState<string | null>(null);
 
   const inactiveCount = useMemo(
     () => events.filter((e) => e.status === 'CANCELLED' || e.status === 'NO_SHOW').length,
@@ -148,7 +152,11 @@ export function WeekCalendar({ days, events }: WeekCalendarProps) {
                 className={cn('space-y-1 p-1.5', i > 0 && 'border-l border-slate-100')}
               >
                 {visible.map((ev) => (
-                  <EventChip key={ev.orderItemId} ev={ev} />
+                  <EventChip
+                    key={ev.orderItemId}
+                    ev={ev}
+                    onOpen={() => setOpenItemId(ev.orderItemId)}
+                  />
                 ))}
                 {hiddenCount > 0 ? (
                   <button
@@ -172,16 +180,22 @@ export function WeekCalendar({ days, events }: WeekCalendarProps) {
           })}
         </div>
       </div>
+
+      {openItemId ? (
+        <ReservationCard orderItemId={openItemId} onClose={() => setOpenItemId(null)} />
+      ) : null}
     </div>
   );
 }
 
 /**
  * One booking, one quiet line: activity-colour tick + time + boat. Fill only says
- * something when the state is not plain "upcoming". Full detail stays on the title
- * tooltip and the order deep link, exactly as before.
+ * something when the state is not plain "upcoming". Clicking (or Enter/Space on) a
+ * chip opens the reservation card — a button, so it is keyboard-activatable and
+ * announces as an action, with a visible hover/focus affordance. Full detail stays
+ * on the title tooltip; the order deep link lives inside the card.
  */
-function EventChip({ ev }: { ev: WeekCalendarEvent }) {
+function EventChip({ ev, onOpen }: { ev: WeekCalendarEvent; onOpen: () => void }) {
   const inactive = ev.status === 'CANCELLED' || ev.status === 'NO_SHOW';
   const fill =
     ev.status === 'CHECKED_IN'
@@ -194,13 +208,18 @@ function EventChip({ ev }: { ev: WeekCalendarEvent }) {
 
   return (
     <div className="group relative">
-      <Link
-        href={`/orders/${ev.orderId}`}
+      <button
+        type="button"
+        onClick={onOpen}
+        aria-haspopup="dialog"
+        data-reservation-trigger={ev.orderItemId}
         title={`${ev.title} · ${formatTime(ev.startISO)} · ${ev.subtitle}${
           ev.status === 'UPCOMING' ? '' : ` · ${statusWord(ev.status)}`
         }`}
         className={cn(
-          'relative flex h-7 items-center gap-1.5 overflow-hidden rounded border pl-2.5 pr-1 text-xs hover:border-slate-300 hover:bg-slate-50',
+          'relative flex h-7 w-full cursor-pointer items-center gap-1.5 overflow-hidden rounded border pl-2.5 pr-1 text-left text-xs',
+          'hover:border-slate-400 hover:bg-slate-50 hover:shadow-sm',
+          'focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-500',
           fill,
           inactive && 'text-slate-500',
         )}
@@ -229,8 +248,9 @@ function EventChip({ ev }: { ev: WeekCalendarEvent }) {
         <span className="sr-only">
           {ev.subtitle}
           {ev.status === 'UPCOMING' ? '' : ` — ${statusWord(ev.status)}`}
+          {' — open reservation'}
         </span>
-      </Link>
+      </button>
       {!inactive ? (
         // One-tap post-trip charge: deep-links to the order with the charge panel
         // pre-opened (#add-charge). A sibling anchor, not nested in the chip link,

@@ -14,6 +14,7 @@ import {
   undoNoShowOrderItem,
 } from '../../app/manifest/actions';
 import { addOrderChargeAction, collectBalanceAction } from '../../app/orders/actions';
+import { ReservationCard } from '../calendar/ReservationCard';
 
 /** "9:00 AM" from minutes-since-midnight (already operator-local). */
 function timeLabel(startMin: number): string {
@@ -86,6 +87,8 @@ export function DaySchedule({
   // wall of "Open — no bookings yet" cards buried the dozen departures that matter.
   // One untick still shows everything sellable.
   const [onlyBooked, setOnlyBooked] = useState(true);
+  // The reservation card open for a clicked guest (null = closed).
+  const [openItemId, setOpenItemId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState('');
   const [focusAfterId, setFocusAfterId] = useState<string | null>(null);
@@ -254,6 +257,7 @@ export function DaySchedule({
                     isPending={isPending}
                     overdueBy={overdueBy}
                     run={run}
+                    onOpenReservation={setOpenItemId}
                   />
                 ))}
               </div>
@@ -261,6 +265,10 @@ export function DaySchedule({
           ))}
         </div>
       )}
+
+      {openItemId ? (
+        <ReservationCard orderItemId={openItemId} onClose={() => setOpenItemId(null)} />
+      ) : null}
     </div>
   );
 }
@@ -271,12 +279,15 @@ function DepartureCard({
   isPending,
   overdueBy,
   run,
+  onOpenReservation,
 }: {
   d: Departure;
   showCheckIn: boolean;
   isPending: boolean;
   overdueBy: (b: ManifestBooking) => number | null;
   run: (id: string, success: string, action: () => Promise<{ ok: boolean; error?: string }>) => void;
+  /** Open the click-to-edit reservation card for one booking. */
+  onOpenReservation: (orderItemId: string) => void;
 }) {
   const fg = readableTextColor(d.color);
   const fill = fillState(d.capacityBooked, d.capacityTotal);
@@ -365,7 +376,19 @@ function DepartureCard({
                 <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    <span className="text-base font-medium text-slate-900">{b.customerName}</span>
+                    {/* The guest's name opens the reservation card — the calendar's
+                        click-to-edit entry point. A button (not a link) so Enter/Space
+                        work and it announces as opening a dialog. */}
+                    <button
+                      type="button"
+                      onClick={() => onOpenReservation(b.orderItemId)}
+                      aria-haspopup="dialog"
+                      data-reservation-trigger={b.orderItemId}
+                      aria-label={`Open reservation for ${b.customerName}, ${d.activityName}`}
+                      className="cursor-pointer rounded text-base font-medium text-slate-900 underline-offset-2 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-500"
+                    >
+                      {b.customerName}
+                    </button>
                     <span className="inline-flex items-center gap-1 text-sm text-slate-600">
                       <Users className="h-3.5 w-3.5" aria-hidden /> {b.quantity}
                     </span>
