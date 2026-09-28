@@ -449,3 +449,11 @@ no visible placeholder text.
 inside `{!BOOKING_APP_ENABLED && ...}`. With `NEXT_PUBLIC_BOOKING_URL` set, the tag
 is NOT rendered — verified. If `NEXT_PUBLIC_BOOKING_URL` is ever unset (e.g. a
 rollback), the Singenuity preconnect silently returns. Remove the hint post-switchover.
+
+## Deploy note — rate limiting behind a proxy (2026-09-28)
+
+The public rate limiter now keys on the REAL peer address and ignores client-authored
+`X-Forwarded-For` by default (it was spoofable — rotating the header minted unlimited
+budgets). When the API is deployed behind a reverse proxy/CDN, set `TRUSTED_PROXY_HOPS`
+(usually `1`) so the limiter reads the proxy-appended hop instead of keying every
+request to the proxy itself.

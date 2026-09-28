@@ -409,6 +409,11 @@ payments.post('/charge', async (c) => {
   if (!order) {
     return c.json({ error: 'Order not found' }, 404);
   }
+  // Same payable-state bar as collectBalance: cancel keeps balance_due as retained
+  // liability, so without this a cancelled order still looks chargeable here.
+  if (order.status === 'CANCELLED') {
+    return c.json({ error: 'This order has been cancelled', code: 'ORDER_CANCELLED' }, 409);
+  }
 
   const amountCents = parsed.data.amountCents ?? order.balance_due_cents;
   if (amountCents <= 0) {
@@ -564,6 +569,11 @@ payments.post('/confirm', async (c) => {
   const order = await c.var.db.order.findUnique({ where: { id: orderId } });
   if (!order) {
     return c.json({ error: 'Order not found' }, 404);
+  }
+  // A 3DS confirm settles money onto the order, so it holds the same bar as
+  // /charge: a cancelled order is not a payable order.
+  if (order.status === 'CANCELLED') {
+    return c.json({ error: 'This order has been cancelled', code: 'ORDER_CANCELLED' }, 409);
   }
 
   const intentId =

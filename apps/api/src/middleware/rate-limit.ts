@@ -12,12 +12,24 @@
  * across instances. The public surface (factory + middleware) stays the same.
  */
 import { createMiddleware } from 'hono/factory';
+import { getConnInfo } from '@hono/node-server/conninfo';
+import type { Context } from 'hono';
 import type { Env } from '../context.js';
 
 /** Default window length in milliseconds. */
 export const DEFAULT_WINDOW_MS = 60_000;
 /** Default max requests allowed per key within a window (sensitive public routes). */
 export const DEFAULT_MAX_REQUESTS = 30;
+
+/**
+ * How many reverse proxies we operate in front of this API (nginx, Vercel, a CDN).
+ * 0 (the default) means the API is reached directly, so EVERY forwarding header is
+ * client-authored and none of them can be trusted.
+ */
+const TRUSTED_PROXY_HOPS = (() => {
+  const raw = Number.parseInt(process.env.TRUSTED_PROXY_HOPS ?? '0', 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : 0;
+})();
 
 export interface RateLimitOptions {
   /** Sliding window length in ms. Default: 60s. */
@@ -29,6 +41,11 @@ export interface RateLimitOptions {
    * the same budget. Defaults to the matched route path.
    */
   bucket?: string;
+  /**
+   * Trusted proxy depth for THIS limiter, overriding the TRUSTED_PROXY_HOPS env.
+   * Mostly for tests; deployments should set the env once.
+   */
+  trustedProxyHops?: number;
 }
 
 interface WindowState {
@@ -38,21 +55,53 @@ interface WindowState {
 }
 
 /**
- * Best-effort client IP. Behind a proxy/CDN (Vercel, Cloudflare, nginx) the real
- * client is in `x-forwarded-for` (first hop) or `x-real-ip`. Falls back to a shared
- * "unknown" bucket so a missing header can't bypass the limiter entirely.
+ * Client IP for rate-limit keying, without trusting anything the client can write.
+ *
+ * The leftmost `x-forwarded-for` entry is CLIENT-AUTHORED: keying on it lets an
+ * attacker rotate the header and mint a fresh budget per request, which switches
+ * the limiter off entirely for booking spam and code enumeration. So the rule is
+ * positional, not preferential:
+ *
+ *   chain = [...x-forwarded-for entries, socket address]
+ *
+ * The last `trustedHops` entries of that chain were appended by proxies WE run;
+ * the entry just before them is the real client. With `trustedHops = 0` (direct
+ * exposure — local dev, a bare VPS) that is simply the socket address, and every
+ * forwarding header is ignored.
+ *
+ * No socket address available (e.g. `app.request()` in tests) and no trusted
+ * proxy → a shared "unknown" bucket: an unattributable caller gets ONE budget,
+ * not a budget per forged header.
  */
 export function getClientIp(
   headerGetter: (name: string) => string | undefined,
+  socketIp?: string | null,
+  trustedHops: number = TRUSTED_PROXY_HOPS,
 ): string {
   const xff = headerGetter('x-forwarded-for');
-  if (xff) {
-    const first = xff.split(',')[0]?.trim();
-    if (first) return first;
+  const chain = (xff ? xff.split(',').map((s) => s.trim()).filter(Boolean) : []);
+  if (socketIp) chain.push(socketIp);
+
+  // Index of the real client, counting the trusted proxy suffix off the end.
+  // Clamped to 0: more claimed hops than chain entries just yields the leftmost.
+  const idx = Math.max(0, chain.length - 1 - trustedHops);
+  const candidate = chain[idx];
+  if (candidate) {
+    // With no trusted proxies, never step left of the socket address itself.
+    if (trustedHops === 0) return socketIp ?? 'unknown';
+    return candidate;
   }
-  const real = headerGetter('x-real-ip');
-  if (real) return real.trim();
-  return 'unknown';
+  return socketIp ?? 'unknown';
+}
+
+/** The peer socket address for this request, when the runtime exposes one. */
+function socketAddress(c: Context<Env>): string | null {
+  try {
+    return getConnInfo(c).remote.address ?? null;
+  } catch {
+    // No underlying socket (unit tests via app.request(), exotic runtimes).
+    return null;
+  }
 }
 
 /**
@@ -83,7 +132,11 @@ export function rateLimit(options: RateLimitOptions = {}) {
       sweep(now);
     }
 
-    const ip = getClientIp((name) => c.req.header(name));
+    const ip = getClientIp(
+      (name) => c.req.header(name),
+      socketAddress(c),
+      options.trustedProxyHops ?? TRUSTED_PROXY_HOPS,
+    );
     // operatorId is set by tenantMiddleware before these public routes run; fall back
     // to the Host header (still tenant-ish) if it isn't, so the key is never empty.
     const operator = c.get('operatorId') ?? c.req.header('host') ?? 'no-tenant';

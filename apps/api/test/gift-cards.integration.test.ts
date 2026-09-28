@@ -12,7 +12,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { adminPrisma } from '@marina/database';
-import { createBooking } from '../src/services/booking.js';
+import { cancelBooking, createBooking } from '../src/services/booking.js';
 import {
   issueGiftCard,
   checkGiftCard,
@@ -168,5 +168,23 @@ describe.skipIf(!HAS_DB)('gift cards (live vs Neon, LSRA seed)', () => {
   it('reports outstanding gift-card liability from ACTIVE balances', async () => {
     const liability = await giftCardLiabilityCents(OP);
     expect(liability).toBeGreaterThanOrEqual(0);
+  });
+
+  it('refuses to redeem onto a CANCELLED order (money must not land on a dead booking)', async () => {
+    // Red-team regression: cancel keeps balance_due as retained liability, so
+    // without a status guard a public redeem drained a card into a cancelled
+    // trip — and a gift-card Payment has no processor transaction to refund.
+    const card = await issueGiftCard(OP, { initialCents: 5000 });
+    const order = await bookOne();
+    await cancelBooking(OP, order.id, { actor: 'test', reason: 'regression' });
+
+    await expect(
+      redeemGiftCard(OP, { code: card.code, orderId: order.id }),
+    ).rejects.toMatchObject({ code: 'ORDER_CANCELLED' });
+
+    // The card is untouched and still fully spendable.
+    const check = await checkGiftCard(OP, card.code);
+    expect(check.valid).toBe(true);
+    expect(check.balanceCents).toBe(5000);
   });
 });

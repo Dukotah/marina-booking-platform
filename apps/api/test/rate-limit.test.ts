@@ -8,9 +8,9 @@ import { describe, it, expect } from 'vitest';
 import { Hono } from 'hono';
 import { rateLimit, getClientIp } from '../src/middleware/rate-limit.js';
 
-function makeApp(max: number, windowMs = 60_000) {
+function makeApp(max: number, windowMs = 60_000, trustedProxyHops?: number) {
   const app = new Hono();
-  const limiter = rateLimit({ max, windowMs });
+  const limiter = rateLimit({ max, windowMs, trustedProxyHops });
   app.get('/hit', limiter, (c) => c.json({ ok: true }));
   return app;
 }
@@ -38,9 +38,10 @@ describe('rateLimit middleware', () => {
     expect(body.retryAfterSeconds).toBeGreaterThan(0);
   });
 
-  it('keys independently per client IP (one abuser does not block others)', async () => {
+  it('keys independently per client IP behind a trusted proxy', async () => {
     const max = 3;
-    const app = makeApp(max);
+    // Behind one trusted proxy the proxy-appended forwarded hop IS the client.
+    const app = makeApp(max, 60_000, 1);
 
     // Exhaust the budget for IP A.
     for (let i = 0; i < max; i++) expect((await call(app, '198.51.100.1')).status).toBe(200);
@@ -48,6 +49,16 @@ describe('rateLimit middleware', () => {
 
     // A different IP still has its full budget.
     expect((await call(app, '198.51.100.2')).status).toBe(200);
+  });
+
+  it('rotating x-forwarded-for does NOT mint fresh budgets when directly exposed', async () => {
+    const max = 3;
+    const app = makeApp(max); // trustedProxyHops = 0: forwarding headers are inert
+    // Attacker rotates the header every request; all of them share one bucket.
+    for (let i = 0; i < max; i++) {
+      expect((await call(app, `10.0.0.${i}`)).status).toBe(200);
+    }
+    expect((await call(app, '10.0.0.99')).status).toBe(429);
   });
 
   it('resets the window after it expires', async () => {
@@ -61,11 +72,22 @@ describe('rateLimit middleware', () => {
     expect((await call(app)).status).toBe(200);
   });
 
-  it('getClientIp prefers x-forwarded-for, then x-real-ip, then "unknown"', () => {
-    expect(getClientIp((n) => (n === 'x-forwarded-for' ? '9.9.9.9, 1.1.1.1' : undefined))).toBe(
-      '9.9.9.9',
-    );
-    expect(getClientIp((n) => (n === 'x-real-ip' ? '8.8.8.8' : undefined))).toBe('8.8.8.8');
-    expect(getClientIp(() => undefined)).toBe('unknown');
+  it('getClientIp never trusts client-authored forwarding headers when directly exposed', () => {
+    const xff = (n: string) => (n === 'x-forwarded-for' ? '9.9.9.9, 1.1.1.1' : undefined);
+    // trustedHops = 0 (direct exposure): the socket address wins, forged XFF is inert.
+    expect(getClientIp(xff, '203.0.113.7', 0)).toBe('203.0.113.7');
+    // No socket and no trusted proxy: one shared bucket, not a budget per forged header.
+    expect(getClientIp(xff, null, 0)).toBe('unknown');
+    expect(getClientIp(() => undefined, null, 0)).toBe('unknown');
+  });
+
+  it('getClientIp reads the proxy-appended hop when behind trusted proxies', () => {
+    // Behind ONE trusted proxy: socket = the proxy, the client is the entry the
+    // proxy appended (rightmost XFF value) — never the attacker-authored leftmost.
+    const forged = (n: string) =>
+      n === 'x-forwarded-for' ? '6.6.6.6, 198.51.100.9' : undefined;
+    expect(getClientIp(forged, '10.0.0.1', 1)).toBe('198.51.100.9');
+    // Claiming more hops than exist clamps to the leftmost entry instead of crashing.
+    expect(getClientIp(forged, '10.0.0.1', 9)).toBe('6.6.6.6');
   });
 });

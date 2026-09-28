@@ -197,6 +197,13 @@ export async function redeemGiftCard(
 
     const order = await tx.order.findUnique({ where: { id: input.orderId } });
     if (!order) throw new GiftCardError('ORDER_NOT_FOUND', 'Order not found.', 404);
+    // Same payable-state bar as collectBalance: a cancelled order must never take
+    // money. Without this, a public redeem drains a card into a dead booking — and
+    // a gift-card Payment has no processor transaction, so refunding it back out
+    // is impossible through the app.
+    if (order.status === 'CANCELLED') {
+      throw new GiftCardError('ORDER_CANCELLED', 'This order has been cancelled.', 409);
+    }
 
     const requested = input.amountCents ?? order.balance_due_cents;
     const applied = Math.min(card.balance_cents, requested, order.balance_due_cents);
