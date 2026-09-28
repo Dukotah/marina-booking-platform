@@ -45,12 +45,13 @@ const adminPrisma = new PrismaClient();
 
 const OP_ID = 'lsra';
 
-/** Base URL the API serves local uploads from (matches services/storage.ts). */
-const UPLOAD_BASE =
-  process.env.PUBLIC_UPLOAD_BASE_URL?.trim() ||
-  process.env.API_BASE_URL?.trim() ||
-  process.env.NEXT_PUBLIC_API_BASE_URL?.trim() ||
-  `http://localhost:${process.env.PORT ?? 3001}`;
+/**
+ * Base URL for uploads. Default is RELATIVE (`/uploads/...`) so the stored URL
+ * works from whatever origin the app is reached on (localhost, a WSL IP, the LAN,
+ * a real domain) — each app proxies `/uploads/*` to the API the same way it
+ * proxies `/api/*`. Set PUBLIC_UPLOAD_BASE_URL only for a real CDN/bucket.
+ */
+const UPLOAD_BASE = process.env.PUBLIC_UPLOAD_BASE_URL?.trim() || '';
 
 /** Deterministic stored name, matching the copied files: md5(slug) + .jpg. */
 function photoUrlFor(slug: string): string {
