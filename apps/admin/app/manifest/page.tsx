@@ -8,7 +8,6 @@ import { loadManifest, loadGuideRoster, loadFleetBoats } from './data';
 import { currentPermissions, getOperatorContext, getTenantDb } from '../../lib/session';
 import { normalizeIsoDate } from '../../components/manifest/tz';
 import { formatShortDate } from '../../lib/format';
-import { customerWebBaseUrl } from '../../lib/customer-web';
 
 export const dynamic = 'force-dynamic';
 
@@ -75,15 +74,10 @@ export default async function ManifestPage({ searchParams }: ManifestPageProps) 
         actions={<DateNav date={isoDate} stepDays={1} label={label} />}
       />
 
-      {/* The day's departures + per-booking ops (check-in, returns, fuel/charges) —
-          the real work of the manifest. The summary counts live inside ManifestViews,
-          where they double as one-tap filters. */}
-      <ManifestViews
-        rows={rows}
-        timeZone={timeZone}
-        isoDate={isoDate}
-        signLinkBase={customerWebBaseUrl()}
-      />
+      {/* The day's departures — the real work of the manifest. Per-booking ops
+          (check-in, returns, fuel/charges, waiver links) live in the reservation
+          card each guest name opens. */}
+      <ManifestViews rows={rows} timeZone={timeZone} isoDate={isoDate} />
 
       {/* Secondary day-of ops: collapsed to their headline numbers by default. */}
       <div className="mt-8 space-y-3">

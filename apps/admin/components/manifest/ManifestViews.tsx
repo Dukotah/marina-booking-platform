@@ -1,24 +1,24 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { CalendarDays, List, GanttChartSquare } from 'lucide-react';
+import { CalendarDays, GanttChartSquare } from 'lucide-react';
 import { cn } from '../../lib/cn';
 import { DaySchedule } from './DaySchedule';
 import { GanttManifest } from './GanttManifest';
-import { ManifestList, matchesFilter, type ManifestFilter } from './ManifestList';
 import type { ManifestListItem, ManifestRow } from './types';
 
 /**
- * The manifest's working surfaces. Default is the receptionist List — one compact
- * row per party, filterable by the summary counts above it. Day (roomy departure
- * cards with capacity + guides) and Timeline (Gantt) remain one tap away. All three
- * read the same rows; switching never refetches.
+ * The manifest's working surfaces. Day is THE manifest (owner's call: roomy,
+ * time-ordered departure cards, each guest one tap from the full reservation
+ * card); Timeline (Gantt) stays one tap away for the spatial view. The old
+ * receptionist List view is gone — everything it did per booking (check-in,
+ * no-show, charges, waiver links) lives in the reservation card the Day view
+ * opens.
  */
 export function ManifestViews({
   rows,
   timeZone,
   isoDate,
-  signLinkBase,
 }: {
   rows: ManifestRow[];
   /** Operator IANA timezone. "Overdue" is measured against this clock, not the
@@ -27,11 +27,8 @@ export function ManifestViews({
   timeZone: string;
   /** The day on screen, YYYY-MM-DD, so yesterday's manifest is history and not alarm. */
   isoDate: string;
-  /** Customer web base URL for waiver sign links (copy/QR on unsigned rows). */
-  signLinkBase: string;
 }) {
-  const [view, setView] = useState<'list' | 'day' | 'timeline'>('list');
-  const [filter, setFilter] = useState<ManifestFilter>('all');
+  const [view, setView] = useState<'day' | 'timeline'>('day');
 
   // The four numbers a front desk needs at open, computed once from the same rows
   // every view renders. Cancelled bookings never count.
@@ -45,26 +42,25 @@ export function ManifestViews({
       })),
     );
     const active = flat.filter((it) => it.status !== 'CANCELLED');
+    const unsigned = active.filter(
+      (it) => !it.waiverSigned && (it.status === 'UPCOMING' || it.status === 'CHECKED_IN'),
+    ).length;
     // "Owe balance" counts orders, not items — one order with two boats is one
     // balance to collect at the counter.
     const dueOrders = new Set(
-      active.filter((it) => matchesFilter(it, 'due')).map((it) => it.orderId),
+      active
+        .filter((it) => it.balanceDueCents > 0 && it.status !== 'NO_SHOW')
+        .map((it) => it.orderId),
     );
     return {
       departures: active.length,
-      unsigned: active.filter((it) => matchesFilter(it, 'unsigned')).length,
+      unsigned,
       due: dueOrders.size,
       checkedIn: active.filter((it) => it.status === 'CHECKED_IN').length,
     };
   }, [rows]);
 
-  /** A summary count doubles as a filter: tap to filter the list, tap again to clear. */
-  function toggleFilter(next: Exclude<ManifestFilter, 'all'>) {
-    setView('list');
-    setFilter((prev) => (prev === next ? 'all' : next));
-  }
-
-  // Day and Timeline predate the cancelled toggle; they only ever show live bookings.
+  // The views only ever show live bookings; cancelled ones live on the order pages.
   const liveRows = useMemo(
     () =>
       rows.map((row) => ({
@@ -76,50 +72,29 @@ export function ManifestViews({
 
   return (
     <div>
-      {/* Summary counts that act as filters — the numbers that matter at open. */}
-      <div className="mb-4 flex flex-wrap items-center gap-2" role="group" aria-label="Day summary filters">
-        <StatButton
-          value={counts.departures}
-          label={counts.departures === 1 ? 'departure' : 'departures'}
-          active={filter === 'all'}
-          onClick={() => {
-            setView('list');
-            setFilter('all');
-          }}
-        />
-        <StatButton
+      {/* The numbers that matter at open — glanceable, not another control row. */}
+      <div className="mb-4 flex flex-wrap items-center gap-2" role="group" aria-label="Day summary">
+        <Stat value={counts.departures} label={counts.departures === 1 ? 'departure' : 'departures'} />
+        <Stat
           value={counts.unsigned}
           label={counts.unsigned === 1 ? 'unsigned waiver' : 'unsigned waivers'}
           tone={counts.unsigned > 0 ? 'amber' : undefined}
-          active={filter === 'unsigned'}
-          onClick={() => toggleFilter('unsigned')}
         />
-        <StatButton
+        <Stat
           value={counts.due}
           label={counts.due === 1 ? 'owes balance' : 'owe balance'}
           tone={counts.due > 0 ? 'rose' : undefined}
-          active={filter === 'due'}
-          onClick={() => toggleFilter('due')}
         />
-        <StatButton
-          value={counts.checkedIn}
-          label="checked in"
-          tone={counts.checkedIn > 0 ? 'emerald' : undefined}
-          active={filter === 'checkedin'}
-          onClick={() => toggleFilter('checkedin')}
-        />
+        <Stat value={counts.checkedIn} label="checked in" tone={counts.checkedIn > 0 ? 'emerald' : undefined} />
       </div>
 
       {/* role="group" + per-button pressed state so a screen reader hears which view
-          is showing, not three identical buttons. (1.4.1, 4.1.2) */}
+          is showing, not two identical buttons. (1.4.1, 4.1.2) */}
       <div
         role="group"
         aria-label="Manifest view"
         className="mb-4 inline-flex rounded-lg border border-slate-200 bg-white p-0.5"
       >
-        <TabButton active={view === 'list'} onClick={() => setView('list')}>
-          <List className="h-4 w-4" aria-hidden /> List
-        </TabButton>
         <TabButton active={view === 'day'} onClick={() => setView('day')}>
           <CalendarDays className="h-4 w-4" aria-hidden /> Day
         </TabButton>
@@ -128,23 +103,13 @@ export function ManifestViews({
         </TabButton>
       </div>
 
-      {view === 'list' ? (
-        <ManifestList
-          rows={rows}
-          timeZone={timeZone}
-          isoDate={isoDate}
-          signLinkBase={signLinkBase}
-          filter={filter}
-        />
-      ) : view === 'day' ? (
+      {view === 'day' ? (
         <DaySchedule rows={liveRows} timeZone={timeZone} isoDate={isoDate} />
       ) : (
         <GanttManifest rows={liveRows} />
       )}
 
-      {/* The capacity legend explains the Day cards and Timeline blocks; the list
-          spells its statuses out in words, so it stays legend-free. */}
-      {view !== 'list' ? <Legend /> : null}
+      <Legend />
     </div>
   );
 }
@@ -177,22 +142,18 @@ function Legend() {
 }
 
 /**
- * One glanceable count that is also a filter. Semantic colour marks a non-zero
- * number that needs attention (amber = waivers, rose = money, emerald = in) — a
- * zero renders quiet grey because there is nothing to chase.
+ * One glanceable count. Semantic colour marks a non-zero number that needs
+ * attention (amber = waivers, rose = money, emerald = in) — a zero renders quiet
+ * grey because there is nothing to chase.
  */
-function StatButton({
+function Stat({
   value,
   label,
   tone,
-  active,
-  onClick,
 }: {
   value: number;
   label: string;
   tone?: 'amber' | 'rose' | 'emerald';
-  active: boolean;
-  onClick: () => void;
 }) {
   const numberClass =
     tone === 'amber'
@@ -203,20 +164,10 @@ function StatButton({
           ? 'text-emerald-700'
           : 'text-slate-900';
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={cn(
-        'inline-flex items-baseline gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition-colors',
-        active
-          ? 'border-slate-900 bg-white ring-1 ring-slate-900'
-          : 'border-slate-200 bg-white hover:border-slate-300',
-      )}
-    >
+    <span className="inline-flex items-baseline gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm">
       <span className={cn('text-base font-semibold tabular-nums', numberClass)}>{value}</span>
       <span className="text-xs font-medium text-slate-600">{label}</span>
-    </button>
+    </span>
   );
 }
 
