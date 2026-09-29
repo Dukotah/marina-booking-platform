@@ -2,14 +2,11 @@ import { AdminShell, PageHeader } from '../../components/shell';
 import { ManifestViews } from '../../components/manifest/ManifestViews';
 import { GuideScheduler } from '../../components/manifest/GuideScheduler';
 import { DateNav } from '../../components/manifest/DateNav';
-import {
-  FleetStatus,
-  type FleetDownNote,
-  type FleetResourceRow,
-} from '../../components/manifest/FleetStatus';
-import { loadManifest, loadGuideRoster } from './data';
+import { CollapsedSection } from '../../components/manifest/CollapsedSection';
+import { FleetStatus } from '../../components/manifest/FleetStatus';
+import { loadManifest, loadGuideRoster, loadFleetBoats } from './data';
 import { currentPermissions, getOperatorContext, getTenantDb } from '../../lib/session';
-import { normalizeIsoDate, todayIsoIn } from '../../components/manifest/tz';
+import { normalizeIsoDate } from '../../components/manifest/tz';
 import { formatShortDate } from '../../lib/format';
 import { customerWebBaseUrl } from '../../lib/customer-web';
 
@@ -24,6 +21,11 @@ interface ManifestPageProps {
  * Rows are activities, the X axis is time, and bookings are color-coded blocks with a
  * one-click check-in. Date is driven by `?date=YYYY-MM-DD`, defaulting to today in the
  * operator's timezone.
+ *
+ * The page is the working list, full stop. Fleet and guide admin are real but
+ * secondary day-of surfaces, so they render as one-line summaries that expand on
+ * tap (CollapsedSection) instead of stacking two fully-expanded panels under the
+ * schedule — that stack was the "scrolls forever" complaint.
  */
 export default async function ManifestPage({ searchParams }: ManifestPageProps) {
   // Resolve the operator timezone first so "today" and day bounds are operator-local.
@@ -38,13 +40,32 @@ export default async function ManifestPage({ searchParams }: ManifestPageProps) 
 
   const { rows } = await loadManifest(isoDate);
   const roster = await loadGuideRoster();
-  const fleet = await loadFleetRows(db);
-  // `operator:manage` is the bar the settings screen sets on this same write, so the
-  // manifest holds it too rather than inventing a looser one — and staff who cannot
-  // commit the change are shown the fleet read-only instead of a dead button.
+  const fleet = await loadFleetBoats();
+  // `operator:manage` is the bar the settings screen sets on capacity writes, so
+  // the fleet panel holds it too rather than inventing a looser one — staff who
+  // cannot commit the change see the fleet read-only instead of a dead button.
   const permissions = await currentPermissions();
   const canManageFleet = permissions.has('operator:manage');
   const label = formatShortDate(`${isoDate}T12:00:00`);
+
+  // The collapsed rows carry the one-glance numbers so nobody has to expand
+  // them just to know whether anything needs attention.
+  const down = fleet.boats.filter((b) => b.outage !== null).length;
+  const onWater = fleet.boats.length - down;
+  const fleetSummary =
+    down === 0
+      ? `All ${fleet.boats.length} on the water`
+      : `${onWater} of ${fleet.boats.length} on the water · ${down} out of service`;
+
+  const daySlots = rows.reduce((n, row) => n + row.slots.length, 0);
+  const slotsWithGuide = rows.reduce(
+    (n, row) => n + row.slots.filter((s) => s.guides.length > 0).length,
+    0,
+  );
+  const guideSummary =
+    daySlots === 0
+      ? 'No departures today'
+      : `${slotsWithGuide} of ${daySlots} departures have a guide`;
 
   return (
     <AdminShell>
@@ -55,9 +76,8 @@ export default async function ManifestPage({ searchParams }: ManifestPageProps) 
       />
 
       {/* The day's departures + per-booking ops (check-in, returns, fuel/charges) —
-          the real work of the manifest. The summary counts live inside ManifestViews
-          now, where they double as one-tap filters; capacity/utilization detail
-          stayed with the Day view's departure cards. */}
+          the real work of the manifest. The summary counts live inside ManifestViews,
+          where they double as one-tap filters. */}
       <ManifestViews
         rows={rows}
         timeZone={timeZone}
@@ -65,97 +85,21 @@ export default async function ManifestPage({ searchParams }: ManifestPageProps) 
         signLinkBase={customerWebBaseUrl()}
       />
 
-      {/* Secondary day-of ops, kept but demoted below the schedule. */}
-      <div className="mt-8 space-y-6">
-        <FleetStatus
-          resources={fleet}
-          canManage={canManageFleet}
-          defaultFromISO={isoDate}
-          todayISO={todayIsoIn(timeZone)}
-        />
-        <GuideScheduler rows={rows} roster={roster} />
+      {/* Secondary day-of ops: collapsed to their headline numbers by default. */}
+      <div className="mt-8 space-y-3">
+        <CollapsedSection title="Fleet" summary={fleetSummary}>
+          <FleetStatus
+            boats={fleet.boats}
+            canManage={canManageFleet}
+            defaultFromISO={isoDate}
+            todayISO={fleet.todayISO}
+          />
+        </CollapsedSection>
+
+        <CollapsedSection title="Guides" summary={guideSummary}>
+          <GuideScheduler rows={rows} roster={roster} />
+        </CollapsedSection>
       </div>
     </AdminShell>
   );
 }
-
-/**
- * The fleet as the dock needs it: each shared-resource pool, how much of it is on the
- * water, and — for anything currently down — the reason and dates last recorded.
- *
- * The reason and dates live in the audit log rather than on Resource (there is no
- * column for them; see the fleet section of ./actions.ts), so this reads the most
- * recent fleet event per pool and uses it only when the pool is in fact still down.
- * If the numbers and the note ever disagree, the numbers win: `out_of_service_qty` is
- * what the booking engine actually enforces.
- */
-async function loadFleetRows(
-  db: Awaited<ReturnType<typeof getTenantDb>>,
-): Promise<FleetResourceRow[]> {
-  const resources = await db.resource.findMany({
-    orderBy: { name: 'asc' },
-    select: {
-      id: true,
-      name: true,
-      quantity: true,
-      seat_capacity: true,
-      out_of_service_qty: true,
-      is_active: true,
-      activities: { select: { name_internal: true, name_external: true } },
-    },
-  });
-
-  const downIds = resources.filter((r) => r.out_of_service_qty > 0).map((r) => r.id);
-  const notes = new Map<string, FleetDownNote>();
-
-  if (downIds.length > 0) {
-    const events = await db.auditLog.findMany({
-      where: {
-        entity_type: 'Resource',
-        entity_id: { in: downIds },
-        action: { in: ['resource.out_of_service', 'resource.in_service'] },
-      },
-      orderBy: { created_at: 'desc' },
-      select: { entity_id: true, action: true, after: true, created_at: true },
-      // Newest-first with a ceiling: we only want the latest event per pool, and a
-      // long-running marina should not pay for a season of history to find it.
-      take: Math.max(50, downIds.length * 10),
-    });
-
-    for (const event of events) {
-      // First row seen for a pool is its latest, because the list is newest-first.
-      if (notes.has(event.entity_id)) continue;
-      if (event.action !== 'resource.out_of_service') {
-        // Latest event put it BACK, so the current downtime came from somewhere else
-        // (settings, most likely) and we have no note to show. Mark it seen so an
-        // older, stale reason cannot be dredged up and presented as current.
-        notes.set(event.entity_id, { reason: '', fromISO: null, untilISO: null, recordedAtISO: '' });
-        continue;
-      }
-      const after = (event.after ?? {}) as Record<string, unknown>;
-      const reason = typeof after.reason === 'string' ? after.reason : '';
-      if (!reason) continue;
-      notes.set(event.entity_id, {
-        reason,
-        fromISO: typeof after.out_from === 'string' ? after.out_from : null,
-        untilISO: typeof after.expected_back === 'string' ? after.expected_back : null,
-        recordedAtISO: event.created_at.toISOString(),
-      });
-    }
-  }
-
-  return resources.map((r) => {
-    const note = notes.get(r.id);
-    return {
-      id: r.id,
-      name: r.name,
-      quantity: r.quantity,
-      seatCapacity: r.seat_capacity,
-      outOfServiceQty: r.out_of_service_qty,
-      isActive: r.is_active,
-      activityNames: r.activities.map((a) => a.name_internal || a.name_external),
-      down: note && note.reason ? note : null,
-    };
-  });
-}
-

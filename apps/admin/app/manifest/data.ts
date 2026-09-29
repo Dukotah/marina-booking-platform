@@ -1,5 +1,5 @@
 import { getOperatorContext, getTenantDb } from '../../lib/session';
-import { localDayRangeUtc, localMinutesOfDay } from '../../components/manifest/tz';
+import { localDayRangeUtc, localMinutesOfDay, todayIsoIn } from '../../components/manifest/tz';
 import type {
   ManifestBooking,
   ManifestGuide,
@@ -191,6 +191,167 @@ export async function loadManifest(isoDate: string): Promise<ManifestData> {
     capacityTotal: capacityTotalAll,
     capacityBooked: capacityBookedAll,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Fleet — per-boat status (each Activity IS one boat / jet ski / patio here)
+// ---------------------------------------------------------------------------
+
+/**
+ * The restore payload of one fleet outage, read back from the audit log.
+ *
+ * The audit log is the system of record for an outage's bookkeeping on purpose:
+ * the ENFORCED state lives in BlackoutDate rows (customer availability skips
+ * those days) and closed Timeslot rows (the booking engine refuses CANCELLED),
+ * and the `fleet.out_of_service` event records exactly which rows those were —
+ * `blackout_ids` + `closed_slot_ids` — so "Back in service" can reverse
+ * precisely what "Out of service" did and nothing else. See the restore
+ * contract on takeBoatOutOfService in ./actions.ts.
+ */
+export interface FleetOutage {
+  activityId: string;
+  reason: string;
+  /** Operator-local YYYY-MM-DD the boat went out. */
+  fromISO: string;
+  /** Operator-local YYYY-MM-DD it is expected back; null = open-ended. */
+  untilISO: string | null;
+  recordedAtISO: string;
+  /** BlackoutDate row ids this outage created (deleted on restore). */
+  blackoutIds: string[];
+  /** Timeslot ids this outage closed (re-opened on restore, where still safe). */
+  closedSlotIds: string[];
+}
+
+/** Audit ceiling: newest-first, we only need the latest event per activity. */
+const FLEET_EVENT_SCAN = 400;
+
+function str(value: unknown): string | null {
+  return typeof value === 'string' && value ? value : null;
+}
+
+function idList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
+}
+
+/**
+ * The CURRENT outage per activity: the newest fleet event decides. A
+ * `fleet.back_in_service` (or nothing) means the boat is on the water; a
+ * `fleet.out_of_service` whose window is already fully in the past also counts
+ * as back — every day it blacked out and every slot it closed is history, so
+ * nothing is enforced anymore and showing it as down would be a lie.
+ */
+export async function readFleetOutages(
+  db: Awaited<ReturnType<typeof getTenantDb>>,
+  todayISO: string,
+): Promise<Map<string, FleetOutage>> {
+  const events = await db.auditLog.findMany({
+    where: {
+      entity_type: 'Activity',
+      action: { in: ['fleet.out_of_service', 'fleet.back_in_service'] },
+    },
+    orderBy: { created_at: 'desc' },
+    select: { entity_id: true, action: true, after: true, created_at: true },
+    take: FLEET_EVENT_SCAN,
+  });
+
+  const outages = new Map<string, FleetOutage>();
+  const seen = new Set<string>();
+  for (const event of events) {
+    if (seen.has(event.entity_id)) continue; // newest-first: first row per boat wins
+    seen.add(event.entity_id);
+    if (event.action !== 'fleet.out_of_service') continue;
+    const after = (event.after ?? {}) as Record<string, unknown>;
+    const fromISO = str(after.out_from);
+    const untilISO = str(after.expected_back);
+    if (!fromISO) continue;
+    // Window fully past = effectively back in service (see doc comment above).
+    if (untilISO && untilISO < todayISO) continue;
+    outages.set(event.entity_id, {
+      activityId: event.entity_id,
+      reason: str(after.reason) ?? '',
+      fromISO,
+      untilISO,
+      recordedAtISO: event.created_at.toISOString(),
+      blackoutIds: idList(after.blackout_ids),
+      closedSlotIds: idList(after.closed_slot_ids),
+    });
+  }
+  return outages;
+}
+
+/** One boat/patio as the fleet panel needs it. */
+export interface FleetBoat {
+  id: string;
+  name: string;
+  category: string;
+  color: string;
+  /** True when at least one active ScheduleRule is generating departures. */
+  hasActiveRule: boolean;
+  outage: {
+    reason: string;
+    fromISO: string;
+    untilISO: string | null;
+    recordedAtISO: string;
+  } | null;
+}
+
+export interface FleetData {
+  boats: FleetBoat[];
+  todayISO: string;
+}
+
+/**
+ * The fleet as the dock actually runs it: every ACTIVE activity is one physical
+ * thing (a pontoon, a jet ski, a patio), with its current in/out-of-service
+ * state and whether a repeating schedule is generating its departures.
+ */
+export async function loadFleetBoats(): Promise<FleetData> {
+  const { operatorId } = await getOperatorContext();
+  const db = await getTenantDb();
+
+  const operator = await db.operator.findUnique({
+    where: { id: operatorId },
+    select: { timezone: true },
+  });
+  const timeZone = operator?.timezone ?? 'America/Los_Angeles';
+  const todayISO = todayIsoIn(timeZone);
+
+  const [activities, outages] = await Promise.all([
+    db.activity.findMany({
+      where: { status: 'ACTIVE' },
+      orderBy: [{ sort_index: 'asc' }, { name_internal: 'asc' }],
+      select: {
+        id: true,
+        name_internal: true,
+        name_external: true,
+        color: true,
+        category: true,
+        schedule_rules: { select: { is_active: true } },
+      },
+    }),
+    readFleetOutages(db, todayISO),
+  ]);
+
+  const boats: FleetBoat[] = activities.map((a) => {
+    const outage = outages.get(a.id) ?? null;
+    return {
+      id: a.id,
+      name: a.name_internal || a.name_external,
+      category: a.category as string,
+      color: a.color,
+      hasActiveRule: a.schedule_rules.some((r) => r.is_active),
+      outage: outage
+        ? {
+            reason: outage.reason,
+            fromISO: outage.fromISO,
+            untilISO: outage.untilISO,
+            recordedAtISO: outage.recordedAtISO,
+          }
+        : null,
+    };
+  });
+
+  return { boats, todayISO };
 }
 
 /** A staff member who can be scheduled as a guide (GUIDE role first). */

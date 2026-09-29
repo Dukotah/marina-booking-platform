@@ -53,14 +53,14 @@ export function GuideScheduler({
     });
   }
 
-  if (slots.length === 0) return null;
+  if (slots.length === 0) {
+    return <p className="text-sm text-slate-600">No departures today, so nothing to staff.</p>;
+  }
 
+  // No card chrome of its own anymore: this renders inside the manifest's
+  // collapsed "Guides" section, which provides the border and the heading.
   return (
-    <div className="mb-5 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-      <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
-        Guide scheduling
-      </h2>
-
+    <div>
       {/* role="alert": a failed assignment is an async failure with no focus move, so
           nothing else would tell a screen-reader user the write did not land.
           rose-700, not rose-600: rose-600 on rose-50 is 4.30:1. (4.1.3, 1.4.3) */}

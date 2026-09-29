@@ -1,13 +1,11 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { type Prisma } from '@marina/database';
+import { withTenant, materializeActivitySchedule, type Prisma } from '@marina/database';
 import { AuthorizationError } from '@marina/auth';
 import { getOperatorContext, getTenantDb, requirePermission } from '../../lib/session';
-import { localDayRangeUtc } from '../../components/manifest/tz';
-// The fleet panel writes out_of_service_qty through the settings action rather than
-// touching the column itself — see the fleet section at the bottom of this file.
-import { updateResource } from '../settings/resources/actions';
+import { addIsoDays, localDayRangeUtc, todayIsoIn } from '../../components/manifest/tz';
+import { readFleetOutages } from './data';
 
 /**
  * One-click check-in for a manifest booking block. The whole point of the visual
@@ -277,198 +275,140 @@ export async function unassignGuideAction(assignmentId: string): Promise<GuideAc
 }
 
 // ===========================================================================
-// Fleet status — take a boat out of service without leaving the dock
+// Fleet status — take a SPECIFIC boat out of service, and bring it back
+//
+// Each Activity here IS one physical thing (the "10-Person Pontoon", the
+// Canoe, the Bar Patio), so fleet status operates per-activity instead of on
+// pooled Resource counts (which named no boat and offered no selection —
+// pools stay manageable under Settings → Resources for genuinely shared gear).
+//
+// MECHANISM (the "out" write, one transaction):
+//  1. Activity-scoped BlackoutDate rows for every day in the outage window.
+//     The customer availability engine already drops any slot on a blacked-out
+//     day, and the schedule materializer never generates into one ("blackout
+//     wins" — packages/database/src/schedule.ts), so the window is closed for
+//     rule-generated AND seeded slots alike, including slots that do not exist
+//     yet when the rolling horizon advances.
+//  2. Every future UNBOOKED timeslot in the window (any origin, capacity_booked
+//     = 0, not already CANCELLED) is flipped to status CANCELLED — defence in
+//     depth for direct-booking paths that check slot status rather than
+//     blackouts, and what makes the admin calendar/manifest reflect it. Booked
+//     slots are NEVER touched; the impact preview lists those guests instead.
+//  3. One AuditLog row (`fleet.out_of_service`, entity Activity) recording the
+//     reason/window AND the exact BlackoutDate ids + Timeslot ids written.
+//
+// RESTORE CONTRACT ("back in service", one transaction):
+//  - delete exactly the BlackoutDate ids the outage created (never someone
+//    else's closures for the same days);
+//  - flip exactly the recorded Timeslot ids back to AVAILABLE, but only where
+//    still CANCELLED, still unbooked, and still in the future (the past is
+//    never rewritten — a departure that was closed and has sailed stays
+//    closed history);
+//  - re-materialize the activity's schedule rules (if any) inside the same
+//    transaction, so rule-generated slots a nightly sweep DELETED during the
+//    outage are recreated;
+//  - one `fleet.back_in_service` AuditLog row with what was restored.
+//
+// The audit row is written INSIDE the transaction, unlike the fire-and-forget
+// audit writes elsewhere: it carries the restore payload, so an outage without
+// its audit row would be irreversible — better to fail the whole action and
+// let the operator tap again.
 // ===========================================================================
 
-/**
- * Marking a unit down is a capacity write, so it goes through the SAME path the
- * settings screen uses: `updateResource` -> `Resource.out_of_service_qty`. There is
- * deliberately no second writer. The booking engine sizes a pool as
- * (quantity - out_of_service_qty) * seat_capacity (apps/api/src/services/resources.ts),
- * so one field with one writer is what makes "those seats stopped selling the moment
- * he tapped it" true rather than hopeful.
- *
- * The reason and the date range have no column of their own on Resource, and this
- * slice may not touch the schema, so they are recorded as an AuditLog row
- * (`resource.out_of_service`) and read back to caption the panel. That is a real
- * record — append-only, attributed, already surfaced by /audit and filed by prefix by
- * components/audit/taxonomy.ts — but it is a record, not a schedule: nothing sweeps a
- * unit back into service when its date passes. So the panel nags on the date instead
- * of pretending, the copy never promises an automatic return, and the slice report
- * asks for the schema field that would let it actually schedule one.
- */
+/** How far ahead an open-ended outage blacks out and is measured. */
+const FLEET_HORIZON_DAYS = 90;
 
-/** A booked trip that overlaps a moment when the shrunken fleet is short. */
-export interface FleetImpactBooking {
+/** Hard ceiling on a dated outage window (a longer one is a season, not a repair). */
+const MAX_FLEET_WINDOW_DAYS = 180;
+
+/** Display cap on the "call these guests" list; the count is reported in full. */
+const GUESTS_SHOWN = 8;
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** A booked trip on this boat inside the outage window — somebody to ring. */
+export interface BoatImpactBooking {
   orderItemId: string;
   orderNumber: string;
   customerName: string;
   customerPhone: string | null;
-  activityName: string;
   /** ISO start instant; rendered in the operator's locale by the client. */
   startISO: string;
   seats: number;
 }
 
-/** What taking `units` out of a pool would do to bookings already on the books. */
-export interface FleetImpact {
-  resourceId: string;
-  resourceName: string;
-  /** Units down before this change, and after it. */
-  unitsDownBefore: number;
-  unitsDownAfter: number;
-  /** Bookable seats before this change, and after it. */
-  seatsBefore: number;
-  seatsAfter: number;
-  /** The window examined, as operator-local calendar dates. */
+/** What taking this boat out for the window would do, computed BEFORE any write. */
+export interface BoatImpact {
+  activityId: string;
+  activityName: string;
+  /** Effective window as operator-local calendar days (from is clamped to today). */
   fromISO: string;
   untilISO: string | null;
-  /** True when no end date was given and the rolling horizon below was used. */
   openEnded: boolean;
   horizonDays: number;
-  /** Trips already booked against this pool inside the window. */
+  /** Future unbooked departures that will be withdrawn from sale. */
+  slotsToClose: number;
+  /** Booked trips inside the window — every one is a guest without a boat. */
   bookedTrips: number;
-  /** Peak seats concurrently reserved inside the window. */
-  peakSeats: number;
-  /** Seats short at that peak. 0 = the remaining fleet still covers everything. */
-  shortfallSeats: number;
-  /** Trips overlapping a moment when the fleet is short (capped for display). */
-  atRisk: FleetImpactBooking[];
-  /** How many trips are at risk in total, before the display cap. */
-  atRiskTotal: number;
-  /** True when the pool is inactive, so its capacity is not enforced at all. */
-  poolInactive: boolean;
+  guests: BoatImpactBooking[];
+  guestsTotal: number;
+  /** True when an active repeating schedule also stops generating in the window. */
+  hasActiveRule: boolean;
 }
 
-export interface FleetActionResult {
+export interface BoatImpactResult {
   ok: boolean;
   error?: string;
-  /** Present when the write was refused because it would strand booked guests. */
-  impact?: FleetImpact;
+  impact?: BoatImpact;
 }
 
-export interface FleetImpactResult {
+export interface BoatFleetActionResult {
   ok: boolean;
   error?: string;
-  impact?: FleetImpact;
+  /** Present when the write was refused so the operator can see who is stranded. */
+  impact?: BoatImpact;
 }
 
-export interface MarkResourceDownInput {
-  resourceId: string;
-  units: number;
+export interface TakeBoatOutInput {
+  activityId: string;
   reason: string;
-  /** Operator-local YYYY-MM-DD the unit goes out of service. */
+  /** Operator-local YYYY-MM-DD the boat goes out of service. */
   fromISO: string;
-  /** Optional operator-local YYYY-MM-DD it is expected back. */
+  /** Optional operator-local YYYY-MM-DD it is expected back (inclusive). */
   untilISO?: string | null;
   /**
-   * Set only when the operator has SEEN the shortfall and chosen to proceed. A
-   * dead engine is a fact, so we never block the write — but overselling a guest
-   * off a boat has to be a decision somebody made, not a side effect. The server
-   * re-computes the impact and refuses without this, which also closes the gap
-   * between previewing and confirming.
+   * Set only when the operator has SEEN the booked trips in the window and
+   * chosen to proceed. A dead engine is a fact, so the write is never blocked —
+   * but stranding a booked guest has to be a decision somebody made, not a side
+   * effect. The server re-computes the impact and refuses without this.
    */
-  acknowledgeOversell?: boolean;
+  acknowledgeBookings?: boolean;
 }
 
-/** How far ahead an open-ended outage is measured. */
-const FLEET_HORIZON_DAYS = 90;
-
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
-
-/** Seats a pool provides at a given out-of-service count (mirrors the API poolSeats). */
-function seatsAt(quantity: number, seatCapacity: number, outOfService: number): number {
-  return Math.max(0, quantity - outOfService) * seatCapacity;
+interface OutageWindow {
+  timeZone: string;
+  todayISO: string;
+  /** Effective first day — the requested from, clamped to today. */
+  fromISO: string;
+  untilISO: string | null;
+  /** Every operator-local day the outage covers (inclusive). */
+  days: string[];
+  /** UTC instants bounding the window, for slot queries. */
+  startUtc: Date;
+  endUtc: Date;
 }
 
-/**
- * Peak concurrent seats across a set of half-open [start, end) reservations, plus the
- * moments where that peak exceeds `capacity`.
- *
- * Sorting releases before acquisitions at an identical instant is the whole point: a
- * 10:00–14:00 trip and a 14:00–18:00 trip on the same boat are back-to-back, not a
- * double-booking, and a naive sweep would report the fleet as one short and scare the
- * operator off a repair he needs to make.
- */
-function peakOccupancy(
-  spans: { startMs: number; endMs: number; seats: number }[],
-  capacity: number,
-): { peak: number; overWindows: { from: number; to: number }[] } {
-  const events = spans.flatMap((s) => [
-    { t: s.startMs, delta: s.seats },
-    { t: s.endMs, delta: -s.seats },
-  ]);
-  events.sort((a, b) => a.t - b.t || a.delta - b.delta);
-
-  let running = 0;
-  let peak = 0;
-  const overWindows: { from: number; to: number }[] = [];
-
-  for (let i = 0; i < events.length; i++) {
-    running += events[i].delta;
-    if (running > peak) peak = running;
-    const next = events[i + 1]?.t;
-    // Only score the gap once every event at this instant has been applied.
-    if (next !== undefined && next > events[i].t && running > capacity) {
-      overWindows.push({ from: events[i].t, to: next });
-    }
-  }
-
-  return { peak, overWindows };
-}
-
-/** Display cap on the "call these guests" list; the count is still reported in full. */
-const AT_RISK_SHOWN = 8;
-
-/**
- * Work out what taking `units` out of a pool would cost, before anything is written.
- * Pure read, so the panel can call it as often as the form changes.
- */
-async function fleetImpact(
-  resourceId: string,
-  units: number,
+/** Resolve and validate the outage window. Returns a string error for the form. */
+async function resolveOutageWindow(
+  db: Awaited<ReturnType<typeof getTenantDb>>,
+  operatorId: string,
   fromISO: string,
   untilISO: string | null,
-): Promise<FleetImpactResult> {
-  const { operatorId } = await getOperatorContext();
-  const db = await getTenantDb();
-
-  const resource = await db.resource.findFirst({
-    where: { id: resourceId, operator_id: operatorId },
-    select: {
-      id: true,
-      name: true,
-      quantity: true,
-      seat_capacity: true,
-      out_of_service_qty: true,
-      is_active: true,
-    },
-  });
-  if (!resource) return { ok: false, error: 'That resource no longer exists.' };
-
-  const inService = Math.max(0, resource.quantity - resource.out_of_service_qty);
-  if (!Number.isInteger(units) || units < 1) {
-    return { ok: false, error: 'Choose at least one unit to take out of service.' };
-  }
-  if (units > inService) {
-    return {
-      ok: false,
-      error:
-        inService === 0
-          ? `Every ${resource.name} unit is already out of service.`
-          : `Only ${inService} of ${resource.quantity} ${
-              inService === 1 ? 'is' : 'are'
-            } in service right now.`,
-    };
-  }
-  if (!ISO_DATE.test(fromISO)) {
-    return { ok: false, error: 'Pick the date it goes out of service.' };
-  }
-  if (untilISO && !ISO_DATE.test(untilISO)) {
-    return { ok: false, error: 'That back-by date is not a date.' };
-  }
+): Promise<OutageWindow | { error: string }> {
+  if (!ISO_DATE.test(fromISO)) return { error: 'Pick the date it goes out of service.' };
+  if (untilISO && !ISO_DATE.test(untilISO)) return { error: 'That back-by date is not a date.' };
   if (untilISO && untilISO < fromISO) {
-    return { ok: false, error: 'The back-by date is before the day it goes out of service.' };
+    return { error: 'The back-by date is before the day it goes out of service.' };
   }
 
   const operator = await db.operator.findUnique({
@@ -476,110 +416,138 @@ async function fleetImpact(
     select: { timezone: true },
   });
   const timeZone = operator?.timezone ?? 'America/Los_Angeles';
+  const todayISO = todayIsoIn(timeZone);
 
-  const { startUtc } = localDayRangeUtc(fromISO, timeZone);
-  const endUtc = untilISO
-    ? localDayRangeUtc(untilISO, timeZone).endUtc
-    : new Date(startUtc.getTime() + FLEET_HORIZON_DAYS * 24 * 60 * 60 * 1000);
+  if (untilISO && untilISO < todayISO) {
+    return { error: 'That window has already passed — nothing left to close.' };
+  }
+  // A from-date in the past means "it is already broken": the days that matter
+  // start today. YYYY-MM-DD compares lexicographically = chronologically.
+  const effectiveFrom = fromISO < todayISO ? todayISO : fromISO;
+  const lastDay = untilISO ?? addIsoDays(effectiveFrom, FLEET_HORIZON_DAYS - 1);
 
-  const held = await db.resourceBooking.findMany({
-    where: {
-      resource_id: resource.id,
-      // Half-open overlap, the same test the availability engine uses.
-      starts_at: { lt: endUtc },
-      ends_at: { gt: startUtc },
-      order_item: { status: { not: 'CANCELLED' } },
-    },
+  const days: string[] = [];
+  for (let iso = effectiveFrom; iso <= lastDay; iso = addIsoDays(iso, 1)) {
+    days.push(iso);
+    if (days.length > MAX_FLEET_WINDOW_DAYS) {
+      return {
+        error: `That is more than ${MAX_FLEET_WINDOW_DAYS} days. For a boat that is gone for the season, deactivate the listing instead.`,
+      };
+    }
+  }
+
+  return {
+    timeZone,
+    todayISO,
+    fromISO: effectiveFrom,
+    untilISO,
+    days,
+    startUtc: localDayRangeUtc(effectiveFrom, timeZone).startUtc,
+    endUtc: localDayRangeUtc(lastDay, timeZone).endUtc,
+  };
+}
+
+/**
+ * Work out what taking this boat out for the window would cost, before anything
+ * is written. Pure read, so the panel can call it as often as the form changes.
+ */
+async function boatImpact(
+  activityId: string,
+  fromISO: string,
+  untilISO: string | null,
+): Promise<BoatImpactResult> {
+  const { operatorId } = await getOperatorContext();
+  const db = await getTenantDb();
+
+  const activity = await db.activity.findFirst({
+    where: { id: activityId, operator_id: operatorId },
     select: {
-      seats: true,
-      starts_at: true,
-      ends_at: true,
-      order_item: {
-        select: {
-          id: true,
-          activity: { select: { name_internal: true, name_external: true } },
-          order: {
-            select: {
-              order_number: true,
-              customer: { select: { first_name: true, last_name: true, phone: true } },
-            },
+      id: true,
+      name_internal: true,
+      name_external: true,
+      schedule_rules: { select: { is_active: true } },
+    },
+  });
+  if (!activity) return { ok: false, error: 'That boat no longer exists.' };
+
+  const window = await resolveOutageWindow(db, operatorId, fromISO, untilISO);
+  if ('error' in window) return { ok: false, error: window.error };
+
+  // Only the future can be closed or stranded: a window that starts today still
+  // begins at "now", not at midnight that already happened.
+  const now = new Date();
+  const rangeStart = window.startUtc > now ? window.startUtc : now;
+
+  const [slotsToClose, booked] = await Promise.all([
+    db.timeslot.count({
+      where: {
+        activity_id: activity.id,
+        datetime: { gte: rangeStart, lt: window.endUtc },
+        status: { not: 'CANCELLED' },
+        capacity_booked: 0,
+      },
+    }),
+    db.orderItem.findMany({
+      where: {
+        activity_id: activity.id,
+        status: { not: 'CANCELLED' },
+        timeslot: { datetime: { gte: rangeStart, lt: window.endUtc } },
+      },
+      select: {
+        id: true,
+        quantity: true,
+        timeslot: { select: { datetime: true } },
+        order: {
+          select: {
+            order_number: true,
+            customer: { select: { first_name: true, last_name: true, phone: true } },
           },
         },
       },
-    },
-    orderBy: { starts_at: 'asc' },
-    // A ceiling so a pathological range cannot pull a whole season into memory.
-    take: 2000,
-  });
-
-  const unitsDownAfter = resource.out_of_service_qty + units;
-  const seatsBefore = seatsAt(
-    resource.quantity,
-    resource.seat_capacity,
-    resource.out_of_service_qty,
-  );
-  const seatsAfter = seatsAt(resource.quantity, resource.seat_capacity, unitsDownAfter);
-
-  const spans = held.map((h) => ({
-    startMs: h.starts_at.getTime(),
-    endMs: h.ends_at.getTime(),
-    seats: h.seats,
-  }));
-  const { peak, overWindows } = peakOccupancy(spans, seatsAfter);
-
-  const atRiskAll =
-    overWindows.length === 0
-      ? []
-      : held.filter((h) =>
-          overWindows.some((w) => h.starts_at.getTime() < w.to && h.ends_at.getTime() > w.from),
-        );
+      orderBy: { timeslot: { datetime: 'asc' } },
+      // Ceiling so a pathological window cannot pull a whole season into memory.
+      take: 500,
+    }),
+  ]);
 
   return {
     ok: true,
     impact: {
-      resourceId: resource.id,
-      resourceName: resource.name,
-      unitsDownBefore: resource.out_of_service_qty,
-      unitsDownAfter,
-      seatsBefore,
-      seatsAfter,
-      fromISO,
-      untilISO,
-      openEnded: !untilISO,
+      activityId: activity.id,
+      activityName: activity.name_internal || activity.name_external,
+      fromISO: window.fromISO,
+      untilISO: window.untilISO,
+      openEnded: !window.untilISO,
       horizonDays: FLEET_HORIZON_DAYS,
-      bookedTrips: held.length,
-      peakSeats: peak,
-      shortfallSeats: Math.max(0, peak - seatsAfter),
-      atRisk: atRiskAll.slice(0, AT_RISK_SHOWN).map((h) => {
-        const cust = h.order_item.order.customer;
+      slotsToClose,
+      bookedTrips: booked.length,
+      guestsTotal: booked.length,
+      guests: booked.slice(0, GUESTS_SHOWN).map((b) => {
+        const cust = b.order.customer;
         return {
-          orderItemId: h.order_item.id,
-          orderNumber: h.order_item.order.order_number,
+          orderItemId: b.id,
+          orderNumber: b.order.order_number,
           customerName: `${cust.first_name} ${cust.last_name}`.trim() || 'Guest',
           customerPhone: cust.phone ?? null,
-          activityName:
-            h.order_item.activity.name_internal || h.order_item.activity.name_external,
-          startISO: h.starts_at.toISOString(),
-          seats: h.seats,
+          startISO: b.timeslot.datetime.toISOString(),
+          seats: b.quantity,
         };
       }),
-      atRiskTotal: atRiskAll.length,
-      poolInactive: !resource.is_active,
+      hasActiveRule: activity.schedule_rules.some((r) => r.is_active),
     },
   };
 }
 
 /**
- * "What happens if I do this?" — the read the panel runs before it offers a confirm
- * button. Gated on the same permission as the write, so somebody who could never
- * commit the change cannot use the preview to enumerate the season's guests.
+ * "What happens if I do this?" — the read the panel runs before it offers a
+ * confirm button. Gated on the same permission as the write, so somebody who
+ * could never commit the change cannot use the preview to enumerate guests.
  */
-export async function previewResourceDowntime(
-  resourceId: string,
-  units: number,
+export async function previewBoatDowntime(
+  activityId: string,
   fromISO: string,
   untilISO?: string | null,
-): Promise<FleetImpactResult> {
+): Promise<BoatImpactResult> {
   try {
     await requirePermission('operator:manage');
   } catch (err) {
@@ -588,16 +556,18 @@ export async function previewResourceDowntime(
     }
     throw err;
   }
-  if (!resourceId) return { ok: false, error: 'Missing resource.' };
-  return fleetImpact(resourceId, units, fromISO, untilISO?.trim() || null);
+  if (!activityId) return { ok: false, error: 'Missing boat.' };
+  return boatImpact(activityId, fromISO, untilISO?.trim() || null);
 }
 
 /**
- * Take `units` out of service now, with a reason and an optional expected-back date.
- * The capacity change lands immediately; the reason and dates are recorded for the
- * panel caption and the audit log.
+ * Take one specific boat out of service for a window. See the mechanism and
+ * restore contract at the top of this section. The availability change lands
+ * the moment the transaction commits: those days stop being sellable online.
  */
-export async function markResourceDown(input: MarkResourceDownInput): Promise<FleetActionResult> {
+export async function takeBoatOutOfService(
+  input: TakeBoatOutInput,
+): Promise<BoatFleetActionResult> {
   let ctx;
   try {
     ctx = await requirePermission('operator:manage');
@@ -608,8 +578,8 @@ export async function markResourceDown(input: MarkResourceDownInput): Promise<Fl
     throw err;
   }
 
-  const resourceId = input.resourceId?.trim();
-  if (!resourceId) return { ok: false, error: 'Missing resource.' };
+  const activityId = input.activityId?.trim();
+  if (!activityId) return { ok: false, error: 'Missing boat.' };
 
   const reason = (input.reason ?? '').trim();
   if (!reason) return { ok: false, error: 'Say what is wrong with it — the crew reads this.' };
@@ -617,80 +587,125 @@ export async function markResourceDown(input: MarkResourceDownInput): Promise<Fl
 
   const untilISO = input.untilISO?.trim() || null;
 
-  // Re-run the impact server-side rather than trusting whatever the form last saw:
-  // between previewing and confirming, somebody can have booked the last seat.
-  const preview = await fleetImpact(resourceId, input.units, input.fromISO, untilISO);
+  const db = await getTenantDb();
+  const window = await resolveOutageWindow(db, ctx.operatorId, input.fromISO, untilISO);
+  if ('error' in window) return { ok: false, error: window.error };
+
+  // One outage at a time per boat keeps the restore payload unambiguous: the
+  // newest fleet event IS the state. Bring it back before marking it out again.
+  const outages = await readFleetOutages(db, window.todayISO);
+  if (outages.has(activityId)) {
+    return {
+      ok: false,
+      error: 'That boat is already out of service. Bring it back in first, then mark the new window.',
+    };
+  }
+
+  // Re-run the impact server-side rather than trusting whatever the form last
+  // saw: between previewing and confirming, somebody can have booked a trip.
+  const preview = await boatImpact(activityId, input.fromISO, untilISO);
   if (!preview.ok || !preview.impact) return { ok: false, error: preview.error };
   const impact = preview.impact;
 
-  if (impact.shortfallSeats > 0 && !input.acknowledgeOversell) {
+  if (impact.bookedTrips > 0 && !input.acknowledgeBookings) {
     return {
       ok: false,
-      error: `That would leave ${impact.shortfallSeats} booked ${
-        impact.shortfallSeats === 1 ? 'seat' : 'seats'
-      } without a boat. Check who is affected, then confirm.`,
+      error: `${impact.bookedTrips} booked ${
+        impact.bookedTrips === 1 ? 'trip falls' : 'trips fall'
+      } in that window. Check who is affected, then confirm.`,
       impact,
     };
   }
 
-  const db = await getTenantDb();
-  const existing = await db.resource.findFirst({
-    where: { id: resourceId, operator_id: ctx.operatorId },
-    select: {
-      name: true,
-      quantity: true,
-      seat_capacity: true,
-      out_of_service_qty: true,
-      is_active: true,
-      activities: { select: { id: true } },
-    },
-  });
-  if (!existing) return { ok: false, error: 'That resource no longer exists.' };
+  const now = new Date();
+  const rangeStart = window.startUtc > now ? window.startUtc : now;
 
-  // The one writer: the settings action, unchanged, with a different number in it.
-  const saved = await updateResource(resourceId, {
-    name: existing.name,
-    quantity: existing.quantity,
-    seat_capacity: existing.seat_capacity,
-    out_of_service_qty: impact.unitsDownAfter,
-    is_active: existing.is_active,
-    activity_ids: existing.activities.map((a) => a.id),
-  });
-  if (!saved.ok) {
-    const fieldError = saved.errors ? Object.values(saved.errors)[0] : undefined;
-    return { ok: false, error: fieldError ?? saved.message ?? 'Could not take it out of service.' };
-  }
+  await withTenant(ctx.operatorId, async (tx) => {
+    // Days already closed for this boat (an operator blackout, say) are left
+    // alone — the outage only ever owns rows it created, so restoring it can
+    // never quietly re-open somebody else's closure.
+    const existing = await tx.blackoutDate.findMany({
+      where: {
+        activity_id: activityId,
+        date: {
+          gte: new Date(`${window.days[0]}T00:00:00.000Z`),
+          lte: new Date(`${window.days[window.days.length - 1]}T00:00:00.000Z`),
+        },
+      },
+      select: { date: true },
+    });
+    const have = new Set(existing.map((b) => b.date.toISOString().slice(0, 10)));
+    const created = await tx.blackoutDate.createManyAndReturn({
+      data: window.days
+        .filter((iso) => !have.has(iso))
+        .map((iso) => ({
+          operator_id: ctx.operatorId,
+          activity_id: activityId,
+          date: new Date(`${iso}T00:00:00.000Z`),
+          // Human-readable on every surface that shows blackouts; the outage
+          // itself is tracked by id in the audit row, never by this string.
+          reason: `Out of service — ${reason}`,
+        })),
+      select: { id: true },
+    });
 
-  await recordFleetEvent({
-    operatorId: ctx.operatorId,
-    actor: ctx.auth.userId,
-    actorRole: ctx.auth.role,
-    action: 'resource.out_of_service',
-    resourceId,
-    before: { out_of_service_qty: impact.unitsDownBefore },
-    after: {
-      out_of_service_qty: impact.unitsDownAfter,
-      units: input.units,
-      reason,
-      out_from: input.fromISO,
-      expected_back: untilISO,
-      seats_removed: impact.seatsBefore - impact.seatsAfter,
-      bookings_at_risk: impact.atRiskTotal,
-    },
+    // Close the future, unbooked departures in the window — reversibly (a
+    // status flip the restore path can undo), never a delete. Booked slots are
+    // untouched: the guests on them are the impact list, not collateral.
+    const toClose = await tx.timeslot.findMany({
+      where: {
+        activity_id: activityId,
+        datetime: { gte: rangeStart, lt: window.endUtc },
+        status: { not: 'CANCELLED' },
+        capacity_booked: 0,
+      },
+      select: { id: true },
+    });
+    const closedIds = toClose.map((s) => s.id);
+    if (closedIds.length > 0) {
+      await tx.timeslot.updateMany({
+        where: { id: { in: closedIds } },
+        data: { status: 'CANCELLED' },
+      });
+    }
+
+    // The load-bearing audit row (see section comment): it carries the restore
+    // payload, so it commits or the outage does not happen.
+    await tx.auditLog.create({
+      data: {
+        operator_id: ctx.operatorId,
+        actor: ctx.auth.userId || 'unknown',
+        actor_role: ctx.auth.role || 'unknown',
+        action: 'fleet.out_of_service',
+        entity_type: 'Activity',
+        entity_id: activityId,
+        before: { in_service: true } as Prisma.InputJsonValue,
+        after: {
+          in_service: false,
+          reason,
+          out_from: window.fromISO,
+          expected_back: window.untilISO,
+          blackout_ids: created.map((b) => b.id),
+          closed_slot_ids: closedIds,
+          booked_trips_in_window: impact.bookedTrips,
+        } as Prisma.InputJsonValue,
+      },
+      select: { id: true },
+    });
   });
 
   revalidatePath('/manifest');
+  revalidatePath('/calendar');
+  revalidatePath(`/activities/${activityId}`);
   return { ok: true };
 }
 
 /**
- * Put units back on the water. Returns them all by default — after a repair the
- * operator wants one tap, not arithmetic.
+ * Put a boat back on the water. Exactly reverses the recorded outage — see the
+ * restore contract in the section comment. Idempotent: no active outage means
+ * nothing is enforced, so there is nothing to do.
  */
-export async function returnResourceToService(
-  resourceId: string,
-  units?: number,
-): Promise<FleetActionResult> {
+export async function bringBoatBackInService(activityId: string): Promise<BoatFleetActionResult> {
   let ctx;
   try {
     ctx = await requirePermission('operator:manage');
@@ -701,91 +716,92 @@ export async function returnResourceToService(
     throw err;
   }
 
-  if (!resourceId) return { ok: false, error: 'Missing resource.' };
+  if (!activityId) return { ok: false, error: 'Missing boat.' };
 
   const db = await getTenantDb();
-  const existing = await db.resource.findFirst({
-    where: { id: resourceId, operator_id: ctx.operatorId },
-    select: {
-      name: true,
-      quantity: true,
-      seat_capacity: true,
-      out_of_service_qty: true,
-      is_active: true,
-      activities: { select: { id: true } },
-    },
+  const activity = await db.activity.findFirst({
+    where: { id: activityId, operator_id: ctx.operatorId },
+    select: { id: true, schedule_rules: { where: { is_active: true }, select: { id: true } } },
   });
-  if (!existing) return { ok: false, error: 'That resource no longer exists.' };
-  // Idempotent: nothing is down, so there is nothing to bring back.
-  if (existing.out_of_service_qty === 0) return { ok: true };
+  if (!activity) return { ok: false, error: 'That boat no longer exists.' };
 
-  const back =
-    units === undefined
-      ? existing.out_of_service_qty
-      : Math.min(Math.max(Math.trunc(units), 1), existing.out_of_service_qty);
-  const after = existing.out_of_service_qty - back;
-
-  const saved = await updateResource(resourceId, {
-    name: existing.name,
-    quantity: existing.quantity,
-    seat_capacity: existing.seat_capacity,
-    out_of_service_qty: after,
-    is_active: existing.is_active,
-    activity_ids: existing.activities.map((a) => a.id),
+  const operator = await db.operator.findUnique({
+    where: { id: ctx.operatorId },
+    select: { timezone: true },
   });
-  if (!saved.ok) {
-    const fieldError = saved.errors ? Object.values(saved.errors)[0] : undefined;
-    return { ok: false, error: fieldError ?? saved.message ?? 'Could not put it back in service.' };
-  }
+  const todayISO = todayIsoIn(operator?.timezone ?? 'America/Los_Angeles');
 
-  await recordFleetEvent({
-    operatorId: ctx.operatorId,
-    actor: ctx.auth.userId,
-    actorRole: ctx.auth.role,
-    action: 'resource.in_service',
-    resourceId,
-    before: { out_of_service_qty: existing.out_of_service_qty },
-    after: { out_of_service_qty: after, units: back },
-  });
+  const outage = (await readFleetOutages(db, todayISO)).get(activityId);
+  // Idempotent: nothing recorded as out (or the window already passed on its
+  // own, which un-enforces everything) — nothing to bring back.
+  if (!outage) return { ok: true };
 
-  revalidatePath('/manifest');
-  return { ok: true };
-}
+  const hasActiveRule = activity.schedule_rules.length > 0;
 
-/**
- * Append one fleet event to the audit log.
- *
- * Never throws, for the reason apps/api/src/services/audit.ts never throws: a failed
- * audit insert must not undo a repair that already happened on the water. A lost row
- * is re-emitted to stderr under the same greppable prefix so it survives outside the
- * table.
- */
-async function recordFleetEvent(event: {
-  operatorId: string;
-  actor: string;
-  actorRole: string;
-  action: 'resource.out_of_service' | 'resource.in_service';
-  resourceId: string;
-  before: Record<string, unknown>;
-  after: Record<string, unknown>;
-}): Promise<void> {
-  try {
-    const db = await getTenantDb();
-    await db.auditLog.create({
+  await withTenant(ctx.operatorId, async (tx) => {
+    // Re-open exactly what the outage closed, where it is still safe: still
+    // CANCELLED (the operator may have re-opened one by hand), still unbooked,
+    // and still in the future — a closed departure that has sailed is history.
+    let reopened = 0;
+    if (outage.closedSlotIds.length > 0) {
+      const res = await tx.timeslot.updateMany({
+        where: {
+          id: { in: outage.closedSlotIds },
+          activity_id: activityId,
+          status: 'CANCELLED',
+          capacity_booked: 0,
+          datetime: { gte: new Date() },
+        },
+        data: { status: 'AVAILABLE' },
+      });
+      reopened = res.count;
+    }
+
+    // Delete exactly the blackout rows the outage created (by id — never by
+    // date, which could take an unrelated closure with it).
+    let blackoutsRemoved = 0;
+    if (outage.blackoutIds.length > 0) {
+      const res = await tx.blackoutDate.deleteMany({
+        where: { id: { in: outage.blackoutIds }, activity_id: activityId },
+      });
+      blackoutsRemoved = res.count;
+    }
+
+    // Rule-backed boats: a nightly materializer sweep may have DELETED (not
+    // just closed) rule-generated slots on the blacked-out days. With the
+    // blackouts gone, re-materializing recreates them; it is idempotent and a
+    // no-op when the sweep never ran. Same transaction = the restore is atomic.
+    if (hasActiveRule) {
+      await materializeActivitySchedule(tx, { operatorId: ctx.operatorId, activityId });
+    }
+
+    // The closing audit row — what flipped back, and that the state is now in.
+    await tx.auditLog.create({
       data: {
-        operator_id: event.operatorId,
-        actor: event.actor || 'unknown',
-        actor_role: event.actorRole || 'unknown',
-        action: event.action,
-        entity_type: 'Resource',
-        entity_id: event.resourceId,
-        before: event.before as Prisma.InputJsonValue,
-        after: event.after as Prisma.InputJsonValue,
+        operator_id: ctx.operatorId,
+        actor: ctx.auth.userId || 'unknown',
+        actor_role: ctx.auth.role || 'unknown',
+        action: 'fleet.back_in_service',
+        entity_type: 'Activity',
+        entity_id: activityId,
+        before: {
+          in_service: false,
+          reason: outage.reason,
+          out_from: outage.fromISO,
+          expected_back: outage.untilISO,
+        } as Prisma.InputJsonValue,
+        after: {
+          in_service: true,
+          reopened_slots: reopened,
+          blackouts_removed: blackoutsRemoved,
+        } as Prisma.InputJsonValue,
       },
       select: { id: true },
     });
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error('[audit] LOST EVENT', JSON.stringify(event), err);
-  }
+  });
+
+  revalidatePath('/manifest');
+  revalidatePath('/calendar');
+  revalidatePath(`/activities/${activityId}`);
+  return { ok: true };
 }
