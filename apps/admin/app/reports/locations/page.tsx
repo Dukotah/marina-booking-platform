@@ -5,6 +5,7 @@ import { AdminShell } from '../../../components/shell/AdminShell';
 import { PageHeader } from '../../../components/shell';
 import { requirePermission } from '../../../lib/session';
 import { getLocationRollUp } from '../../../components/reports/queries';
+import { ReportTabs } from '../../../components/reports/ReportTabs';
 import { LocationDateFilter } from '../../../components/reports/LocationDateFilter';
 import { LocationRollUpView } from '../../../components/reports/LocationRollUpView';
 
@@ -59,6 +60,9 @@ export default async function LocationRollUpPage({ searchParams }: PageProps) {
         description="Combined revenue and occupancy across all of your locations."
       />
       <div className="flex flex-col gap-6">
+        {/* Locations is a Reports tab since it left the sidebar (2026-09), so the
+            same tab strip renders here with this page marked active. */}
+        <ReportTabs active="locations" from={report.range.from} to={report.range.to} />
         <LocationDateFilter from={report.range.from} to={report.range.to} />
         <LocationRollUpView report={report} />
       </div>

@@ -6,7 +6,9 @@ import { cn } from '../../lib/cn';
 import { REPORT_KINDS, REPORT_LABEL, type ReportKind } from './kinds';
 
 export interface ReportTabsProps {
-  active: ReportKind;
+  /** 'locations' = the multi-location roll-up page, a sibling of the report kinds
+   *  since Locations left the sidebar and became a Reports tab (2026-09). */
+  active: ReportKind | 'locations';
   /** Current range, preserved when switching tabs. */
   from: string;
   to: string;
@@ -48,6 +50,20 @@ export function ReportTabs({ active, from, to }: ReportTabsProps) {
             </Link>
           );
         })}
+        {/* Locations roll-up lives on its own route (different query set), but the
+            operator reads it as one more report tab. Only from/to travel with it. */}
+        <Link
+          href={`/reports/locations?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`}
+          aria-current={active === 'locations' ? 'page' : undefined}
+          className={cn(
+            'whitespace-nowrap border-b-2 px-1 py-3 text-sm font-medium transition-colors',
+            active === 'locations'
+              ? 'border-[var(--brand-color,#0ea5e9)] text-slate-900'
+              : 'border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700',
+          )}
+        >
+          Locations
+        </Link>
       </nav>
     </div>
   );

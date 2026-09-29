@@ -30,7 +30,7 @@ export default async function SettingsHubPage() {
     '/settings/locations': `${locationCount} ${locationCount === 1 ? 'location' : 'locations'}`,
     '/settings/fees': `${feeCount} ${feeCount === 1 ? 'fee' : 'fees'}`,
     '/settings/integrations': `${integrationCount} active`,
-    '/staff': `${staffCount} ${staffCount === 1 ? 'member' : 'members'}`,
+    '/settings/staff': `${staffCount} ${staffCount === 1 ? 'member' : 'members'}`,
   };
 
   return (

@@ -37,5 +37,5 @@ export const SETTINGS_TABS: SettingsTab[] = [
   { label: 'Locations', href: '/settings/locations', icon: MapPin, description: 'Sites & addresses' },
   { label: 'Resources', href: '/settings/resources', icon: Ship, description: 'Shared boats, gear & guides' },
   { label: 'Integrations', href: '/settings/integrations', icon: Plug, description: 'Payments, accounting, marketing' },
-  { label: 'Staff', href: '/staff', icon: UserCog, description: 'Team members & roles' },
+  { label: 'Staff', href: '/settings/staff', icon: UserCog, description: 'Team members & roles' },
 ];
