@@ -18,7 +18,7 @@ import { hasPermission } from '@marina/auth';
 import { createId } from '@marina/core';
 import type { Prisma, TenantClient } from '@marina/database';
 
-export type ApprovalAction = 'payment' | 'refund';
+export type ApprovalAction = 'payment' | 'refund' | 'discount';
 
 /** The operator-level knobs that drive the approval gate. */
 export interface ApprovalPolicy {
@@ -65,10 +65,9 @@ export function evaluateApproval(args: {
   const threshold = policy.approvalThresholdCents ?? 0;
   if (threshold > 0 && amountCents >= threshold) {
     required = true;
-    reason =
-      action === 'refund'
-        ? `Refund of ${(amountCents / 100).toFixed(2)} meets the ${(threshold / 100).toFixed(2)} approval threshold`
-        : `Charge of ${(amountCents / 100).toFixed(2)} meets the ${(threshold / 100).toFixed(2)} approval threshold`;
+    const label =
+      action === 'refund' ? 'Refund' : action === 'discount' ? 'Discount/comp' : 'Charge';
+    reason = `${label} of ${(amountCents / 100).toFixed(2)} meets the ${(threshold / 100).toFixed(2)} approval threshold`;
   }
 
   const canApprove = hasPermission(auth, 'order:approve');
@@ -112,7 +111,9 @@ export async function recordApprovalEvent(
       operator_id: args.operatorId,
       order_id: args.orderId,
       type: 'APPROVAL',
-      description: `${args.action === 'refund' ? 'Refund' : 'Payment'} approved by manager (${(args.amountCents / 100).toFixed(2)} USD)${args.reason ? ` — ${args.reason}` : ''}`,
+      description: `${
+        args.action === 'refund' ? 'Refund' : args.action === 'discount' ? 'Discount/comp' : 'Payment'
+      } approved by manager (${(args.amountCents / 100).toFixed(2)} USD)${args.reason ? ` — ${args.reason}` : ''}`,
       actor: args.actor,
       metadata: {
         action: args.action,

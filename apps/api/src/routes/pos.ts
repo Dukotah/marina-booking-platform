@@ -11,6 +11,11 @@ import {
 import { withTenant } from '@marina/database';
 import type { Env } from '../context.js';
 import { requireStaff } from '../middleware/auth.js';
+import {
+  evaluateApproval,
+  loadApprovalPolicy,
+  recordApprovalEvent,
+} from '../services/approvals.js';
 
 /**
  * Point-of-sale API — the register. Staff record walk-up sales (bookings and/or
@@ -139,6 +144,8 @@ pos.post('/sale', async (c) => {
     activityName: string;
     locationId: string | null;
     unitPriceCents: number;
+    /** The rate's list price, for measuring how much an override gives away. */
+    catalogUnitPriceCents?: number;
     /** Set when this booking line came from a PACKAGE bundle (reporting snapshot). */
     packageId?: string;
     packageName?: string;
@@ -178,6 +185,7 @@ pos.post('/sale', async (c) => {
       activityName: rate.activity.name_internal,
       locationId,
       unitPriceCents: line.unitPriceCentsOverride ?? rate.price_cents,
+      catalogUnitPriceCents: rate.price_cents,
     });
   }
 
@@ -314,6 +322,46 @@ pos.post('/sale', async (c) => {
     taxExempt: input.taxExempt,
   });
 
+  // Manager-approval gate on register give-aways (red-team P2): price overrides
+  // below the rate's list price and COMP tenders are the two ways a register sale
+  // can hand out value, and they held no sign-off while refunds did. Same knob as
+  // refunds (approval_threshold_cents) so the owner sets ONE number. Merchandise
+  // is deliberately exempt: it has no catalog price — the register price IS the
+  // price (fractional fuel gallons etc.). Package bundle discounts are the
+  // product's intent, not a register decision, so they don't count either.
+  const giveawayCents =
+    resolvedBookings.reduce(
+      (sum, b) =>
+        sum +
+        (b.catalogUnitPriceCents !== undefined
+          ? Math.max(0, b.catalogUnitPriceCents - b.unitPriceCents) * b.quantity
+          : 0),
+      0,
+    ) + (input.payment.method === 'COMP' ? pricing.totalCents : 0);
+  let discountApprovalReason: string | null = null;
+  if (giveawayCents > 0) {
+    const policy = await loadApprovalPolicy(c.var.db, operatorId);
+    const approval = evaluateApproval({
+      action: 'discount',
+      amountCents: giveawayCents,
+      policy,
+      auth,
+    });
+    if (approval.blocked) {
+      return c.json(
+        {
+          error:
+            approval.reason ??
+            'This discount or comp needs a manager to approve it. Ask someone with manager access to finish the sale.',
+          code: 'APPROVAL_REQUIRED',
+          requiresPermission: 'order:approve',
+        },
+        403,
+      );
+    }
+    if (approval.required) discountApprovalReason = approval.reason;
+  }
+
   // Comps settle the order at $0 tendered; every other method must cover the total.
   if (input.payment.method !== 'COMP') {
     const tendered = input.payment.amountCents ?? pricing.totalCents;
@@ -401,6 +449,18 @@ pos.post('/sale', async (c) => {
           heard_about_us: input.heardAboutUs ?? null,
         },
       });
+
+      // Audit the manager sign-off in the same transaction as the sale it blessed.
+      if (discountApprovalReason !== null) {
+        await recordApprovalEvent(tx, {
+          operatorId,
+          orderId: order.id,
+          action: 'discount',
+          amountCents: giveawayCents,
+          actor: auth.userId,
+          reason: discountApprovalReason,
+        });
+      }
 
       // Booking items + capacity.
       for (const b of resolvedBookings) {

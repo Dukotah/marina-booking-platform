@@ -121,3 +121,31 @@ describe('evaluateApproval — per-member extra permission', () => {
     expect(d.blocked).toBe(false);
   });
 });
+
+describe('evaluateApproval — register discounts and comps (red-team P2)', () => {
+  const policy = { approvalThresholdCents: 5000, refundRequiresApproval: false };
+
+  it('a STAFF discount at/over the threshold is blocked', () => {
+    const d = evaluateApproval({ action: 'discount', amountCents: 5000, policy, auth: ctx('STAFF') });
+    expect(d.required).toBe(true);
+    expect(d.blocked).toBe(true);
+    expect(d.reason).toMatch(/discount\/comp/i);
+  });
+
+  it('a STAFF discount under the threshold passes without approval', () => {
+    const d = evaluateApproval({ action: 'discount', amountCents: 4999, policy, auth: ctx('STAFF') });
+    expect(d.required).toBe(false);
+    expect(d.blocked).toBe(false);
+  });
+
+  it('a manager self-approves a large comp (required stays true for the audit)', () => {
+    const d = evaluateApproval({ action: 'discount', amountCents: 25000, policy, auth: ctx('OWNER') });
+    expect(d.required).toBe(true);
+    expect(d.blocked).toBe(false);
+  });
+
+  it('no threshold configured = discounts never gated (matches payments today)', () => {
+    const d = evaluateApproval({ action: 'discount', amountCents: 99999, policy: NO_POLICY, auth: ctx('STAFF') });
+    expect(d.required).toBe(false);
+  });
+});
