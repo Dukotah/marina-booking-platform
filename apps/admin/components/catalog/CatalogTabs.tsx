@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Sailboat, Gift, Ticket, type LucideIcon } from 'lucide-react';
+import { Sailboat, Gift, CreditCard, Ticket, type LucideIcon } from 'lucide-react';
 import { cn } from '../../lib/cn';
 
 interface CatalogTab {
@@ -25,6 +25,12 @@ const CATALOG_TABS: CatalogTab[] = [
     href: '/catalog/gift-certificates',
     icon: Gift,
     also: ['/gift-certificates'],
+  },
+  {
+    label: 'Gift cards',
+    href: '/catalog/gift-cards',
+    icon: CreditCard,
+    also: ['/gift-cards'],
   },
   { label: 'Memberships', href: '/catalog/memberships', icon: Ticket, also: ['/memberships'] },
 ];
