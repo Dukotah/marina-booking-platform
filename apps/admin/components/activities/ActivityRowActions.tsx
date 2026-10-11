@@ -28,9 +28,9 @@ export function ActivityRowActions({
     return (
       <Link
         href={`/activities/${activityId}`}
-        className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100"
+        className="inline-flex min-h-11 items-center gap-1 rounded-lg px-3 text-sm font-medium text-ink-body hover:bg-surface-muted"
       >
-        <Pencil className="h-3.5 w-3.5" aria-hidden />
+        <Pencil className="h-4 w-4" aria-hidden />
         View
       </Link>
     );
@@ -44,11 +44,11 @@ export function ActivityRowActions({
         onClick={() => startTransition(() => void toggleActivityVisibility(activityId, 'online'))}
         title={visibleOnline ? 'Hide from online booking' : 'Show online'}
         className={cn(
-          'inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium hover:bg-slate-100 disabled:opacity-50',
-          visibleOnline ? 'text-emerald-600' : 'text-slate-400',
+          'inline-flex min-h-11 items-center justify-center rounded-lg px-3 text-sm font-medium hover:bg-surface-muted disabled:opacity-50',
+          visibleOnline ? 'text-emerald-600' : 'text-ink-muted',
         )}
       >
-        {visibleOnline ? <Eye className="h-3.5 w-3.5" aria-hidden /> : <EyeOff className="h-3.5 w-3.5" aria-hidden />}
+        {visibleOnline ? <Eye className="h-4 w-4" aria-hidden /> : <EyeOff className="h-4 w-4" aria-hidden />}
       </button>
 
       <button
@@ -57,18 +57,18 @@ export function ActivityRowActions({
         onClick={() => startTransition(() => void toggleActivityStatus(activityId))}
         title={status === 'ACTIVE' ? 'Deactivate' : 'Activate'}
         className={cn(
-          'inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium hover:bg-slate-100 disabled:opacity-50',
-          status === 'ACTIVE' ? 'text-emerald-600' : 'text-slate-400',
+          'inline-flex min-h-11 items-center justify-center rounded-lg px-3 text-sm font-medium hover:bg-surface-muted disabled:opacity-50',
+          status === 'ACTIVE' ? 'text-emerald-600' : 'text-ink-muted',
         )}
       >
-        <Power className="h-3.5 w-3.5" aria-hidden />
+        <Power className="h-4 w-4" aria-hidden />
       </button>
 
       <Link
         href={`/activities/${activityId}`}
-        className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
+        className="inline-flex min-h-11 items-center gap-1 rounded-lg px-3 text-sm font-medium text-ink-body hover:bg-surface-muted"
       >
-        <Pencil className="h-3.5 w-3.5" aria-hidden />
+        <Pencil className="h-4 w-4" aria-hidden />
         Edit
       </Link>
     </div>

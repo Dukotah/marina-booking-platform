@@ -1,4 +1,4 @@
-import { cn } from '../../lib/cn';
+import { Badge, type BadgeTone } from '../ui';
 
 /** Payment status (mirrors Prisma `PaymentStatus`). */
 export type PaymentStatusValue =
@@ -10,23 +10,20 @@ export type PaymentStatusValue =
   | 'REQUIRES_ACTION'
   | 'DISPUTED';
 
-const STYLES: Record<PaymentStatusValue, { label: string; className: string }> = {
-  PAID: { label: 'Paid', className: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20' },
-  REFUNDED: { label: 'Refunded', className: 'bg-slate-100 text-slate-600 ring-slate-500/20' },
-  PARTIAL_REFUND: {
-    label: 'Partial refund',
-    className: 'bg-amber-50 text-amber-700 ring-amber-600/20',
-  },
-  FAILED: { label: 'Failed', className: 'bg-red-50 text-red-700 ring-red-600/20' },
-  PRE_AUTHORIZED: { label: 'Pre-authorized', className: 'bg-sky-50 text-sky-700 ring-sky-600/20' },
+// Semantic tones only — no sky/indigo. success = money captured, owed/rose =
+// failure/dispute, waiting/amber = pending or partially returned, cancelled/slate
+// = fully refunded or awaiting the guest.
+const STYLES: Record<PaymentStatusValue, { label: string; tone: BadgeTone }> = {
+  PAID: { label: 'Paid', tone: 'success' },
+  REFUNDED: { label: 'Refunded', tone: 'cancelled' },
+  PARTIAL_REFUND: { label: 'Partial refund', tone: 'waiting' },
+  FAILED: { label: 'Failed', tone: 'owed' },
+  PRE_AUTHORIZED: { label: 'Pre-authorized', tone: 'neutral' },
   // The guest has been sent to a 3DS/SCA challenge and has not finished it. Money
   // is not captured yet, so this reads as pending, not as a failure.
-  REQUIRES_ACTION: {
-    label: 'Awaiting 3-D Secure',
-    className: 'bg-indigo-50 text-indigo-700 ring-indigo-600/20',
-  },
+  REQUIRES_ACTION: { label: 'Awaiting 3-D Secure', tone: 'waiting' },
   // A chargeback is open against this payment; funds are held pending evidence.
-  DISPUTED: { label: 'Disputed', className: 'bg-rose-50 text-rose-700 ring-rose-600/20' },
+  DISPUTED: { label: 'Disputed', tone: 'owed' },
 };
 
 /** Color-coded payment status pill used in the order detail payments table. */
@@ -39,14 +36,8 @@ export function PaymentStatusBadge({
 }) {
   const style = STYLES[status] ?? STYLES.PAID;
   return (
-    <span
-      className={cn(
-        'inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset',
-        style.className,
-        className,
-      )}
-    >
+    <Badge tone={style.tone} className={className}>
       {style.label}
-    </span>
+    </Badge>
   );
 }

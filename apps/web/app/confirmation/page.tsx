@@ -21,6 +21,7 @@ import { getBrandAsync, brandStyle } from '@/lib/brand';
 import SiteHeader from '@/components/layout/SiteHeader';
 import SiteFooter from '@/components/layout/SiteFooter';
 import { QrPlaceholder } from './components/QrPlaceholder';
+import { CheckinQr } from './components/CheckinQr';
 import { PriceBreakdown } from './components/PriceBreakdown';
 import { CheckInInstructions, CancellationPolicy } from './components/InfoPanels';
 import { OrderNotFound } from './components/OrderNotFound';
@@ -89,6 +90,11 @@ export default async function ConfirmationPage({
 }) {
   const params = await Promise.resolve(searchParams);
   const orderNumber = firstParam(params.order) ?? firstParam(params.orderNumber);
+  // The order number alone is enumerable, so the API gates the lookup on the email
+  // the booking was made under. The checkout redirect carries it (?email=), so the
+  // guest lands on their own confirmation; a bare link with no email 404s like any
+  // other unproven lookup, which is the point.
+  const email = firstParam(params.email);
   const brand = await getBrandAsync();
 
   if (!orderNumber) {
@@ -106,13 +112,19 @@ export default async function ConfirmationPage({
   let notFound = false;
   let serviceError = false;
 
-  try {
-    order = await getOrder(orderNumber);
-  } catch (err) {
-    if (isApiError(err) && err.status === 404) {
-      notFound = true;
-    } else {
-      serviceError = true;
+  if (!email) {
+    // No identity proof in the link — treat as not-found rather than attempting an
+    // ungated fetch (which the API would reject anyway).
+    notFound = true;
+  } else {
+    try {
+      order = await getOrder(orderNumber, email);
+    } catch (err) {
+      if (isApiError(err) && err.status === 404) {
+        notFound = true;
+      } else {
+        serviceError = true;
+      }
     }
   }
 
@@ -198,7 +210,14 @@ export default async function ConfirmationPage({
               </span>
             </div>
             <div className="flex flex-col items-center gap-2">
-              <QrPlaceholder value={order.orderNumber} />
+              {/* A real, HMAC-signed, scannable check-in QR for the primary booked
+                  item. Cancelled orders (or the rare item-less order) fall back to
+                  the plain visual placeholder — there's nothing to check in. */}
+              {!isCancelled && order.items[0] ? (
+                <CheckinQr orderNumber={order.orderNumber} orderItemId={order.items[0].id} />
+              ) : (
+                <QrPlaceholder value={order.orderNumber} />
+              )}
               <p className="text-[13px] text-muted">Show this at check-in</p>
             </div>
           </div>

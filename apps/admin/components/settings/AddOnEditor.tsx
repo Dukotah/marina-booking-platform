@@ -274,11 +274,11 @@ export function AddOnEditor({ addOns, activities, onSave, onDelete }: AddOnEdito
       ) : null}
 
       {addOns.length === 0 && !creating ? (
-        <div className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-600">
+        <div className="rounded-lg border border-dashed border-line-strong bg-surface p-8 text-center text-sm text-ink-body">
           No add-ons yet. These are the cheapest revenue you have — the guest is already at checkout.
         </div>
       ) : (
-        <ul className="divide-y divide-slate-100">
+        <ul className="divide-y divide-line">
           {addOns.map((row) =>
             editingId === row.id ? (
               <li key={row.id} className="py-4">
@@ -288,24 +288,24 @@ export function AddOnEditor({ addOns, activities, onSave, onDelete }: AddOnEdito
               <li key={row.id} className="flex items-start justify-between gap-4 py-3">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="truncate text-sm font-medium text-slate-900">{row.name}</span>
+                    <span className="truncate text-sm font-medium text-ink">{row.name}</span>
                     {!row.isActive ? (
-                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">
+                      <span className="rounded-full bg-surface-muted px-2 py-0.5 text-[11px] font-medium text-ink-body">
                         Retired
                       </span>
                     ) : null}
                     {row.basis === 'PER_GUEST' ? (
-                      <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-800">
+                      <span className="rounded-full bg-accent-tint px-2 py-0.5 text-[11px] font-medium text-accent-ink">
                         Per guest
                       </span>
                     ) : null}
                   </div>
-                  <p className="mt-0.5 text-xs text-slate-600">
+                  <p className="mt-0.5 text-xs text-ink-body">
                     {formatUSD(row.priceCents)}
                     {row.basis === 'PER_GUEST' ? ' per guest' : ' each'} · {activityName(row.activityId)}
                     {row.maxPerBooking !== null ? ` · max ${row.maxPerBooking} per booking` : ''}
                   </p>
-                  <p className="mt-0.5 text-xs text-slate-600">
+                  <p className="mt-0.5 text-xs text-ink-body">
                     {row.stockTotal === null
                       ? 'Unlimited stock'
                       : `${row.stockSold} of ${row.stockTotal} sold · ${Math.max(0, row.stockTotal - row.stockSold)} left`}
@@ -317,7 +317,7 @@ export function AddOnEditor({ addOns, activities, onSave, onDelete }: AddOnEdito
                     onClick={() => beginEdit(row)}
                     disabled={isPending}
                     aria-label={`Edit ${row.name}`}
-                    className="rounded-md p-1.5 text-slate-600 hover:bg-slate-100 hover:text-slate-800 disabled:opacity-50"
+                    className="rounded-md p-1.5 text-ink-body hover:bg-surface-muted hover:text-ink disabled:opacity-50"
                   >
                     <Pencil className="h-4 w-4" aria-hidden />
                   </button>
@@ -383,7 +383,7 @@ function Editor({
   }, [draft.priceDollars, draft.basis]);
 
   return (
-    <div className="mb-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
+    <div className="mb-4 rounded-lg border border-line bg-surface-muted p-4">
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Name" htmlFor={ids.name} required hint="What the guest sees at checkout.">
           <TextInput
@@ -396,7 +396,7 @@ function Editor({
 
         <Field label="Price (USD)" htmlFor={ids.price} required hint="Stored to the cent.">
           <div className="relative">
-            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500">
+            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-ink-muted">
               $
             </span>
             <TextInput
@@ -442,7 +442,7 @@ function Editor({
       {/* A choice between two, so a radio group — not a select the operator has
           to open to discover the second option. */}
       <fieldset className="mt-4">
-        <legend id={ids.basis} className="text-sm font-medium text-slate-700">
+        <legend id={ids.basis} className="text-sm font-medium text-ink-body">
           How is it charged?
         </legend>
         <div className="mt-2 grid gap-2 sm:grid-cols-2">
@@ -463,7 +463,7 @@ function Editor({
             onSelect={() => setDraft({ ...draft, basis: 'PER_GUEST' })}
           />
         </div>
-        {preview ? <p className="mt-2 text-xs text-slate-600">{preview}</p> : null}
+        {preview ? <p className="mt-2 text-xs text-ink-body">{preview}</p> : null}
       </fieldset>
 
       <div className="mt-4 grid gap-4 sm:grid-cols-3">
@@ -508,18 +508,18 @@ function Editor({
 
       <label
         htmlFor={ids.active}
-        className="mt-4 flex cursor-pointer items-start gap-3 rounded-lg border border-slate-200 bg-white p-3 hover:bg-slate-50"
+        className="mt-4 flex cursor-pointer items-start gap-3 rounded-lg border border-line bg-surface p-3 hover:bg-surface-muted"
       >
         <input
           id={ids.active}
           type="checkbox"
           checked={draft.isActive}
           onChange={(e) => setDraft({ ...draft, isActive: e.target.checked })}
-          className="mt-0.5 h-4 w-4 rounded border-slate-400 text-slate-900 focus:ring-slate-500"
+          className="mt-0.5 h-4 w-4 rounded border-line-strong text-accent accent-accent focus:ring-focus"
         />
         <span className="min-w-0">
-          <span className="block text-sm font-medium text-slate-800">Offer at checkout</span>
-          <span className="block text-xs text-slate-600">
+          <span className="block text-sm font-medium text-ink">Offer at checkout</span>
+          <span className="block text-xs text-ink-body">
             Turn this off to retire the add-on without touching orders that already have it.
           </span>
         </span>
@@ -559,7 +559,7 @@ function BasisChoice({
       htmlFor={id}
       className={
         'flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors ' +
-        (checked ? 'border-slate-800 bg-white' : 'border-slate-200 bg-white hover:bg-slate-100')
+        (checked ? 'border-accent bg-accent-tint' : 'border-line bg-surface hover:bg-surface-muted')
       }
     >
       <input
@@ -569,11 +569,11 @@ function BasisChoice({
         value={value}
         checked={checked}
         onChange={onSelect}
-        className="mt-0.5 h-4 w-4 border-slate-400 text-slate-900 focus:ring-slate-500"
+        className="mt-0.5 h-4 w-4 border-line-strong text-accent focus:ring-focus"
       />
       <span className="min-w-0">
-        <span className="block text-sm font-medium text-slate-800">{title}</span>
-        <span className="block text-xs text-slate-600">{detail}</span>
+        <span className="block text-sm font-medium text-ink">{title}</span>
+        <span className="block text-xs text-ink-body">{detail}</span>
       </span>
     </label>
   );

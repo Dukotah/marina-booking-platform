@@ -101,15 +101,15 @@ function ReconciliationDetail({ reconciliation }: { reconciliation: Reconciliati
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <p className="mb-3 text-xs text-slate-500">
+        <p className="mb-3 text-xs text-ink-muted">
           Some line items don&apos;t sum to the order totals — usually orders recorded before
           line-level tracking existed. The summary totals are authoritative.
         </p>
-        <ul className="divide-y divide-slate-100 text-sm">
+        <ul className="divide-y divide-line text-sm">
           {reconciliation.checks.map((c) => (
             <li key={c.name} className="flex items-center justify-between gap-3 py-2">
-              <span className={c.ok ? 'text-slate-500' : 'font-medium text-amber-700'}>{c.name}</span>
-              <span className="tabular-nums text-slate-700">
+              <span className={c.ok ? 'text-ink-muted' : 'font-medium text-amber-700'}>{c.name}</span>
+              <span className="tabular-nums text-ink-body">
                 {c.ok ? '✓' : `${formatUSD(c.actualCents)} vs ${formatUSD(c.expectedCents)}`}
               </span>
             </li>
@@ -175,14 +175,14 @@ function SummaryView({ report }: { report: SalesReport }) {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <dl className="divide-y divide-slate-100 text-sm">
+            <dl className="divide-y divide-line text-sm">
               <BreakdownRow label="Activities" value={formatUSD(report.activitiesCents)} />
               <BreakdownRow label="Packages" value={formatUSD(report.packagesCents)} />
               <BreakdownRow
                 label={
                   <Link
                     href={`/reports?${merchParams.toString()}`}
-                    className="underline decoration-slate-300 underline-offset-2 hover:text-slate-900"
+                    className="underline decoration-line underline-offset-2 hover:text-ink"
                   >
                     Merchandise
                   </Link>
@@ -214,7 +214,7 @@ function SummaryView({ report }: { report: SalesReport }) {
                 description="Card, cash, gift-card, and comp tenders appear here once orders are paid."
               />
             ) : (
-              <ul className="flex flex-col divide-y divide-slate-100 text-sm">
+              <ul className="flex flex-col divide-y divide-line text-sm">
                 {report.payments.byMethod.map((m) => {
                   const Icon = METHOD_ICON[m.method];
                   return (
@@ -222,17 +222,17 @@ function SummaryView({ report }: { report: SalesReport }) {
                       key={m.method}
                       className="flex items-center justify-between gap-3 py-3 first:pt-0 last:pb-0"
                     >
-                      <span className="flex min-w-0 items-center gap-2 text-slate-700">
-                        <Icon className="h-4 w-4 shrink-0 text-slate-400" aria-hidden />
+                      <span className="flex min-w-0 items-center gap-2 text-ink-body">
+                        <Icon className="h-4 w-4 shrink-0 text-ink-muted" aria-hidden />
                         <span className="truncate font-medium">
                           {PAYMENT_METHOD_LABEL[m.method]}
                         </span>
                       </span>
                       <span className="flex shrink-0 items-baseline gap-3">
-                        <span className="text-xs text-slate-400">
+                        <span className="text-xs text-ink-muted">
                           {formatNumber(m.count)} payment{m.count === 1 ? '' : 's'}
                         </span>
-                        <span className="tabular-nums font-medium text-slate-900">
+                        <span className="tabular-nums font-medium text-ink">
                           {formatUSD(m.netCents)}
                         </span>
                       </span>
@@ -240,8 +240,8 @@ function SummaryView({ report }: { report: SalesReport }) {
                   );
                 })}
                 <li className="flex items-center justify-between gap-3 py-3 last:pb-0">
-                  <span className="font-semibold text-slate-900">Net collected</span>
-                  <span className="tabular-nums font-semibold text-slate-900">
+                  <span className="font-semibold text-ink">Net collected</span>
+                  <span className="tabular-nums font-semibold text-ink">
                     {formatUSD(report.payments.totals.netCents)}
                   </span>
                 </li>
@@ -306,7 +306,7 @@ function ItemsView({ report }: { report: SalesReport }) {
         <CardContent className="overflow-x-auto">
           <table className="w-full min-w-[720px] border-collapse text-sm">
             <thead>
-              <tr className="border-b border-slate-200 text-xs font-medium uppercase tracking-wide text-slate-500">
+              <tr className="border-b border-line text-xs font-medium uppercase tracking-wide text-ink-muted">
                 <th className={CELL_LEFT}>Item</th>
                 <th className={CELL}>Qty</th>
                 <th className={CELL}>Gross</th>
@@ -320,16 +320,16 @@ function ItemsView({ report }: { report: SalesReport }) {
               {itemized.groups.map((group) => (
                 <GroupRows key={group.key} group={group} />
               ))}
-              <tr className="border-t border-slate-100">
-                <td className={`${CELL_LEFT} text-slate-500`}>Tips</td>
+              <tr className="border-t border-line">
+                <td className={`${CELL_LEFT} text-ink-muted`}>Tips</td>
                 <td className={CELL} />
                 <td className={CELL} />
                 <td className={CELL} />
                 <td className={CELL} />
                 <td className={CELL} />
-                <td className={`${CELL} text-slate-700`}>{formatUSD(itemized.tipCents)}</td>
+                <td className={`${CELL} text-ink-body`}>{formatUSD(itemized.tipCents)}</td>
               </tr>
-              <tr className="border-t-2 border-slate-200 font-semibold text-slate-900">
+              <tr className="border-t-2 border-line font-semibold text-ink">
                 <td className={CELL_LEFT}>Grand total</td>
                 <td className={CELL}>{formatNumber(itemized.totals.quantity)}</td>
                 <td className={CELL}>{formatUSD(itemized.totals.grossCents)}</td>
@@ -340,7 +340,7 @@ function ItemsView({ report }: { report: SalesReport }) {
               </tr>
             </tbody>
           </table>
-          <p className="mt-2 text-xs text-slate-400">
+          <p className="mt-2 text-xs text-ink-muted">
             Order-level discounts, taxes, and fees are allocated across line items by value
             (exact to the cent). Grand total includes tips.
           </p>
@@ -358,28 +358,28 @@ function GroupRows({ group }: { group: SalesReport['itemized']['groups'][number]
       <tr>
         <td
           colSpan={7}
-          className="px-3 pb-1 pt-4 text-xs font-semibold uppercase tracking-wide text-slate-400"
+          className="px-3 pb-1 pt-4 text-xs font-semibold uppercase tracking-wide text-ink-muted"
         >
           {group.label}
         </td>
       </tr>
       {group.rows.map((row) => (
-        <tr key={row.itemKey} className="border-t border-slate-50">
+        <tr key={row.itemKey} className="border-t border-line">
           <td className={CELL_LEFT}>
-            <span className="font-medium text-slate-800">{row.label}</span>
-            {row.sublabel ? <span className="ml-2 text-xs text-slate-400">{row.sublabel}</span> : null}
+            <span className="font-medium text-ink">{row.label}</span>
+            {row.sublabel ? <span className="ml-2 text-xs text-ink-muted">{row.sublabel}</span> : null}
           </td>
-          <td className={`${CELL} text-slate-700`}>{formatNumber(row.quantity)}</td>
-          <td className={`${CELL} text-slate-700`}>{formatUSD(row.grossCents)}</td>
-          <td className={`${CELL} text-slate-500`}>
+          <td className={`${CELL} text-ink-body`}>{formatNumber(row.quantity)}</td>
+          <td className={`${CELL} text-ink-body`}>{formatUSD(row.grossCents)}</td>
+          <td className={`${CELL} text-ink-muted`}>
             {row.discountCents ? `−${formatUSD(row.discountCents)}` : '—'}
           </td>
-          <td className={`${CELL} text-slate-700`}>{formatUSD(row.netCents)}</td>
-          <td className={`${CELL} text-slate-700`}>{formatUSD(row.taxCents)}</td>
-          <td className={`${CELL} font-medium text-slate-900`}>{formatUSD(row.totalCents)}</td>
+          <td className={`${CELL} text-ink-body`}>{formatUSD(row.netCents)}</td>
+          <td className={`${CELL} text-ink-body`}>{formatUSD(row.taxCents)}</td>
+          <td className={`${CELL} font-medium text-ink`}>{formatUSD(row.totalCents)}</td>
         </tr>
       ))}
-      <tr className="border-t border-slate-100 bg-slate-50/60 font-medium text-slate-800">
+      <tr className="border-t border-line bg-surface-muted font-medium text-ink">
         <td className={CELL_LEFT}>{group.label} total</td>
         <td className={CELL}>{formatNumber(group.totals.quantity)}</td>
         <td className={CELL}>{formatUSD(group.totals.grossCents)}</td>
@@ -427,7 +427,7 @@ function DetailsView({ report }: { report: SalesReport }) {
       <CardContent className="overflow-x-auto">
         <table className="w-full min-w-[860px] border-collapse text-sm">
           <thead>
-            <tr className="border-b border-slate-200 text-xs font-medium uppercase tracking-wide text-slate-500">
+            <tr className="border-b border-line text-xs font-medium uppercase tracking-wide text-ink-muted">
               <th className={CELL_LEFT}>Date</th>
               <th className={CELL_LEFT}>Order</th>
               <th className={CELL_LEFT}>Item</th>
@@ -442,37 +442,37 @@ function DetailsView({ report }: { report: SalesReport }) {
           </thead>
           <tbody>
             {visible.map((l, i) => (
-              <tr key={`${l.orderId}-${l.itemKey}-${i}`} className="border-t border-slate-50">
-                <td className={`${CELL_LEFT} tabular-nums text-slate-500`}>{l.date}</td>
+              <tr key={`${l.orderId}-${l.itemKey}-${i}`} className="border-t border-line">
+                <td className={`${CELL_LEFT} tabular-nums text-ink-muted`}>{l.date}</td>
                 <td className={CELL_LEFT}>
                   <Link
                     href={`/orders/${l.orderId}`}
-                    className="tabular-nums text-slate-700 underline decoration-slate-300 underline-offset-2 hover:text-slate-900"
+                    className="tabular-nums text-ink-body underline decoration-line underline-offset-2 hover:text-ink"
                   >
                     {l.orderNumber}
                   </Link>
                 </td>
                 <td className={CELL_LEFT}>
-                  <span className="font-medium text-slate-800">{l.label}</span>
-                  {l.sublabel ? <span className="ml-2 text-xs text-slate-400">{l.sublabel}</span> : null}
+                  <span className="font-medium text-ink">{l.label}</span>
+                  {l.sublabel ? <span className="ml-2 text-xs text-ink-muted">{l.sublabel}</span> : null}
                 </td>
-                <td className={`${CELL} text-slate-700`}>{formatNumber(l.quantity)}</td>
-                <td className={`${CELL} text-slate-500`}>
+                <td className={`${CELL} text-ink-body`}>{formatNumber(l.quantity)}</td>
+                <td className={`${CELL} text-ink-muted`}>
                   {l.unitPriceCents === null ? '—' : formatUSD(l.unitPriceCents)}
                 </td>
-                <td className={`${CELL} text-slate-700`}>{formatUSD(l.grossCents)}</td>
-                <td className={`${CELL} text-slate-500`}>
+                <td className={`${CELL} text-ink-body`}>{formatUSD(l.grossCents)}</td>
+                <td className={`${CELL} text-ink-muted`}>
                   {l.discountCents ? `−${formatUSD(l.discountCents)}` : '—'}
                 </td>
-                <td className={`${CELL} text-slate-700`}>{formatUSD(l.netCents)}</td>
-                <td className={`${CELL} text-slate-700`}>{formatUSD(l.taxCents)}</td>
-                <td className={`${CELL} font-medium text-slate-900`}>{formatUSD(l.totalCents)}</td>
+                <td className={`${CELL} text-ink-body`}>{formatUSD(l.netCents)}</td>
+                <td className={`${CELL} text-ink-body`}>{formatUSD(l.taxCents)}</td>
+                <td className={`${CELL} font-medium text-ink`}>{formatUSD(l.totalCents)}</td>
               </tr>
             ))}
           </tbody>
         </table>
         {rows.length > DETAILS_LIMIT ? (
-          <p className="mt-2 text-xs text-slate-400">
+          <p className="mt-2 text-xs text-ink-muted">
             Showing the first {DETAILS_LIMIT} of {formatNumber(rows.length)} lines — Export CSV
             includes every line.
           </p>
@@ -504,16 +504,16 @@ function CompareStat({
         : 'new'
       : `${delta.ratio > 0 ? '+' : ''}${(delta.ratio * 100).toFixed(1)}%`;
   return (
-    <div className="flex flex-col gap-1 rounded-lg border border-slate-100 p-3">
-      <dt className="text-xs font-medium text-slate-500">{label}</dt>
-      <dd className="text-lg font-semibold tabular-nums text-slate-900">{current}</dd>
+    <div className="flex flex-col gap-1 rounded-lg border border-line p-3">
+      <dt className="text-xs font-medium text-ink-muted">{label}</dt>
+      <dd className="text-lg font-semibold tabular-nums text-ink">{current}</dd>
       <span
         className={
           up
             ? 'text-xs font-medium text-emerald-600'
             : down
               ? 'text-xs font-medium text-red-600'
-              : 'text-xs font-medium text-slate-400'
+              : 'text-xs font-medium text-ink-muted'
         }
       >
         {changeLabel} vs prev
@@ -539,19 +539,19 @@ function BreakdownRow({
     <div className="flex items-center justify-between py-2.5 first:pt-0 last:pb-0">
       <dt
         className={
-          strong ? 'flex items-center gap-1.5 font-semibold text-slate-900' : 'flex items-center gap-1.5 text-slate-500'
+          strong ? 'flex items-center gap-1.5 font-semibold text-ink' : 'flex items-center gap-1.5 text-ink-muted'
         }
       >
-        {Icon ? <Icon className="h-3.5 w-3.5 text-slate-400" aria-hidden /> : null}
+        {Icon ? <Icon className="h-3.5 w-3.5 text-ink-muted" aria-hidden /> : null}
         {label}
       </dt>
       <dd
         className={
           strong
-            ? 'tabular-nums text-base font-semibold text-slate-900'
+            ? 'tabular-nums text-base font-semibold text-ink'
             : muted
-              ? 'tabular-nums text-slate-400'
-              : 'tabular-nums font-medium text-slate-900'
+              ? 'tabular-nums text-ink-muted'
+              : 'tabular-nums font-medium text-ink'
         }
       >
         {value}

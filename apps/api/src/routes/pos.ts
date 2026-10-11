@@ -312,14 +312,30 @@ pos.post('/sale', async (c) => {
 
   // Global fees (activity-agnostic) drive tax/processing for the whole sale.
   const feeRows = await c.var.db.fee.findMany({ where: { enabled: true, activity_id: null } });
-  const fees: PricingFee[] = feeRows.map((f) => ({ name: f.name, type: f.type, value: f.value }));
+  const fees: PricingFee[] = feeRows.map((f) => ({
+    name: f.name,
+    type: f.type,
+    value: f.value,
+    isTax: f.is_tax,
+  }));
+
+  // A selected existing customer who is tax-exempt makes the whole sale tax-exempt,
+  // even if the counter didn't tick the box.
+  let customerTaxExempt = false;
+  if (input.customer?.id) {
+    const existingCustomer = await c.var.db.customer.findUnique({
+      where: { id: input.customer.id },
+      select: { tax_exempt: true },
+    });
+    customerTaxExempt = existingCustomer?.tax_exempt ?? false;
+  }
 
   const pricing = calculatePricing({
     items,
     fees,
     promo: pricingPromo,
     tipCents: input.tipCents,
-    taxExempt: input.taxExempt,
+    taxExempt: input.taxExempt || customerTaxExempt,
   });
 
   // Manager-approval gate on register give-aways (red-team P2): price overrides

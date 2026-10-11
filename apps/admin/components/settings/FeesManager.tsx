@@ -29,6 +29,7 @@ export interface FeeRow {
   value: number;
   enabled: boolean;
   ignore_tax_exempt: boolean;
+  is_tax: boolean;
   activityId: string | null;
 }
 
@@ -44,6 +45,7 @@ interface FeeDraft {
   value: number;
   enabled: boolean;
   ignore_tax_exempt: boolean;
+  is_tax: boolean;
   activity_id: string;
 }
 
@@ -54,6 +56,7 @@ function emptyDraft(): FeeDraft {
     value: 0,
     enabled: true,
     ignore_tax_exempt: false,
+    is_tax: false,
     activity_id: '',
   };
 }
@@ -65,6 +68,7 @@ function rowToDraft(row: FeeRow): FeeDraft {
     value: row.type === 'FLAT' ? row.value / 100 : row.value,
     enabled: row.enabled,
     ignore_tax_exempt: row.ignore_tax_exempt,
+    is_tax: row.is_tax,
     activity_id: row.activityId ?? '',
   };
 }
@@ -115,6 +119,7 @@ export function FeesManager({ fees, activities }: { fees: FeeRow[]; activities: 
       value: draft.value,
       enabled: draft.enabled,
       ignore_tax_exempt: draft.ignore_tax_exempt,
+      is_tax: draft.is_tax,
       activity_id: draft.activity_id,
     };
     startTransition(async () => {
@@ -164,11 +169,11 @@ export function FeesManager({ fees, activities }: { fees: FeeRow[]; activities: 
       {creating ? <FeeEditor draft={draft} setDraft={setDraft} activities={activities} onSave={save} onCancel={cancel} isPending={isPending} /> : null}
 
       {fees.length === 0 && !creating ? (
-        <div className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">
+        <div className="rounded-lg border border-dashed border-line-strong bg-surface p-8 text-center text-sm text-ink-muted">
           No fees yet. Add sales tax, a processing fee, or any custom charge.
         </div>
       ) : (
-        <ul className="divide-y divide-slate-100">
+        <ul className="divide-y divide-line">
           {fees.map((row) =>
             editingId === row.id ? (
               <li key={row.id} className="py-4">
@@ -185,10 +190,15 @@ export function FeesManager({ fees, activities }: { fees: FeeRow[]; activities: 
               <li key={row.id} className="flex items-center justify-between gap-4 py-3">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    <span className="truncate text-sm font-medium text-slate-900">{row.name}</span>
+                    <span className="truncate text-sm font-medium text-ink">{row.name}</span>
                     {!row.enabled ? (
-                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500">
+                      <span className="rounded-full bg-surface-muted px-2 py-0.5 text-[11px] font-medium text-ink-muted">
                         Disabled
+                      </span>
+                    ) : null}
+                    {row.is_tax ? (
+                      <span className="rounded-full bg-teal-50 px-2 py-0.5 text-[11px] font-medium text-teal-700">
+                        Tax
                       </span>
                     ) : null}
                     {row.ignore_tax_exempt ? (
@@ -197,7 +207,7 @@ export function FeesManager({ fees, activities }: { fees: FeeRow[]; activities: 
                       </span>
                     ) : null}
                   </div>
-                  <p className="mt-0.5 text-xs text-slate-500">
+                  <p className="mt-0.5 text-xs text-ink-muted">
                     {formatFeeValue(row.type, row.value)} · {activityName(row.activityId)}
                   </p>
                 </div>
@@ -206,7 +216,7 @@ export function FeesManager({ fees, activities }: { fees: FeeRow[]; activities: 
                     type="button"
                     onClick={() => onToggle(row.id)}
                     disabled={isPending}
-                    className="rounded-md px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100"
+                    className="rounded-md px-2 py-1 text-xs font-medium text-ink-body hover:bg-surface-muted"
                   >
                     {row.enabled ? 'Disable' : 'Enable'}
                   </button>
@@ -215,7 +225,7 @@ export function FeesManager({ fees, activities }: { fees: FeeRow[]; activities: 
                     onClick={() => beginEdit(row)}
                     disabled={isPending}
                     aria-label={`Edit ${row.name}`}
-                    className="rounded-md p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                    className="rounded-md p-1.5 text-ink-muted hover:bg-surface-muted hover:text-ink-body"
                   >
                     <Pencil className="h-4 w-4" aria-hidden />
                   </button>
@@ -254,7 +264,7 @@ function FeeEditor({
   isPending: boolean;
 }) {
   return (
-    <div className="mb-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
+    <div className="mb-4 rounded-lg border border-line bg-surface-muted p-4">
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Fee name" required hint="Include “Tax” or “Processing” for special handling.">
           <TextInput
@@ -275,7 +285,7 @@ function FeeEditor({
         <Field label={draft.type === 'PERCENT' ? 'Percentage' : 'Amount (USD)'} required>
           <div className="relative">
             {draft.type === 'FLAT' ? (
-              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">
+              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-ink-muted">
                 $
               </span>
             ) : null}
@@ -310,6 +320,12 @@ function FeeEditor({
           description="Apply this fee to new orders."
           checked={draft.enabled}
           onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })}
+        />
+        <CheckboxRow
+          label="This fee is tax"
+          description="Mark as sales tax — skipped for tax-exempt customers."
+          checked={draft.is_tax}
+          onChange={(e) => setDraft({ ...draft, is_tax: e.target.checked })}
         />
         <CheckboxRow
           label="Charge even when tax-exempt"

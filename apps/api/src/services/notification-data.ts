@@ -140,6 +140,139 @@ export function unsignedWaiverLinks(
     }));
 }
 
+/**
+ * The refund decision for a cancelled order, read back off the ORDER_CANCELLED
+ * OrderEvent that `cancelBooking` stamps (the single row that explains what
+ * happened to the money). Shaped for the cancellation notification: every field
+ * is defensively coerced so a hand-edited / legacy event never throws inside a
+ * send path. Returns null when the order has no cancel event.
+ */
+export interface CancellationFacts {
+  reason: string | null;
+  refundCents: number;
+  cardRefundCents: number;
+  giftRefundCents: number;
+  feeCents: number;
+}
+
+function toCents(raw: unknown): number {
+  const n = typeof raw === 'number' ? raw : Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+
+/**
+ * Load the money/refund facts for a cancelled order from its ORDER_CANCELLED
+ * event. Tenant-scoped; returns null if the order was never cancelled (or the
+ * event is missing), so the caller can skip cleanly.
+ */
+export async function loadCancellationFacts(
+  db: TenantClient,
+  orderId: string,
+): Promise<CancellationFacts | null> {
+  const event = await db.orderEvent.findFirst({
+    where: { order_id: orderId, type: 'ORDER_CANCELLED' },
+    orderBy: { created_at: 'desc' },
+    select: { metadata: true },
+  });
+  if (!event) return null;
+  const meta = (event.metadata ?? {}) as Record<string, unknown>;
+  return {
+    reason: typeof meta.reason === 'string' && meta.reason.trim() ? meta.reason.trim() : null,
+    refundCents: toCents(meta.refundCents),
+    cardRefundCents: toCents(meta.cardRefundCents),
+    giftRefundCents: toCents(meta.giftRefundCents),
+    feeCents: toCents(meta.feeCents),
+  };
+}
+
+/**
+ * A masked label for the card the order's refund went back to, e.g.
+ * "Visa ending 4242", read off the most recent refundable card payment. Returns
+ * undefined when the order has no card payment with brand/last-four on file.
+ */
+export async function refundedCardLabel(
+  db: TenantClient,
+  orderId: string,
+): Promise<string | undefined> {
+  const payment = await db.payment.findFirst({
+    where: { order_id: orderId, method: 'CARD', card_brand: { not: null }, card_last_four: { not: null } },
+    orderBy: { processed_at: 'desc' },
+    select: { card_brand: true, card_last_four: true },
+  });
+  if (payment?.card_brand && payment.card_last_four) {
+    return `${payment.card_brand} ending ${payment.card_last_four}`;
+  }
+  return undefined;
+}
+
+/**
+ * The latest moment every non-cancelled item on the order has finished — slot
+ * start + that item's rate duration, taking the max across items. Returns null
+ * when the order has no live, scheduled item (nothing to be "post-trip" about).
+ * Used by the post-trip review sweep to know a trip has actually ended.
+ */
+export function tripEnd(order: OrderBundle): Date | null {
+  let latest: number | null = null;
+  for (const item of order.items) {
+    if (item.status === 'CANCELLED') continue;
+    const start = item.timeslot?.datetime;
+    if (!start) continue;
+    const durationMs = (item.rate?.duration_minutes ?? 0) * 60_000;
+    const end = start.getTime() + durationMs;
+    if (latest === null || end > latest) latest = end;
+  }
+  return latest === null ? null : new Date(latest);
+}
+
+/**
+ * Format a raw question answer (string / string[] / boolean / number) into a
+ * human display string for the confirmation email. CHECKBOX answers come through
+ * as booleans; SELECT-multi as arrays; DATE/PHONE/NUMBER as strings/numbers.
+ */
+export function formatAnswer(raw: unknown): string {
+  if (raw === null || raw === undefined) return '';
+  if (typeof raw === 'boolean') return raw ? 'Yes' : 'No';
+  if (Array.isArray(raw)) return raw.map((v) => String(v)).filter(Boolean).join(', ');
+  return String(raw).trim();
+}
+
+/** One confirmation-visible question answer: label + formatted value. */
+export interface ConfirmationDetail {
+  label: string;
+  value: string;
+}
+
+/**
+ * Build the list of custom-question answers to echo in the booking confirmation.
+ * Reads the order's `question_answers` JSON (keyed by CustomerQuestion id) and
+ * joins it to the operator's questions flagged `show_in_confirmation`, preserving
+ * the operator's sort order. Tenant-scoped via the passed client (RLS). Returns an
+ * empty array when nothing is flagged or answered — the email then renders no
+ * "Your details" block. Never throws; a malformed answers blob yields [].
+ */
+export async function loadConfirmationDetails(
+  db: TenantClient,
+  order: OrderBundle,
+): Promise<ConfirmationDetail[]> {
+  const answers = (order.question_answers ?? null) as Record<string, unknown> | null;
+  if (!answers || typeof answers !== 'object') return [];
+  const ids = Object.keys(answers);
+  if (ids.length === 0) return [];
+
+  const questions = await db.customerQuestion.findMany({
+    where: { id: { in: ids }, show_in_confirmation: true },
+    orderBy: [{ sort_index: 'asc' }, { created_at: 'asc' }],
+    select: { id: true, label: true },
+  });
+
+  const details: ConfirmationDetail[] = [];
+  for (const q of questions) {
+    const value = formatAnswer(answers[q.id]);
+    if (value) details.push({ label: q.label, value });
+  }
+  return details;
+}
+
 /** Derive activity/date/time/party labels from the order's first/primary item. */
 export function bookingFacts(order: OrderBundle) {
   const operator = order.operator;

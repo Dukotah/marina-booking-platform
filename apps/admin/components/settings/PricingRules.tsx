@@ -388,29 +388,29 @@ export function PricingRules({
         ) : null}
 
         {ordered.length === 0 && !isEditing ? (
-          <div className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-600">
+          <div className="rounded-lg border border-dashed border-line-strong bg-surface p-8 text-center text-sm text-ink-body">
             No pricing rules yet. Every booking is charged the rate's list price.
           </div>
         ) : (
-          <ol className="divide-y divide-slate-100">
+          <ol className="divide-y divide-line">
             {ordered.map((row, index) => (
               <li key={row.id} className="flex items-start justify-between gap-4 py-3">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-sm font-medium text-slate-900">{row.name}</span>
-                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700">
+                    <span className="text-sm font-medium text-ink">{row.name}</span>
+                    <span className="rounded-full bg-surface-muted px-2 py-0.5 text-[11px] font-medium text-ink-body">
                       {KIND_LABEL[row.kind]}
                     </span>
-                    <span className="text-sm font-semibold text-slate-900">
+                    <span className="text-sm font-semibold text-ink">
                       {describeAdjustment(row.adjustmentType, row.adjustmentValue)}
                     </span>
                     {!row.isActive ? (
-                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700">
+                      <span className="rounded-full bg-surface-muted px-2 py-0.5 text-[11px] font-medium text-ink-body">
                         Disabled
                       </span>
                     ) : null}
                   </div>
-                  <p className="mt-0.5 text-xs text-slate-600">
+                  <p className="mt-0.5 text-xs text-ink-body">
                     Priority {index + 1} · {scopeLabel(row)} · {summarizeCondition(row)}
                   </p>
                 </div>
@@ -421,7 +421,7 @@ export function PricingRules({
                     onClick={() => move(index, -1)}
                     disabled={isPending || index === 0}
                     aria-label={`Move ${row.name} up`}
-                    className="rounded-md p-1.5 text-slate-600 hover:bg-slate-100 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-40"
+                    className="rounded-md p-1.5 text-ink-body hover:bg-surface-muted hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     <ArrowUp className="h-4 w-4" aria-hidden />
                   </button>
@@ -430,7 +430,7 @@ export function PricingRules({
                     onClick={() => move(index, 1)}
                     disabled={isPending || index === ordered.length - 1}
                     aria-label={`Move ${row.name} down`}
-                    className="rounded-md p-1.5 text-slate-600 hover:bg-slate-100 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-40"
+                    className="rounded-md p-1.5 text-ink-body hover:bg-surface-muted hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     <ArrowDown className="h-4 w-4" aria-hidden />
                   </button>
@@ -440,7 +440,7 @@ export function PricingRules({
                       run(() => onToggle(row.id, !row.isActive), 'Could not update the rule.')
                     }
                     disabled={isPending}
-                    className="rounded-md px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
+                    className="rounded-md px-2 py-1 text-xs font-medium text-ink-body hover:bg-surface-muted"
                   >
                     {row.isActive ? 'Disable' : 'Enable'}
                   </button>
@@ -449,7 +449,7 @@ export function PricingRules({
                     onClick={() => beginEdit(row)}
                     disabled={isPending}
                     aria-label={`Edit ${row.name}`}
-                    className="rounded-md p-1.5 text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                    className="rounded-md p-1.5 text-ink-body hover:bg-surface-muted hover:text-ink"
                   >
                     <Pencil className="h-4 w-4" aria-hidden />
                   </button>
@@ -484,12 +484,12 @@ function PrecedenceNote() {
   return (
     <section
       aria-labelledby="pricing-precedence-heading"
-      className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"
+      className="rounded-lg border border-line bg-surface p-5 shadow-sm"
     >
-      <h2 id="pricing-precedence-heading" className="text-base font-semibold text-slate-900">
+      <h2 id="pricing-precedence-heading" className="text-base font-semibold text-ink">
         How rules combine
       </h2>
-      <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-slate-700">
+      <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-ink-body">
         <li>Only enabled rules that match the booking are considered.</li>
         <li>
           Within a type, the most specific one wins — a rule on one rate beats one on the
@@ -597,7 +597,7 @@ function RuleEditor({
     draft.adjustmentType === 'PERCENT' ? draft.adjustmentValue : draft.adjustmentValue / 100;
 
   return (
-    <div className="mb-5 rounded-xl border border-slate-200 bg-slate-50 p-4">
+    <div className="mb-5 rounded-lg border border-line bg-surface-muted p-4">
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Rule name" htmlFor={`${uid}-name`} required>
           <TextInput
@@ -745,7 +745,7 @@ function KindFields({
 }) {
   if (draft.kind === 'GUIDE_MARKUP') {
     return (
-      <p className="mt-4 text-sm text-slate-600">
+      <p className="mt-4 text-sm text-ink-body">
         This rule always applies to the rates above. Scope it to a guided rate so it does not
         surcharge everything.
       </p>
@@ -779,17 +779,17 @@ function KindFields({
     const selected = draft.weekdays.length > 0 ? draft.weekdays : [6, 7];
     return (
       <fieldset className="mt-4">
-        <legend className="text-sm font-medium text-slate-700">Days it applies</legend>
-        <p className="mt-0.5 text-xs text-slate-600">Nothing selected means Saturday and Sunday.</p>
+        <legend className="text-sm font-medium text-ink-body">Days it applies</legend>
+        <p className="mt-0.5 text-xs text-ink-body">Nothing selected means Saturday and Sunday.</p>
         <div className="mt-2 flex flex-wrap gap-3">
           {WEEKDAYS.map((day) => (
             <label
               key={day.iso}
-              className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 hover:bg-slate-50"
+              className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink hover:bg-surface-muted"
             >
               <input
                 type="checkbox"
-                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-400"
+                className="h-4 w-4 rounded border-line-strong text-accent accent-accent focus:ring-focus"
                 checked={selected.includes(day.iso)}
                 onChange={() => toggleWeekday(day.iso)}
               />
@@ -1076,15 +1076,15 @@ function PricePreview({
         ) : null}
 
         {result ? (
-          <div className="rounded-xl border border-slate-200 bg-white p-4">
-            <p className="text-sm text-slate-600">
+          <div className="rounded-lg border border-line bg-surface p-4">
+            <p className="text-sm text-ink-body">
               {result.activityName} · {result.rateName}
             </p>
 
             <dl className="mt-3 space-y-1.5 text-sm">
               <div className="flex items-baseline justify-between gap-4">
-                <dt className="text-slate-700">List price</dt>
-                <dd className="font-medium text-slate-900 tabular-nums">
+                <dt className="text-ink-body">List price</dt>
+                <dd className="font-medium text-ink tabular-nums">
                   {formatUSD(result.basePriceCents)}
                 </dd>
               </div>
@@ -1094,25 +1094,25 @@ function PricePreview({
                   key={adjustment.ruleId}
                   className="flex items-baseline justify-between gap-4"
                 >
-                  <dt className="text-slate-700">
+                  <dt className="text-ink-body">
                     {adjustment.name}{' '}
-                    <span className="text-xs text-slate-600">
+                    <span className="text-xs text-ink-body">
                       ({KIND_LABEL[adjustment.kind]})
                     </span>
                   </dt>
-                  <dd className="font-medium text-slate-900 tabular-nums">
+                  <dd className="font-medium text-ink tabular-nums">
                     {signedUSD(adjustment.deltaCents)}
                   </dd>
                 </div>
               ))}
 
               {result.applied.length === 0 ? (
-                <p className="text-slate-600">No rule matches this booking — list price applies.</p>
+                <p className="text-ink-body">No rule matches this booking — list price applies.</p>
               ) : null}
 
-              <div className="flex items-baseline justify-between gap-4 border-t border-slate-200 pt-2">
-                <dt className="font-semibold text-slate-900">Price per person</dt>
-                <dd className="text-lg font-semibold text-slate-900 tabular-nums">
+              <div className="flex items-baseline justify-between gap-4 border-t border-line pt-2">
+                <dt className="font-semibold text-ink">Price per person</dt>
+                <dd className="text-lg font-semibold text-ink tabular-nums">
                   {formatUSD(result.priceCents)}
                 </dd>
               </div>
@@ -1127,12 +1127,12 @@ function PricePreview({
             ) : null}
 
             {result.suppressed.length > 0 ? (
-              <div className="mt-4 border-t border-slate-100 pt-3">
-                <h3 className="text-sm font-medium text-slate-900">Rules that did not apply</h3>
-                <ul className="mt-1 space-y-1 text-sm text-slate-700">
+              <div className="mt-4 border-t border-line pt-3">
+                <h3 className="text-sm font-medium text-ink">Rules that did not apply</h3>
+                <ul className="mt-1 space-y-1 text-sm text-ink-body">
                   {result.suppressed.map((s) => (
                     <li key={s.ruleId}>
-                      <span className="font-medium text-slate-900">{s.name}</span> —{' '}
+                      <span className="font-medium text-ink">{s.name}</span> —{' '}
                       {SUPPRESSION_LABEL[s.reason]}.
                     </li>
                   ))}

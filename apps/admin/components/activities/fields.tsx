@@ -89,7 +89,7 @@ export const CheckboxRow = forwardRef<
       <input
         ref={ref}
         type="checkbox"
-        className="mt-0.5 h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-400"
+        className="mt-0.5 h-4 w-4 rounded border-slate-300 text-slate-900 accent-accent focus:ring-slate-400"
         {...props}
       />
       <span className="min-w-0">

@@ -4,14 +4,15 @@ import Link from 'next/link';
 import { ShieldCheck } from 'lucide-react';
 import { getOperatorContext } from '../../lib/session';
 import { isPlatformAdmin } from '../../lib/platform';
+import { buttonClasses } from '../../components/ui';
 
 export const dynamic = 'force-dynamic';
 
 /**
- * Platform (super-admin) shell — deliberately distinct from the tenant admin
- * chrome (dark, "operator-of-operators" feel) so it's always obvious you're
- * above a single client. Hard-gated: non-platform identities are bounced to the
- * normal dashboard.
+ * Platform (super-admin) shell — the super-admin console that sits ABOVE a single
+ * client. Clean SaaS chrome (light canvas, white surfaces, one teal accent), the
+ * cooler sibling of the tenant admin. Hard-gated: non-platform identities are
+ * bounced to the normal dashboard.
  */
 export default async function PlatformLayout({ children }: { children: ReactNode }) {
   const ctx = await getOperatorContext();
@@ -19,17 +20,17 @@ export default async function PlatformLayout({ children }: { children: ReactNode
     redirect('/');
   }
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100">
-      <header className="border-b border-slate-800">
+    <div className="min-h-screen bg-canvas text-ink">
+      <header className="border-b border-line bg-surface">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-          <Link href="/platform" className="flex items-center gap-2 font-semibold">
-            <ShieldCheck className="h-5 w-5 text-emerald-400" aria-hidden />
+          <Link
+            href="/platform"
+            className="flex items-center gap-2 font-semibold text-ink"
+          >
+            <ShieldCheck className="h-5 w-5 text-accent" aria-hidden />
             Platform Console
           </Link>
-          <Link
-            href="/"
-            className="rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-slate-300 transition hover:bg-slate-800"
-          >
+          <Link href="/" className={buttonClasses('secondary', 'sm')}>
             Exit to my admin
           </Link>
         </div>

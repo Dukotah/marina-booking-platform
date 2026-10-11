@@ -4,6 +4,11 @@ import { getTenantDb, requirePermission, currentPermissions } from '../../../lib
 import { formatNumber } from '../../../lib/format';
 import { InviteStaffDialog } from '../../../components/staff/InviteStaffDialog';
 import { StaffTable, type StaffRow } from '../../../components/staff/StaffTable';
+import {
+  NotificationPrefs,
+  type ActivityOption,
+  type NotificationPrefRow,
+} from '../../../components/staff/NotificationPrefs';
 import { type LocationOption } from '../../../components/staff/StaffForm';
 import {
   BUILTIN_ROLES,
@@ -47,7 +52,7 @@ export default async function StaffPage() {
   const permissions = await currentPermissions();
   const canManage = permissions.has('staff:manage');
 
-  const [members, locations] = await Promise.all([
+  const [members, locations, activities] = await Promise.all([
     db.staffMember.findMany({
       orderBy: [{ is_active: 'desc' }, { role: 'asc' }, { email: 'asc' }],
       select: {
@@ -59,6 +64,14 @@ export default async function StaffPage() {
         is_active: true,
         auth_user_id: true,
         locations: { select: { location_id: true } },
+        notification_pref: {
+          select: {
+            email_enabled: true,
+            sms_enabled: true,
+            sms_phone: true,
+            activity_ids: true,
+          },
+        },
       },
     }),
     db.location.findMany({
@@ -66,9 +79,31 @@ export default async function StaffPage() {
       orderBy: [{ is_default: 'desc' }, { name: 'asc' }],
       select: { id: true, name: true },
     }),
+    db.activity.findMany({
+      where: { status: 'ACTIVE' },
+      orderBy: { name_internal: 'asc' },
+      select: { id: true, name_internal: true, name_external: true },
+    }),
   ]);
 
   const locationOptions: LocationOption[] = locations.map((l) => ({ id: l.id, name: l.name }));
+  const activityOptions: ActivityOption[] = activities.map((a) => ({
+    id: a.id,
+    name: a.name_internal || a.name_external,
+  }));
+
+  // Booking-notification prefs apply to members who can manage bookings (not guides).
+  const notificationRows: NotificationPrefRow[] = members
+    .filter((m) => m.is_active && m.role !== 'GUIDE')
+    .map((m) => ({
+      staffId: m.id,
+      name: m.name ?? '',
+      email: m.email,
+      emailEnabled: m.notification_pref ? m.notification_pref.email_enabled : true,
+      smsEnabled: m.notification_pref ? m.notification_pref.sms_enabled : false,
+      smsPhone: m.notification_pref?.sms_phone ?? null,
+      activityIds: m.notification_pref?.activity_ids ?? [],
+    }));
 
   const rows: StaffRow[] = members.map((m) => ({
     id: m.id,
@@ -95,8 +130,23 @@ export default async function StaffPage() {
       <StaffTable rows={rows} locations={locationOptions} canManage={canManage} />
 
       <section className="mt-8">
-        <h2 className="text-lg font-semibold tracking-tight text-slate-900">Role reference</h2>
-        <p className="mb-4 mt-1 text-sm text-slate-500">
+        <h2 className="text-lg font-semibold tracking-tight text-ink">
+          Booking notifications
+        </h2>
+        <p className="mb-4 mt-1 text-sm text-ink-muted">
+          Choose who gets alerted when a new booking comes in, by email or text, and
+          narrow alerts to specific activities so they are not all-or-nothing.
+        </p>
+        <NotificationPrefs
+          rows={notificationRows}
+          activities={activityOptions}
+          canManage={canManage}
+        />
+      </section>
+
+      <section className="mt-8">
+        <h2 className="text-lg font-semibold tracking-tight text-ink">Role reference</h2>
+        <p className="mb-4 mt-1 text-sm text-ink-muted">
           Default permissions granted by each built-in role. Individual members can be
           granted extra permissions on top of their role.
         </p>
@@ -115,14 +165,14 @@ function RolePermissionMatrix() {
     new Set<Permission>(ROLE_PERMISSIONS[role]).has(permission);
 
   return (
-    <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+    <div className="overflow-hidden rounded-lg border border-line bg-surface shadow-sm">
       <div className="overflow-x-auto">
         <table className="w-full border-collapse text-sm">
           <thead>
-            <tr className="border-b border-slate-200 bg-slate-50">
+            <tr className="border-b border-line bg-surface-muted">
               <th
                 scope="col"
-                className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500"
+                className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-ink-muted"
               >
                 Permission
               </th>
@@ -130,7 +180,7 @@ function RolePermissionMatrix() {
                 <th
                   key={role}
                   scope="col"
-                  className="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wide text-slate-500"
+                  className="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wide text-ink-muted"
                   title={ROLE_DESCRIPTIONS[role]}
                 >
                   {ROLE_LABELS[role]}
@@ -138,7 +188,7 @@ function RolePermissionMatrix() {
               ))}
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
+          <tbody className="divide-y divide-line">
             {PERMISSION_GROUPS.map((group) => {
               const perms = permissionsForGroup(group);
               if (perms.length === 0) return null;
@@ -169,10 +219,10 @@ function PermissionGroupRows({
 }) {
   return (
     <>
-      <tr className="bg-slate-50/60">
+      <tr className="bg-surface-muted/60">
         <td
           colSpan={BUILTIN_ROLES.length + 1}
-          className="px-4 py-2 text-xs font-semibold uppercase tracking-wide text-slate-400"
+          className="px-4 py-2 text-xs font-semibold uppercase tracking-wide text-ink-muted"
         >
           {group}
         </td>
@@ -182,8 +232,8 @@ function PermissionGroupRows({
         return (
           <tr key={permission}>
             <td className="px-4 py-3">
-              <div className="font-medium text-slate-800">{meta.label}</div>
-              <div className="text-xs text-slate-400">{meta.description}</div>
+              <div className="font-medium text-ink">{meta.label}</div>
+              <div className="text-xs text-ink-muted">{meta.description}</div>
             </td>
             {BUILTIN_ROLES.map((role) => (
               <td key={role} className="px-4 py-3 text-center">
@@ -194,7 +244,7 @@ function PermissionGroupRows({
                   />
                 ) : (
                   <span
-                    className="inline-block h-2.5 w-2.5 rounded-full bg-slate-200"
+                    className="inline-block h-2.5 w-2.5 rounded-full bg-line-strong"
                     aria-label="Not granted"
                   />
                 )}

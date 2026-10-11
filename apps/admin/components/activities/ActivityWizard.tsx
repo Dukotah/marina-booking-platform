@@ -90,6 +90,16 @@ function toWizardInput(values: ActivityFormValues): WizardInput {
       internal_only: r.internal_only,
       is_from_price: r.is_from_price,
       sort_index: 0,
+      // Per-head classes. The modifier is entered in dollars and converted to
+      // integer cents here (same contract as the rate price), so a child at "-25"
+      // becomes -2500. The server re-derives the final per-head price.
+      rate_classes: (r.rate_classes ?? []).map((c) => ({
+        id: c.id,
+        kind: c.kind,
+        label: c.label,
+        price_modifier_cents: toCents(Number(c.price_modifier_dollars) || 0),
+        is_active: c.is_active,
+      })),
     })),
   };
 }

@@ -84,12 +84,12 @@ export function ManifestUtilization({ rows }: { rows: ManifestRow[] }) {
                 {row.guides.map((g) => (
                   <span
                     key={g.assignmentId}
-                    className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-700"
+                    className="inline-flex items-center gap-1 rounded-full bg-accent-tint px-2 py-0.5 text-[11px] font-medium text-accent-ink"
                     title={g.guideEmail}
                   >
                     <UserRound className="h-3 w-3" aria-hidden />
                     {g.guideName || g.guideEmail}
-                    {/* Inherits sky-700; sky-400 on sky-50 was 1.98:1. (1.4.3) */}
+                    {/* Inherits accent-ink (teal-700) from the chip. (1.4.3) */}
                     {g.roleLabel ? <span> · {g.roleLabel}</span> : null}
                   </span>
                 ))}

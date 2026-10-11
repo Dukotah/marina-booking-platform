@@ -31,13 +31,13 @@ export function TaxesFeesReportView({ report }: TaxesFeesReportViewProps) {
     {
       id: 'name',
       header: 'Fee',
-      cell: (f) => <span className="font-medium text-slate-900">{f.name}</span>,
+      cell: (f) => <span className="font-medium text-ink">{f.name}</span>,
     },
     {
       id: 'type',
       header: 'Type',
       cell: (f) => (
-        <span className="inline-flex items-center gap-1 text-slate-600">
+        <span className="inline-flex items-center gap-1 text-ink-body">
           {f.type === 'PERCENT' ? (
             <Percent className="h-3.5 w-3.5" aria-hidden />
           ) : (
@@ -48,7 +48,7 @@ export function TaxesFeesReportView({ report }: TaxesFeesReportViewProps) {
       ),
     },
     { id: 'value', header: 'Value', align: 'right', cell: (f) => <span className="tabular-nums">{feeValueLabel(f)}</span> },
-    { id: 'scope', header: 'Applies to', cell: (f) => <span className="text-slate-600">{f.scope}</span> },
+    { id: 'scope', header: 'Applies to', cell: (f) => <span className="text-ink-body">{f.scope}</span> },
     {
       id: 'enabled',
       header: 'Status',
@@ -77,7 +77,7 @@ export function TaxesFeesReportView({ report }: TaxesFeesReportViewProps) {
           <CardTitle>Summary</CardTitle>
         </CardHeader>
         <CardContent>
-          <dl className="divide-y divide-slate-100 text-sm">
+          <dl className="divide-y divide-line text-sm">
             <Row label="Taxable base (net of discounts)" value={formatUSD(totals.taxableBaseCents)} />
             <Row label="Tax collected" value={formatUSD(totals.taxCents)} />
             <Row label="Processing fees" value={formatUSD(totals.processingFeeCents)} />
@@ -90,7 +90,7 @@ export function TaxesFeesReportView({ report }: TaxesFeesReportViewProps) {
 
       <Card>
         <CardHeader className="flex-row items-center gap-2">
-          <Settings2 className="h-4 w-4 text-slate-400" aria-hidden />
+          <Settings2 className="h-4 w-4 text-ink-muted" aria-hidden />
           <CardTitle>Configured fees</CardTitle>
         </CardHeader>
         <CardContent>
@@ -115,8 +115,8 @@ export function TaxesFeesReportView({ report }: TaxesFeesReportViewProps) {
 function Row({ label, value, muted }: { label: string; value: string; muted?: boolean }) {
   return (
     <div className="flex items-center justify-between py-2.5 first:pt-0 last:pb-0">
-      <dt className="text-slate-500">{label}</dt>
-      <dd className={muted ? 'tabular-nums text-slate-500' : 'tabular-nums font-medium text-slate-900'}>
+      <dt className="text-ink-muted">{label}</dt>
+      <dd className={muted ? 'tabular-nums text-ink-muted' : 'tabular-nums font-medium text-ink'}>
         {value}
       </dd>
     </div>

@@ -36,16 +36,65 @@ export async function createBooking(
   return mapApiOrder(data.order);
 }
 
-/** Fetch an order by its public order number (used on the confirmation page). */
-export async function getOrder(orderNumber: string): Promise<OrderSummary> {
+/** The shape returned by POST /api/public/gift-cards/purchase. */
+export interface GiftCardPurchaseResult {
+  giftCard: {
+    id: string;
+    code: string;
+    balanceCents: number;
+    status: string;
+    recipientEmail: string | null;
+  };
+  amountChargedCents: number;
+  emailSent: boolean;
+}
+
+/**
+ * Buy a gift card online. The server is the price authority: it re-derives the
+ * amount from its allowed denomination set, charges the card through the payment
+ * provider, issues the card for exactly the charged amount, and emails the code to
+ * the recipient. Always hits the real API (no demo fixture — gift cards are live
+ * stored value even in the showcase deployment). All money is integer cents.
+ */
+export async function purchaseGiftCard(payload: {
+  amountCents: number;
+  sourceId: string;
+  recipientEmail: string;
+  recipientName?: string;
+  purchaserEmail?: string;
+  purchaserName?: string;
+  message?: string;
+  idempotencyKey?: string;
+}): Promise<GiftCardPurchaseResult> {
+  return request<GiftCardPurchaseResult>('/api/public/gift-cards/purchase', {
+    method: 'POST',
+    body: payload,
+  });
+}
+
+/**
+ * Fetch an order by its public order number.
+ *
+ * The public API gates this on an identity proof: order numbers are enumerable, so
+ * the server only returns a guest's PII when the caller proves ownership with the
+ * email on the booking (the magic-link stub). Every customer-portal caller already
+ * has that email — the confirmation redirect carries it, and the account/lookup
+ * flows collect it — so pass it through. A missing/wrong email 404s identically to
+ * a missing order, so this never reveals which order numbers exist.
+ */
+export async function getOrder(orderNumber: string, email: string): Promise<OrderSummary> {
   if (DEMO_MODE) {
     const store = await import('./demo/store');
     const order = store.readDemoOrder(orderNumber);
-    if (!order) throw new ApiError('Order not found', 404, 'NOT_FOUND');
+    // Mirror the live API's identity gate in demo mode: same 404 for a missing
+    // order or a non-matching email, so behaviour (and the probing defence) match.
+    if (!order || order.customerEmail.trim().toLowerCase() !== email.trim().toLowerCase()) {
+      throw new ApiError('Order not found', 404, 'NOT_FOUND');
+    }
     return order;
   }
   const data = await request<{ order: ApiOrder }>(
-    `/api/orders/${encodeURIComponent(orderNumber)}`,
+    `/api/orders/${encodeURIComponent(orderNumber)}?email=${encodeURIComponent(email)}`,
   );
   return mapApiOrder(data.order);
 }
@@ -75,6 +124,66 @@ export async function rescheduleBooking(
       502,
       'NO_ORDER',
     );
+  }
+  return mapApiOrder(data.order);
+}
+
+/** Refund preview for the self-service cancel dialog (mirrors the API contract). */
+export interface CancellationPreview {
+  /** Tier percent (0-100) applied at "now". */
+  tierPercent: number;
+  /** Cents that would be refunded if the guest cancels now. */
+  refundCents: number;
+  /** Cancellation fee withheld (cents). */
+  feeCents: number;
+  /** Cents the guest has paid — the refund ceiling. */
+  amountPaidCents: number;
+  /** True while the guest may still self-cancel online; false => must call. */
+  withinSelfCancelWindow: boolean;
+  /** Self-cancel cutoff (hours before start) for the policy copy. */
+  selfCancelHours: number;
+}
+
+/**
+ * Read-only preview of what cancelling an order now would refund, and whether the
+ * guest is still inside the self-cancel window. Email-gated server-side (same gate
+ * as the cancel itself); a missing/wrong email 404s identically to a missing order.
+ */
+export async function getCancellationPreview(
+  orderNumber: string,
+  email: string,
+): Promise<CancellationPreview> {
+  if (DEMO_MODE) {
+    const store = await import('./demo/store');
+    return store.previewDemoCancellation(orderNumber, email);
+  }
+  const data = await request<{ preview: CancellationPreview }>(
+    `/api/orders/${encodeURIComponent(orderNumber)}/self-cancel?email=${encodeURIComponent(email)}`,
+  );
+  return data.preview;
+}
+
+/**
+ * Customer self-service cancel: cancel an upcoming booking. Identity is gated
+ * server-side by the email on the order (the magic-link stub), and the cancel must
+ * fall inside the activity's self-cancel window (too close to start -> the API 409s
+ * with SELF_CANCEL_WINDOW_CLOSED). On success the API issues the tiered refund and
+ * sends the cancellation email. Returns the updated order summary.
+ */
+export async function cancelBooking(
+  orderNumber: string,
+  payload: { email: string; reason?: string },
+): Promise<OrderSummary> {
+  if (DEMO_MODE) {
+    const store = await import('./demo/store');
+    return store.cancelDemoOrder(orderNumber, payload.email);
+  }
+  const data = await request<{ order: ApiOrder | null }>(
+    `/api/orders/${encodeURIComponent(orderNumber)}/self-cancel`,
+    { method: 'POST', body: payload },
+  );
+  if (!data.order) {
+    throw new ApiError('The cancel did not return an updated order.', 502, 'NO_ORDER');
   }
   return mapApiOrder(data.order);
 }

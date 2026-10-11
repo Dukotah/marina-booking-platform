@@ -36,11 +36,11 @@ export function UpcomingBookings({ bookings }: UpcomingBookingsProps) {
   }
 
   return (
-    <ul className="flex flex-col divide-y divide-slate-100">
+    <ul className="flex flex-col divide-y divide-line">
       {bookings.map((b) => (
         <li key={b.id} className="flex items-center gap-3 py-3 first:pt-0 last:pb-0">
           <span
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-900 text-xs font-semibold text-white"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-ink text-xs font-semibold text-white"
             aria-hidden
           >
             {initials(b.customerName)}
@@ -48,7 +48,7 @@ export function UpcomingBookings({ bookings }: UpcomingBookingsProps) {
 
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <span className="truncate text-sm font-medium text-slate-900">
+              <span className="truncate text-sm font-medium text-ink">
                 {b.customerName}
               </span>
               {b.waiverSigned ? (
@@ -57,16 +57,16 @@ export function UpcomingBookings({ bookings }: UpcomingBookingsProps) {
                 <Badge variant="warning">No waiver</Badge>
               )}
             </div>
-            <p className="mt-0.5 truncate text-sm text-slate-500">
+            <p className="mt-0.5 truncate text-sm text-ink-body">
               {b.activityName} · party of {b.quantity} · {b.orderNumber}
             </p>
           </div>
 
           <div className="shrink-0 text-right">
-            <div className="text-sm font-medium text-slate-900">
+            <div className="text-sm font-medium tabular-nums text-ink">
               {formatUSD(b.totalCents)}
             </div>
-            <div className="text-xs text-slate-400">{formatRelative(b.datetime)}</div>
+            <div className="text-xs text-ink-muted">{formatRelative(b.datetime)}</div>
           </div>
         </li>
       ))}

@@ -24,10 +24,13 @@ import {
   brandFromOperator,
   bookingFacts,
   loadOrderBundle,
+  loadCancellationFacts,
   unsignedWaiverLinks,
 } from './notification-data.js';
+import { formatUSD } from '@marina/core';
 import { sandboxEnabled, captureMessage } from './sandbox.js';
 import { captureError } from './errors.js';
+import { loadTemplateOverride, resolveSmsBody } from './message-templates.js';
 
 // ---------------------------------------------------------------------------
 // Twilio config resolution (per-operator Integration → env fallback)
@@ -264,15 +267,192 @@ export async function sendReminderSms(input: {
       ? `${shortDate(facts.slotDate, facts.timezone)} at ${facts.timeLabel}`
       : 'soon';
 
-    const body =
+    const defaultBody =
       `${brand.brandName} reminder: ${facts.activityName} is coming up — ${when}. ` +
       `Please arrive ~${lead} min early. Ref ${order.order_number}.`;
+
+    // Editable message templates: an operator may override the SMS copy for the
+    // reminder. A blank/missing/disabled override falls back to the default above.
+    const override = await loadTemplateOverride(db, 'BOOKING_REMINDER');
+    const { body } = resolveSmsBody({
+      defaultBody,
+      override,
+      facts: {
+        order_number: order.order_number,
+        activity: facts.activityName,
+        date: facts.dateLabel,
+        time: facts.timeLabel,
+        when,
+        lead_minutes: String(lead),
+        brand_name: brand.brandName,
+      },
+    });
 
     return sendSms(input.operatorId, order.customer.phone, body, 'reminder');
   } catch (err) {
     await captureError(err, {
       operatorId: input.operatorId,
       route: 'sms.sendReminderSms',
+      extra: { order_id: input.orderId },
+    });
+    return skipped('unexpected failure');
+  }
+}
+
+/**
+ * Text the customer that their booking was cancelled. The SMS twin of
+ * sendBookingCancellation — fire FIRE-AND-FORGET from the cancel path after
+ * commit. Reads the refund amount back off the ORDER_CANCELLED event so the text
+ * states what was refunded. Never throws; no-ops when the order/phone/cancel
+ * event is missing or the order isn't actually cancelled.
+ */
+export async function sendBookingCancellationSms(input: {
+  operatorId: string;
+  orderId: string;
+}): Promise<NotificationResult> {
+  try {
+    const db = forOperator(input.operatorId);
+    const order = await loadOrderBundle(db, input.orderId);
+    if (!order) return skipped('order not found');
+    if (order.status !== 'CANCELLED') return skipped(`order status is ${order.status}`);
+    if (!order.customer.phone) return skipped('customer has no phone');
+
+    const refund = await loadCancellationFacts(db, order.id);
+    if (!refund) return skipped('no cancellation event');
+
+    const brand = brandFromOperator(order.operator);
+    const facts = bookingFacts(order);
+    const when = facts.slotDate
+      ? `${shortDate(facts.slotDate, facts.timezone)} at ${facts.timeLabel}`
+      : 'your booking';
+    const refundLine =
+      refund.refundCents > 0
+        ? ` ${formatUSD(refund.refundCents)} has been refunded.`
+        : ' No refund was issued per the cancellation policy.';
+
+    const defaultBody =
+      `${brand.brandName}: your booking for ${facts.activityName} — ${when} — has been cancelled.` +
+      `${refundLine} Ref ${order.order_number}.`;
+
+    // Editable message templates: an operator may override the SMS copy for the
+    // cancellation. A blank/missing/disabled override falls back to the default.
+    const override = await loadTemplateOverride(db, 'BOOKING_CANCELLED');
+    const { body } = resolveSmsBody({
+      defaultBody,
+      override,
+      facts: {
+        order_number: order.order_number,
+        refund: formatUSD(refund.refundCents),
+        activity: facts.activityName,
+        date: facts.dateLabel,
+        time: facts.timeLabel,
+        when,
+        brand_name: brand.brandName,
+      },
+    });
+
+    return sendSms(input.operatorId, order.customer.phone, body, 'booking_cancelled');
+  } catch (err) {
+    await captureError(err, {
+      operatorId: input.operatorId,
+      route: 'sms.sendBookingCancellationSms',
+      extra: { order_id: input.orderId },
+    });
+    return skipped('unexpected failure');
+  }
+}
+
+/**
+ * Text the customer a refund receipt. The SMS twin of sendRefundReceipt — fire
+ * FIRE-AND-FORGET after a refund is recorded. Keyed on the payment (like the email
+ * twin) so the amount stated is exactly what was refunded. No-ops cleanly when the
+ * payment/phone is missing or nothing was refunded. Never throws.
+ */
+export async function sendRefundReceiptSms(input: {
+  operatorId: string;
+  paymentId: string;
+  /** Amount refunded in this action, integer cents. Defaults to the payment's refunded_cents. */
+  refundedCents?: number;
+  /** Reason shown to the customer. */
+  reason?: string;
+}): Promise<NotificationResult> {
+  try {
+    const db = forOperator(input.operatorId);
+    const payment = await db.payment.findUnique({
+      where: { id: input.paymentId },
+      include: { order: { include: { operator: true, customer: true } } },
+    });
+    if (!payment) return skipped('payment not found');
+
+    const order = payment.order;
+    if (!order.customer.phone) return skipped('customer has no phone');
+
+    const refundedCents = input.refundedCents ?? payment.refunded_cents;
+    if (refundedCents <= 0) return skipped('no refunded amount');
+
+    const brand = brandFromOperator(order.operator);
+
+    const defaultBody =
+      `${brand.brandName}: a refund of ${formatUSD(refundedCents)} has been issued ` +
+      `for order ${order.order_number}. It may take a few business days to appear.`;
+
+    // Editable message templates: an operator may override the SMS copy for the
+    // refund receipt. A blank/missing/disabled override falls back to the default.
+    const override = await loadTemplateOverride(db, 'REFUND_RECEIPT');
+    const { body } = resolveSmsBody({
+      defaultBody,
+      override,
+      facts: {
+        order_number: order.order_number,
+        refund: formatUSD(refundedCents),
+        reason: input.reason ?? 'Refund processed',
+        brand_name: brand.brandName,
+      },
+    });
+
+    return sendSms(input.operatorId, order.customer.phone, body, 'refund_receipt');
+  } catch (err) {
+    await captureError(err, {
+      operatorId: input.operatorId,
+      route: 'sms.sendRefundReceiptSms',
+      extra: { payment_id: input.paymentId },
+    });
+    return skipped('unexpected failure');
+  }
+}
+
+/**
+ * Text the customer a post-trip review request. The SMS twin of
+ * sendReviewRequest — fired from the review sweep. No-ops when the operator has
+ * no review_url configured or the customer has no phone. Never throws.
+ */
+export async function sendReviewRequestSms(input: {
+  operatorId: string;
+  orderId: string;
+}): Promise<NotificationResult> {
+  try {
+    const db = forOperator(input.operatorId);
+    const order = await loadOrderBundle(db, input.orderId);
+    if (!order) return skipped('order not found');
+    if (order.status === 'CANCELLED' || order.status === 'NO_SHOW') {
+      return skipped(`order status is ${order.status}`);
+    }
+    const reviewUrl = order.operator.review_url?.trim();
+    if (!reviewUrl) return skipped('operator has no review_url');
+    if (!order.customer.phone) return skipped('customer has no phone');
+
+    const brand = brandFromOperator(order.operator);
+    const facts = bookingFacts(order);
+
+    const body =
+      `${brand.brandName}: thanks for joining us for ${facts.activityName}! ` +
+      `We'd love your feedback — leave a review: ${reviewUrl}`;
+
+    return sendSms(input.operatorId, order.customer.phone, body, 'review_request');
+  } catch (err) {
+    await captureError(err, {
+      operatorId: input.operatorId,
+      route: 'sms.sendReviewRequestSms',
       extra: { order_id: input.orderId },
     });
     return skipped('unexpected failure');

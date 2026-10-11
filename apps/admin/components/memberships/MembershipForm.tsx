@@ -1,6 +1,7 @@
 'use client';
 
 import { useId, useState, useTransition } from 'react';
+import { Button, Input, Select, FieldLabel } from '../ui';
 import { createMembershipAction, updateMembershipAction, type ActionResult } from './actions';
 
 export type MembershipKind = 'SEASON_PASS' | 'PUNCH_CARD' | 'MEMBER_RATE';
@@ -71,7 +72,7 @@ export function MembershipForm({
 
   return (
     <form
-      className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"
+      className="rounded-lg border border-line bg-surface p-5 shadow-sm"
       action={(formData) =>
         startTransition(async () => {
           const r = isEdit
@@ -82,16 +83,14 @@ export function MembershipForm({
         })
       }
     >
-      <h2 className="text-base font-semibold text-slate-900">
+      <h2 className="text-base font-semibold text-ink">
         {isEdit ? 'Edit membership' : 'New membership'}
       </h2>
 
       <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div className="sm:col-span-2">
-          <label htmlFor={`${uid}-name`} className="block text-sm font-medium text-slate-700">
-            Name
-          </label>
-          <input
+          <FieldLabel htmlFor={`${uid}-name`}>Name</FieldLabel>
+          <Input
             id={`${uid}-name`}
             name="name"
             type="text"
@@ -99,12 +98,11 @@ export function MembershipForm({
             maxLength={160}
             defaultValue={values.name}
             placeholder="Season Pass 2026"
-            className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-500 focus:border-sky-600 focus:outline-none focus:ring-2 focus:ring-sky-600"
           />
         </div>
 
         <fieldset className="sm:col-span-2">
-          <legend className="text-sm font-medium text-slate-700">Type</legend>
+          <legend className="text-sm font-medium text-ink">Type</legend>
           <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:gap-6">
             {(Object.keys(KIND_HELP) as MembershipKind[]).map((k) => (
               <div key={k} className="flex items-start gap-2">
@@ -115,13 +113,13 @@ export function MembershipForm({
                   value={k}
                   checked={kind === k}
                   onChange={() => setKind(k)}
-                  className="mt-1 h-4 w-4 border-slate-400 text-sky-700 focus:ring-2 focus:ring-sky-600"
+                  className="mt-1 h-4 w-4 border-line text-accent focus:ring-2 focus:ring-focus"
                 />
-                <label htmlFor={`${uid}-kind-${k}`} className="text-sm text-slate-700">
-                  <span className="font-medium text-slate-900">
+                <label htmlFor={`${uid}-kind-${k}`} className="text-sm text-ink-body">
+                  <span className="font-medium text-ink">
                     {k === 'SEASON_PASS' ? 'Season pass' : k === 'PUNCH_CARD' ? 'Punch card' : 'Member rate'}
                   </span>
-                  <span className="block text-xs text-slate-600">{KIND_HELP[k]}</span>
+                  <span className="block text-xs text-ink-muted">{KIND_HELP[k]}</span>
                 </label>
               </div>
             ))}
@@ -129,10 +127,8 @@ export function MembershipForm({
         </fieldset>
 
         <div>
-          <label htmlFor={`${uid}-price`} className="block text-sm font-medium text-slate-700">
-            Price to buy (USD)
-          </label>
-          <input
+          <FieldLabel htmlFor={`${uid}-price`}>Price to buy (USD)</FieldLabel>
+          <Input
             id={`${uid}-price`}
             name="priceDollars"
             type="number"
@@ -140,32 +136,28 @@ export function MembershipForm({
             step="0.01"
             required
             defaultValue={(values.priceCents / 100).toFixed(2)}
-            className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-sky-600 focus:outline-none focus:ring-2 focus:ring-sky-600"
           />
-          <p className="mt-1 text-xs text-slate-600">Enter 0 for a membership you only ever comp.</p>
+          <p className="mt-1 text-xs text-ink-muted">Enter 0 for a membership you only ever comp.</p>
         </div>
 
         <div>
-          <label htmlFor={`${uid}-discount-type`} className="block text-sm font-medium text-slate-700">
-            Member discount is
-          </label>
-          <select
+          <FieldLabel htmlFor={`${uid}-discount-type`}>Member discount is</FieldLabel>
+          <Select
             id={`${uid}-discount-type`}
             name="discountType"
             value={discountType}
             onChange={(e) => setDiscountType(e.target.value as 'PERCENT' | 'FLAT')}
-            className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-sky-600 focus:outline-none focus:ring-2 focus:ring-sky-600"
           >
             <option value="PERCENT">A percentage off</option>
             <option value="FLAT">A dollar amount off</option>
-          </select>
+          </Select>
         </div>
 
         <div>
-          <label htmlFor={`${uid}-discount`} className="block text-sm font-medium text-slate-700">
+          <FieldLabel htmlFor={`${uid}-discount`}>
             {discountType === 'PERCENT' ? 'Percent off each booking' : 'Dollars off each booking'}
-          </label>
-          <input
+          </FieldLabel>
+          <Input
             id={`${uid}-discount`}
             name="discountValue"
             type="number"
@@ -174,24 +166,20 @@ export function MembershipForm({
             step={discountType === 'PERCENT' ? 1 : 0.01}
             required
             defaultValue={discountDefault}
-            className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-sky-600 focus:outline-none focus:ring-2 focus:ring-sky-600"
           />
         </div>
 
         <div>
-          <label htmlFor={`${uid}-duration`} className="block text-sm font-medium text-slate-700">
-            Valid for (days)
-          </label>
-          <input
+          <FieldLabel htmlFor={`${uid}-duration`}>Valid for (days)</FieldLabel>
+          <Input
             id={`${uid}-duration`}
             name="durationDays"
             type="number"
             min="1"
             step="1"
             defaultValue={values.durationDays ?? ''}
-            className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-sky-600 focus:outline-none focus:ring-2 focus:ring-sky-600"
           />
-          <p className="mt-1 text-xs text-slate-600">Leave blank for no expiry.</p>
+          <p className="mt-1 text-xs text-ink-muted">Leave blank for no expiry.</p>
         </div>
 
         {/*
@@ -201,10 +189,8 @@ export function MembershipForm({
         */}
         {kind === 'PUNCH_CARD' ? (
           <div>
-            <label htmlFor={`${uid}-uses`} className="block text-sm font-medium text-slate-700">
-              Number of launches
-            </label>
-            <input
+            <FieldLabel htmlFor={`${uid}-uses`}>Number of launches</FieldLabel>
+            <Input
               id={`${uid}-uses`}
               name="totalUses"
               type="number"
@@ -212,9 +198,8 @@ export function MembershipForm({
               step="1"
               required
               defaultValue={values.totalUses ?? 10}
-              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 focus:border-sky-600 focus:outline-none focus:ring-2 focus:ring-sky-600"
             />
-            <p className="mt-1 text-xs text-slate-600">One is spent per seat booked.</p>
+            <p className="mt-1 text-xs text-ink-muted">One is spent per seat booked.</p>
           </div>
         ) : null}
 
@@ -224,16 +209,16 @@ export function MembershipForm({
             name="isActive"
             type="checkbox"
             defaultChecked={values.isActive}
-            className="h-4 w-4 rounded border-slate-400 text-sky-700 focus:ring-2 focus:ring-sky-600"
+            className="h-4 w-4 rounded border-line text-accent accent-accent focus:ring-2 focus:ring-focus"
           />
-          <label htmlFor={`${uid}-active`} className="text-sm text-slate-700">
+          <label htmlFor={`${uid}-active`} className="text-sm text-ink-body">
             For sale on the customer site
           </label>
         </div>
       </div>
 
       {isEdit ? (
-        <p className="mt-4 rounded-md bg-slate-50 p-3 text-xs text-slate-700">
+        <p className="mt-4 rounded-lg bg-surface-muted p-3 text-xs text-ink-body">
           Changing the discount changes what current members pay from their next booking
           onward. Uses and expiry are fixed when a membership is issued, so existing
           holders keep the terms they bought.
@@ -241,13 +226,9 @@ export function MembershipForm({
       ) : null}
 
       <div className="mt-4 flex items-center gap-3">
-        <button
-          type="submit"
-          disabled={pending}
-          className="rounded-md bg-sky-700 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-800 focus:outline-none focus:ring-2 focus:ring-sky-600 focus:ring-offset-2 disabled:opacity-70"
-        >
+        <Button type="submit" disabled={pending}>
           {pending ? 'Saving…' : isEdit ? 'Save changes' : 'Create membership'}
-        </button>
+        </Button>
       </div>
 
       {/*
@@ -257,10 +238,10 @@ export function MembershipForm({
       */}
       <div aria-live="polite" className="mt-3 min-h-[1.25rem]">
         {result?.ok ? (
-          <p className="text-sm text-emerald-800">{result.message ?? 'Saved.'}</p>
+          <p className="text-sm text-emerald-700">{result.message ?? 'Saved.'}</p>
         ) : null}
         {result && !result.ok ? (
-          <p role="alert" className="text-sm text-red-700">
+          <p role="alert" className="text-sm text-rose-700">
             {result.error}
           </p>
         ) : null}

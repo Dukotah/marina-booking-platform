@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
+import { Button } from '../ui';
 import { revokeHoldingAction } from './actions';
 
 /**
@@ -30,18 +31,18 @@ export function RevokeButton({
   if (!confirming) {
     return (
       <div className="flex items-center justify-end gap-2">
-        <button
-          type="button"
+        <Button
+          variant="secondary"
+          size="sm"
           onClick={() => {
             setError(null);
             setConfirming(true);
           }}
-          className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-sky-600"
         >
           Revoke<span className="sr-only"> {holderName}’s membership</span>
-        </button>
+        </Button>
         {error ? (
-          <span role="alert" className="text-xs text-red-700">
+          <span role="alert" className="text-xs text-rose-700">
             {error}
           </span>
         ) : null}
@@ -51,8 +52,9 @@ export function RevokeButton({
 
   return (
     <div className="flex items-center justify-end gap-2">
-      <button
-        type="button"
+      <Button
+        variant="danger"
+        size="sm"
         autoFocus
         disabled={pending}
         onClick={() =>
@@ -66,19 +68,13 @@ export function RevokeButton({
             }
           })
         }
-        className="rounded-md bg-red-700 px-2.5 py-1 text-xs font-semibold text-white hover:bg-red-800 focus:outline-none focus:ring-2 focus:ring-red-700 focus:ring-offset-2 disabled:opacity-70"
       >
         {pending ? 'Revoking…' : 'Confirm'}
         <span className="sr-only"> revoking {holderName}’s membership</span>
-      </button>
-      <button
-        type="button"
-        disabled={pending}
-        onClick={() => setConfirming(false)}
-        className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-sky-600"
-      >
+      </Button>
+      <Button variant="secondary" size="sm" disabled={pending} onClick={() => setConfirming(false)}>
         Cancel
-      </button>
+      </Button>
     </div>
   );
 }

@@ -83,7 +83,7 @@ export default async function CustomersPage({ searchParams }: CustomersPageProps
       <PageHeader title="Customers" description={description} actions={<CustomerSearch />} />
       <CustomerTable rows={rows} isFiltered={Boolean(query)} />
       {rows.length === 200 && !query ? (
-        <p className="mt-3 text-xs text-slate-400">
+        <p className="mt-3 text-xs text-ink-muted">
           Showing the top 200 by lifetime value. Use search to find a specific customer.
         </p>
       ) : null}

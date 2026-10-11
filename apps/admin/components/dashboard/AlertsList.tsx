@@ -16,11 +16,11 @@ interface AlertStyle {
 const STYLES: Record<DashboardAlert['kind'], AlertStyle> = {
   UNSIGNED_WAIVER: {
     icon: FileWarning,
-    iconWrap: 'bg-amber-100 text-amber-700',
+    iconWrap: 'bg-amber-50 text-amber-700',
   },
   LOW_CAPACITY: {
     icon: Users,
-    iconWrap: 'bg-sky-100 text-sky-700',
+    iconWrap: 'bg-amber-50 text-amber-700',
   },
 };
 
@@ -41,11 +41,11 @@ export function AlertsList({ alerts }: AlertsListProps) {
   }
 
   return (
-    <ul className="flex flex-col divide-y divide-slate-100">
+    <ul className="flex flex-col divide-y divide-line">
       {alerts.map((a) => {
         const style = STYLES[a.kind] ?? {
           icon: AlertTriangle,
-          iconWrap: 'bg-slate-100 text-slate-600',
+          iconWrap: 'bg-surface-muted text-ink-body',
         };
         const Icon = style.icon;
         return (
@@ -58,12 +58,12 @@ export function AlertsList({ alerts }: AlertsListProps) {
             </span>
             <div className="min-w-0 flex-1">
               <div className="flex items-center justify-between gap-2">
-                <span className="text-sm font-medium text-slate-900">{a.title}</span>
-                <span className="shrink-0 text-xs text-slate-400">
+                <span className="text-sm font-medium text-ink">{a.title}</span>
+                <span className="shrink-0 text-xs text-ink-muted">
                   {formatRelative(a.at)}
                 </span>
               </div>
-              <p className="mt-0.5 truncate text-sm text-slate-500">{a.detail}</p>
+              <p className="mt-0.5 truncate text-sm text-ink-body">{a.detail}</p>
             </div>
           </li>
         );

@@ -42,18 +42,20 @@ export default async function SettingsHubPage() {
 
       <Link
         href="/onboarding"
-        className="mb-6 flex items-center justify-between gap-4 rounded-xl border border-slate-900 bg-slate-900 px-5 py-4 text-white transition-colors hover:bg-slate-800"
+        className="mb-6 flex min-h-11 items-center justify-between gap-4 rounded-lg border border-line bg-surface px-5 py-4 shadow-sm transition-colors hover:border-accent hover:bg-accent-tint"
       >
         <span className="flex items-center gap-3">
-          <Sparkles className="h-5 w-5 shrink-0" aria-hidden />
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent-tint text-accent-ink">
+            <Sparkles className="h-5 w-5 shrink-0" aria-hidden />
+          </span>
           <span>
-            <span className="block text-sm font-semibold">Guided setup</span>
-            <span className="block text-xs text-slate-300">
+            <span className="block text-sm font-semibold text-ink">Guided setup</span>
+            <span className="block text-xs text-ink-body">
               Walk through branding, your first location, and activities in a few minutes.
             </span>
           </span>
         </span>
-        <ChevronRight className="h-5 w-5 shrink-0" aria-hidden />
+        <ChevronRight className="h-5 w-5 shrink-0 text-ink-muted" aria-hidden />
       </Link>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -64,21 +66,21 @@ export default async function SettingsHubPage() {
             <Link
               key={tab.href}
               href={tab.href}
-              className="group flex items-start gap-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition-colors hover:border-slate-300 hover:bg-slate-50"
+              className="group flex items-start gap-4 rounded-lg border border-line bg-surface p-5 shadow-sm transition-colors hover:border-accent hover:bg-accent-tint"
             >
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-700 group-hover:bg-slate-200">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-surface-muted text-ink-body group-hover:bg-surface group-hover:text-accent-ink">
                 <Icon className="h-5 w-5" aria-hidden />
               </span>
               <span className="min-w-0">
                 <span className="flex items-center gap-2">
-                  <span className="text-sm font-semibold text-slate-900">{tab.label}</span>
+                  <span className="text-sm font-semibold text-ink">{tab.label}</span>
                   {count ? (
-                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500">
+                    <span className="rounded-full bg-surface-muted px-2 py-0.5 text-[11px] font-medium text-ink-body">
                       {count}
                     </span>
                   ) : null}
                 </span>
-                <span className="mt-0.5 block text-xs text-slate-500">{tab.description}</span>
+                <span className="mt-0.5 block text-xs text-ink-body">{tab.description}</span>
               </span>
             </Link>
           );

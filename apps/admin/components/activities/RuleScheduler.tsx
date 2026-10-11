@@ -57,6 +57,16 @@ export interface RuleSchedulerProps {
   boatCapacity: number;
   /** Today, YYYY-MM-DD, in the activity's operating timezone. */
   today: string;
+  /**
+   * Which kind the "Add a schedule" form opens on. Rental marina boats default
+   * to 'rental' (an open rental window); tour boats to 'departures'. The operator
+   * can flip the per-rule toggle either way regardless of this default.
+   */
+  defaultKind: 'rental' | 'departures';
+  /** The boat's configured rental open edge (minutes since midnight), if any. */
+  defaultOpenMinute: number | null;
+  /** The boat's configured rental close edge (minutes since midnight), if any. */
+  defaultCloseMinute: number | null;
   rules: RuleView[];
   blackouts: BlackoutGroupView[];
   copyOptions: CopyOption[];
@@ -213,11 +223,25 @@ export function RuleScheduler(props: RuleSchedulerProps) {
                       ) : null}
                     </p>
                     <p className="mt-0.5 text-sm text-slate-600">
-                      Runs {seasonDate(rule.startDate, props.today)} to{' '}
-                      {seasonDate(rule.endDate, props.today)}, {weekdayPhrase(rule.weekdays)},
-                      departing at {listPhrase(rule.startMinutes.map(timeLabel))} — up to{' '}
-                      {rule.capacity ?? props.boatCapacity} guests
-                      {rule.capacity === null ? ' (the boat’s capacity)' : ''}.
+                      {rule.kind === 'rental' &&
+                      rule.openMinute !== null &&
+                      rule.closeMinute !== null ? (
+                        <>
+                          Rentable {weekdayPhrase(rule.weekdays)} {timeLabel(rule.openMinute)}–
+                          {timeLabel(rule.closeMinute)}, {seasonDate(rule.startDate, props.today)} to{' '}
+                          {seasonDate(rule.endDate, props.today)} — up to{' '}
+                          {rule.capacity ?? props.boatCapacity} guests
+                          {rule.capacity === null ? ' (the boat’s capacity)' : ''}.
+                        </>
+                      ) : (
+                        <>
+                          Runs {seasonDate(rule.startDate, props.today)} to{' '}
+                          {seasonDate(rule.endDate, props.today)}, {weekdayPhrase(rule.weekdays)},
+                          departing at {listPhrase(rule.startMinutes.map(timeLabel))} — up to{' '}
+                          {rule.capacity ?? props.boatCapacity} guests
+                          {rule.capacity === null ? ' (the boat’s capacity)' : ''}.
+                        </>
+                      )}
                     </p>
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
@@ -303,6 +327,9 @@ export function RuleScheduler(props: RuleSchedulerProps) {
             activityId={props.activityId}
             boatCapacity={props.boatCapacity}
             today={props.today}
+            defaultKind={props.defaultKind}
+            defaultOpenMinute={props.defaultOpenMinute}
+            defaultCloseMinute={props.defaultCloseMinute}
             initial={mode.kind === 'edit' ? mode.rule : null}
             ruleCount={props.rules.length}
             onCancel={() => setMode({ kind: 'closed' })}
@@ -349,10 +376,20 @@ function IconButton({
 /** Selectable departure times: every half hour, 5:00 AM – 9:30 PM. */
 const TIME_OPTIONS = Array.from({ length: 34 }, (_, i) => 5 * 60 + i * 30);
 
+/** Selectable OPEN edges for a rental window: every half hour, 5:00 AM – 9:30 PM. */
+const OPEN_OPTIONS = TIME_OPTIONS;
+/** Selectable CLOSE edges: every half hour, 5:30 AM – 12:00 AM (midnight = 1440). */
+const CLOSE_OPTIONS = Array.from({ length: 38 }, (_, i) => 5 * 60 + 30 + i * 30);
+
+type RuleKind = 'rental' | 'departures';
+
 interface RuleFormProps {
   activityId: string;
   boatCapacity: number;
   today: string;
+  defaultKind: RuleKind;
+  defaultOpenMinute: number | null;
+  defaultCloseMinute: number | null;
   initial: RuleView | null;
   ruleCount: number;
   onCancel: () => void;
@@ -360,6 +397,8 @@ interface RuleFormProps {
 }
 
 function RuleForm(props: RuleFormProps) {
+  // An edited rule keeps its own kind; a brand-new one opens on the boat's default.
+  const [kind, setKind] = useState<RuleKind>(props.initial?.kind ?? props.defaultKind);
   const [name, setName] = useState(props.initial?.name ?? '');
   const [startDate, setStartDate] = useState(props.initial?.startDate ?? props.today);
   const [endDate, setEndDate] = useState(
@@ -368,26 +407,46 @@ function RuleForm(props: RuleFormProps) {
   const [weekdays, setWeekdays] = useState<number[]>(props.initial?.weekdays ?? [1, 2, 3, 4, 5]);
   const [times, setTimes] = useState<number[]>(props.initial?.startMinutes ?? []);
   const [timeToAdd, setTimeToAdd] = useState(9 * 60);
+  // Rental window edges. Seed from the edited rule, else the boat's configured
+  // window, else a friendly 8 AM – 8 PM.
+  const [openMinute, setOpenMinute] = useState<number>(
+    props.initial?.openMinute ?? props.defaultOpenMinute ?? 8 * 60,
+  );
+  const [closeMinute, setCloseMinute] = useState<number>(
+    props.initial?.closeMinute ?? props.defaultCloseMinute ?? 20 * 60,
+  );
   const [capacity, setCapacity] = useState<number | null>(props.initial?.capacity ?? null);
   const [showCapacity, setShowCapacity] = useState(props.initial?.capacity != null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isSaving, startSaving] = useTransition();
 
+  const isRental = kind === 'rental';
+
   const draft: RuleInput = useMemo(
     () => ({
       id: props.initial?.id,
+      kind,
       name: name.trim() || 'Schedule',
       startDate,
       endDate,
       weekdays,
-      startMinutes: times,
+      // Only the active shape carries values; the server normalizes the rest to
+      // null/[] so a saved row is never half rental, half departures.
+      startMinutes: isRental ? [] : times,
+      openMinute: isRental ? openMinute : null,
+      closeMinute: isRental ? closeMinute : null,
       capacity,
       isActive: props.initial?.isActive ?? true,
     }),
-    [props.initial, name, startDate, endDate, weekdays, times, capacity],
+    [props.initial, kind, isRental, name, startDate, endDate, weekdays, times, openMinute, closeMinute, capacity],
   );
 
-  const complete = weekdays.length > 0 && times.length > 0 && endDate >= startDate;
+  const windowOk = !isRental || closeMinute > openMinute;
+  const complete =
+    weekdays.length > 0 &&
+    endDate >= startDate &&
+    windowOk &&
+    (isRental ? true : times.length > 0);
 
   function toggleWeekday(day: number) {
     setWeekdays((prev) =>
@@ -414,6 +473,12 @@ function RuleForm(props: RuleFormProps) {
   }
 
   function suggestedName(): string {
+    if (isRental) {
+      return `Rentable ${weekdayPhrase(weekdays)} ${timeLabel(openMinute)}–${timeLabel(closeMinute)}`.slice(
+        0,
+        80,
+      );
+    }
     return `${weekdayPhrase(weekdays)} at ${listPhrase(times.map(timeLabel))}`.slice(0, 80);
   }
 
@@ -425,8 +490,9 @@ function RuleForm(props: RuleFormProps) {
             {props.initial ? `Edit “${props.initial.name}”` : 'New repeating schedule'}
           </h3>
           <p className="mt-0.5 text-sm text-slate-600">
-            Fill in the pattern and watch the two-week preview below — nothing changes until you
-            press save.
+            {isRental
+              ? 'Set the days and the hours this boat is rentable. Nothing changes until you press save.'
+              : 'Fill in the pattern and watch the two-week preview below — nothing changes until you press save.'}
           </p>
         </div>
         <button
@@ -440,6 +506,24 @@ function RuleForm(props: RuleFormProps) {
       </div>
 
       <div className="mt-4 space-y-4">
+        <fieldset>
+          <legend className="text-sm font-medium text-slate-700">What kind of schedule</legend>
+          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+            <KindCard
+              selected={isRental}
+              onClick={() => setKind('rental')}
+              title="Open rental window"
+              body="The boat is rentable for any stretch between an open and a close time — pick from, say, 8 AM to 8 PM."
+            />
+            <KindCard
+              selected={!isRental}
+              onClick={() => setKind('departures')}
+              title="Scheduled departures"
+              body="The boat leaves at set times — a tour at 9 AM, 12 PM and 3 PM. Guests book a departure."
+            />
+          </div>
+        </fieldset>
+
         <div className="grid gap-4 sm:grid-cols-3">
           <Field
             label="Name"
@@ -473,7 +557,9 @@ function RuleForm(props: RuleFormProps) {
         <fieldset>
           <legend className="text-sm font-medium text-slate-700">On these days</legend>
           <p className="mt-0.5 text-xs text-slate-500">
-            Which days of the week get these departures.
+            {isRental
+              ? 'Which days of the week this boat can be rented.'
+              : 'Which days of the week get these departures.'}
           </p>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             {WEEKDAY_ORDER.map((day) => {
@@ -505,7 +591,54 @@ function RuleForm(props: RuleFormProps) {
           ) : null}
         </fieldset>
 
-        <fieldset>
+        {isRental ? (
+          <fieldset>
+            <legend className="text-sm font-medium text-slate-700">Rentable hours</legend>
+            <p className="mt-0.5 text-xs text-slate-500">
+              The boat is open for rental any time between these two — guests pick how long.
+            </p>
+            <div className="mt-2 flex flex-wrap items-end gap-3">
+              <Field label="Open time">
+                <Select
+                  aria-label="Open time"
+                  value={openMinute}
+                  onChange={(e) => {
+                    const next = Number(e.target.value);
+                    setOpenMinute(next);
+                    if (closeMinute <= next) {
+                      const bumped = CLOSE_OPTIONS.find((m) => m > next);
+                      if (bumped) setCloseMinute(bumped);
+                    }
+                  }}
+                  className="w-auto"
+                >
+                  {OPEN_OPTIONS.map((m) => (
+                    <option key={m} value={m}>
+                      {timeLabel(m)}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <span className="mb-2 text-sm text-slate-500">to</span>
+              <Field label="Close time" error={closeMinute <= openMinute ? 'After the open time.' : errors.closeMinute}>
+                <Select
+                  aria-label="Close time"
+                  value={closeMinute}
+                  invalid={closeMinute <= openMinute}
+                  onChange={(e) => setCloseMinute(Number(e.target.value))}
+                  className="w-auto"
+                >
+                  {CLOSE_OPTIONS.map((m) => (
+                    <option key={m} value={m}>
+                      {m === 24 * 60 ? '12:00 AM (midnight)' : timeLabel(m)}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            </div>
+          </fieldset>
+        ) : (
+          <fieldset>
           <legend className="text-sm font-medium text-slate-700">Departing at</legend>
           <p className="mt-0.5 text-xs text-slate-500">
             Each time becomes a bookable departure on every day picked above.
@@ -550,12 +683,13 @@ function RuleForm(props: RuleFormProps) {
           {times.length === 0 ? (
             <p className="mt-1.5 text-sm text-rose-700">Add at least one departure time.</p>
           ) : null}
-        </fieldset>
+          </fieldset>
+        )}
 
         <div>
           {!showCapacity ? (
             <p className="text-sm text-slate-600">
-              Each departure holds up to{' '}
+              {isRental ? 'This boat holds up to ' : 'Each departure holds up to '}
               <span className="font-semibold text-slate-900">{props.boatCapacity} guests</span> —
               the boat&rsquo;s capacity.{' '}
               <button
@@ -572,7 +706,7 @@ function RuleForm(props: RuleFormProps) {
           ) : (
             <div className="flex flex-wrap items-end gap-3">
               <Field
-                label="Guests per departure"
+                label={isRental ? 'Guests on board' : 'Guests per departure'}
                 hint="Only for this schedule — the boat itself is unchanged."
               >
                 <TextInput
@@ -598,7 +732,19 @@ function RuleForm(props: RuleFormProps) {
           )}
         </div>
 
-        <LivePreview activityId={props.activityId} draft={draft} enabled={complete} />
+        {isRental ? (
+          <RentalSummary
+            weekdays={weekdays}
+            openMinute={openMinute}
+            closeMinute={closeMinute}
+            startDate={startDate}
+            endDate={endDate}
+            today={props.today}
+            enabled={complete}
+          />
+        ) : (
+          <LivePreview activityId={props.activityId} draft={draft} enabled={complete} />
+        )}
 
         <div className="flex items-center gap-2 border-t border-slate-200 pt-4">
           <button
@@ -618,7 +764,9 @@ function RuleForm(props: RuleFormProps) {
             Cancel
           </button>
           <p className="ml-auto hidden text-xs text-slate-500 sm:block">
-            Saving fills the next 60 days and keeps them topped up.
+            {isRental
+              ? 'Saving opens these rentable hours on the week view below.'
+              : 'Saving fills the next 60 days and keeps them topped up.'}
           </p>
         </div>
       </div>
@@ -635,6 +783,82 @@ function QuickPick({ label, onClick }: { label: string; onClick: () => void }) {
     >
       {label}
     </button>
+  );
+}
+
+/** The two-up "which kind of schedule" selector card. Teal accent when chosen. */
+function KindCard({
+  selected,
+  onClick,
+  title,
+  body,
+}: {
+  selected: boolean;
+  onClick: () => void;
+  title: string;
+  body: string;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={selected}
+      onClick={onClick}
+      className={cn(
+        'flex min-h-[44px] flex-col items-start gap-1 rounded-lg border p-3 text-left transition-colors',
+        selected
+          ? 'border-accent bg-accent-tint ring-2 ring-accent/30'
+          : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50',
+      )}
+    >
+      <span className={cn('text-sm font-semibold', selected ? 'text-accent-ink' : 'text-slate-800')}>
+        {title}
+      </span>
+      <span className="text-xs text-slate-500">{body}</span>
+    </button>
+  );
+}
+
+/**
+ * Plain-language confirmation for a rental window, standing in for the departure
+ * preview grid (a rental rule generates no fixed departures to draw). Reads like
+ * "Rentable every day 8:00 AM–8:00 PM, Jun 1–Sep 30."
+ */
+function RentalSummary({
+  weekdays,
+  openMinute,
+  closeMinute,
+  startDate,
+  endDate,
+  today,
+  enabled,
+}: {
+  weekdays: number[];
+  openMinute: number;
+  closeMinute: number;
+  startDate: string;
+  endDate: string;
+  today: string;
+  enabled: boolean;
+}) {
+  if (!enabled) {
+    return (
+      <div className="rounded-lg border border-dashed border-slate-300 bg-white p-4 text-sm text-slate-500">
+        Pick the days and the open/close hours — the rentable-window summary appears here.
+      </div>
+    );
+  }
+  const closeLabel = closeMinute === 24 * 60 ? '12:00 AM' : timeLabel(closeMinute);
+  return (
+    <div className="rounded-lg border border-accent/30 bg-accent-tint p-4" aria-live="polite">
+      <p className="text-sm font-medium text-accent-ink">
+        Rentable {weekdayPhrase(weekdays)} {timeLabel(openMinute)}–{closeLabel},{' '}
+        {seasonDate(startDate, today)}–{seasonDate(endDate, today)}.
+      </p>
+      <p className="mt-1 text-xs text-slate-600">
+        Guests can book any stretch inside these hours. The week view below shades every
+        rentable hour as soon as you save.
+      </p>
+    </div>
   );
 }
 
@@ -704,7 +928,7 @@ function LivePreview({
         <LegendDot className="bg-amber-400" label="will come off" />
         <LegendDot className="bg-rose-400" label="closed day" />
         {preview?.protectedCount ? (
-          <span className="text-sky-700">
+          <span className="text-accent">
             {preview.protectedCount} booked departure{preview.protectedCount === 1 ? '' : 's'} will
             be left exactly as {preview.protectedCount === 1 ? 'it is' : 'they are'}.
           </span>
@@ -766,7 +990,7 @@ function PreviewGrid({ days, dimmed }: { days: PreviewDay[]; dimmed: boolean }) 
                       t.kind === 'create' && 'bg-emerald-100 text-emerald-800',
                       t.kind === 'exists' && 'bg-slate-100 text-slate-600',
                       t.kind === 'removed' && 'bg-amber-100 text-amber-800 line-through',
-                      t.kind === 'booked' && 'bg-sky-100 text-sky-800',
+                      t.kind === 'booked' && 'bg-accent-tint text-accent-ink',
                       t.kind === 'closed' && 'bg-slate-100 text-slate-400 line-through',
                     )}
                     title={
@@ -929,7 +1153,7 @@ function BlackoutPanel({
                     'ml-2 rounded-full border px-2 py-0.5 text-[11px] font-medium',
                     group.scope === 'operator'
                       ? 'border-slate-300 bg-slate-100 text-slate-600'
-                      : 'border-sky-200 bg-sky-50 text-sky-700',
+                      : 'border-accent bg-accent-tint text-accent-ink',
                   )}
                 >
                   {group.scope === 'operator' ? 'Whole marina' : 'This boat'}

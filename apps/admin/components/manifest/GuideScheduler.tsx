@@ -101,19 +101,18 @@ export function GuideScheduler({
                   {slot.guides.map((g) => (
                     <span
                       key={g.assignmentId}
-                      className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-700"
+                      className="inline-flex items-center gap-1 rounded-full bg-accent-tint px-2 py-0.5 text-[11px] font-medium text-accent-ink"
                     >
                       {g.guideName || g.guideEmail}
-                      {/* The role suffix inherits sky-700 from the chip. It used to be
-                          sky-400 on sky-50 — 1.98:1. The "·" carries the separation
-                          that the lighter colour used to. (1.4.3) */}
+                      {/* The role suffix inherits accent-ink (teal-700) from the chip.
+                          The "·" carries the separation visually. (1.4.3) */}
                       {g.roleLabel ? <span> · {g.roleLabel}</span> : null}
                       <button
                         type="button"
                         disabled={isPending}
                         aria-label={`Remove ${g.guideName || g.guideEmail} from ${slotLabel}`}
                         onClick={() => run(() => unassignGuideAction(g.assignmentId))}
-                        className="ml-0.5 rounded-full p-0.5 hover:bg-sky-100 disabled:opacity-50"
+                        className="ml-0.5 rounded-full p-0.5 hover:bg-teal-100 disabled:opacity-50"
                       >
                         <X className="h-3 w-3" aria-hidden />
                       </button>
@@ -131,7 +130,7 @@ export function GuideScheduler({
                     onChange={(e) =>
                       setSelectedGuide((prev) => ({ ...prev, [slot.timeslotId]: e.target.value }))
                     }
-                    className="rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-700"
+                    className="rounded-lg border border-line px-2 py-1 text-xs text-ink"
                   >
                     <option value="">Add guide…</option>
                     {roster.map((g) => (
@@ -155,7 +154,7 @@ export function GuideScheduler({
                       });
                     }}
                     aria-label={`Assign the selected guide to ${slotLabel}`}
-                    className="inline-flex items-center gap-1 rounded-md bg-sky-700 px-2.5 py-1 text-xs font-semibold text-white hover:bg-sky-800 disabled:opacity-40"
+                    className="inline-flex items-center gap-1 rounded-lg bg-accent px-2.5 py-1 text-xs font-semibold text-white hover:bg-accent-hover disabled:opacity-40"
                   >
                     <UserPlus className="h-3.5 w-3.5" aria-hidden /> Assign
                   </button>

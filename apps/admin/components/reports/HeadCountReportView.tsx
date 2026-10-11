@@ -59,7 +59,7 @@ export function HeadCountReportView({ report }: HeadCountReportViewProps) {
           <CardContent className="overflow-x-auto">
             <table className="w-full border-collapse text-sm">
               <thead>
-                <tr className="border-b border-slate-200 text-xs font-medium uppercase tracking-wide text-slate-500">
+                <tr className="border-b border-line text-xs font-medium uppercase tracking-wide text-ink-muted">
                   <th className={CELL_LEFT}>Activity</th>
                   <th className={CELL}>Guests</th>
                   <th className={CELL}>Bookings</th>
@@ -68,9 +68,9 @@ export function HeadCountReportView({ report }: HeadCountReportViewProps) {
               </thead>
               <tbody>
                 {report.byActivity.map((a) => (
-                  <tr key={a.activityId} className="border-t border-slate-50">
+                  <tr key={a.activityId} className="border-t border-line">
                     <td className={CELL_LEFT}>
-                      <span className="flex items-center gap-2 font-medium text-slate-800">
+                      <span className="flex items-center gap-2 font-medium text-ink">
                         <span
                           className="h-2.5 w-2.5 shrink-0 rounded-full"
                           style={{ backgroundColor: a.color }}
@@ -79,12 +79,12 @@ export function HeadCountReportView({ report }: HeadCountReportViewProps) {
                         {a.activityName}
                       </span>
                     </td>
-                    <td className={`${CELL} text-slate-700`}>{formatNumber(a.guests)}</td>
-                    <td className={`${CELL} text-slate-700`}>{formatNumber(a.bookings)}</td>
-                    <td className={`${CELL} text-slate-500`}>{a.avgPartySize.toFixed(1)}</td>
+                    <td className={`${CELL} text-ink-body`}>{formatNumber(a.guests)}</td>
+                    <td className={`${CELL} text-ink-body`}>{formatNumber(a.bookings)}</td>
+                    <td className={`${CELL} text-ink-muted`}>{a.avgPartySize.toFixed(1)}</td>
                   </tr>
                 ))}
-                <tr className="border-t-2 border-slate-200 font-semibold text-slate-900">
+                <tr className="border-t-2 border-line font-semibold text-ink">
                   <td className={CELL_LEFT}>Total</td>
                   <td className={CELL}>{formatNumber(report.totals.guests)}</td>
                   <td className={CELL}>{formatNumber(report.totals.bookings)}</td>
@@ -103,7 +103,7 @@ export function HeadCountReportView({ report }: HeadCountReportViewProps) {
             <div className="max-h-[420px] overflow-y-auto">
               <table className="w-full border-collapse text-sm">
                 <thead>
-                  <tr className="border-b border-slate-200 text-xs font-medium uppercase tracking-wide text-slate-500">
+                  <tr className="border-b border-line text-xs font-medium uppercase tracking-wide text-ink-muted">
                     <th className={CELL_LEFT}>Date</th>
                     <th className={CELL}>Guests</th>
                     <th className={CELL}>Bookings</th>
@@ -111,12 +111,12 @@ export function HeadCountReportView({ report }: HeadCountReportViewProps) {
                 </thead>
                 <tbody>
                   {report.daily.map((d) => (
-                    <tr key={d.date} className="border-t border-slate-50">
-                      <td className={`${CELL_LEFT} tabular-nums text-slate-600`}>{d.date}</td>
-                      <td className={`${CELL} ${d.guests ? 'text-slate-800' : 'text-slate-300'}`}>
+                    <tr key={d.date} className="border-t border-line">
+                      <td className={`${CELL_LEFT} tabular-nums text-ink-body`}>{d.date}</td>
+                      <td className={`${CELL} ${d.guests ? 'text-ink' : 'text-ink-muted'}`}>
                         {formatNumber(d.guests)}
                       </td>
-                      <td className={`${CELL} ${d.bookings ? 'text-slate-700' : 'text-slate-300'}`}>
+                      <td className={`${CELL} ${d.bookings ? 'text-ink-body' : 'text-ink-muted'}`}>
                         {formatNumber(d.bookings)}
                       </td>
                     </tr>

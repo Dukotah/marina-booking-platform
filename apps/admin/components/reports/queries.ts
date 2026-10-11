@@ -8,6 +8,9 @@ import {
   resolveDateBasis,
   rollUpByLocation,
   summarizePayments,
+  aggregateRefunds,
+  type RefundRow,
+  type RefundsReport,
   type AllocatedLine,
   type DateBasis,
   type Delta,
@@ -1142,6 +1145,84 @@ async function buildHeadCountReport(
 }
 
 // ---------------------------------------------------------------------------
+// Refunds-by-reason report (REFUND OrderEvents, grouped by metadata.reason)
+// ---------------------------------------------------------------------------
+
+/**
+ * Narrow an OrderEvent.metadata JSON blob to the refund fields we read. The
+ * REFUND event is written in orders/actions with `{ amountCents, reason }`
+ * (plus paymentId/fullRefund we don't need here); defensive against any older
+ * or malformed row.
+ */
+function readRefundMetadata(metadata: unknown): { amountCents: number; reason: string | null } {
+  const m = (metadata ?? {}) as Record<string, unknown>;
+  const amountCents = typeof m.amountCents === 'number' && Number.isInteger(m.amountCents) ? m.amountCents : 0;
+  const reason = typeof m.reason === 'string' ? m.reason : null;
+  return { amountCents, reason };
+}
+
+export interface RefundsTabReport extends RefundsReport {
+  range: DateRange;
+}
+
+/**
+ * Refunds-by-reason: aggregate REFUND OrderEvents over the range, grouped by
+ * the free-text reason captured on the event metadata (and, in parallel, by the
+ * activity each refunded order belongs to). The reason already lives on the
+ * event — no schema change. Each refund is attributed to its order's seat-line
+ * activity (the first non-add-on item); orders with no seat line fall into an
+ * "Unassigned" bucket rather than being dropped. All money is integer cents.
+ */
+async function buildRefundsReport(
+  db: Db,
+  operatorId: string,
+  start: Date,
+  endExclusive: Date,
+  range: DateRange,
+): Promise<RefundsTabReport> {
+  const events = await db.orderEvent.findMany({
+    where: {
+      operator_id: operatorId,
+      type: 'REFUND',
+      created_at: { gte: start, lt: endExclusive },
+    },
+    select: { order_id: true, metadata: true },
+  });
+
+  // Resolve each refunded order's attributed activity in one batch: pick the
+  // first seat line (add_on_id null) per order.
+  const orderIds = Array.from(new Set(events.map((e) => e.order_id)));
+  const activityByOrder = new Map<string, { id: string | null; name: string }>();
+  if (orderIds.length > 0) {
+    const items = await db.orderItem.findMany({
+      where: { operator_id: operatorId, order_id: { in: orderIds }, add_on_id: null },
+      select: {
+        order_id: true,
+        activity: { select: { id: true, name_external: true } },
+      },
+    });
+    for (const it of items) {
+      if (!activityByOrder.has(it.order_id)) {
+        activityByOrder.set(it.order_id, { id: it.activity.id, name: it.activity.name_external });
+      }
+    }
+  }
+
+  const rows: RefundRow[] = events.map((e) => {
+    const { amountCents, reason } = readRefundMetadata(e.metadata);
+    const activity = activityByOrder.get(e.order_id);
+    return {
+      reason,
+      amountCents,
+      activityId: activity?.id ?? null,
+      activityName: activity?.name ?? 'Unassigned',
+    };
+  });
+
+  return { ...aggregateRefunds(rows), range };
+}
+
+// ---------------------------------------------------------------------------
 // Gift-card report (outstanding liability + issued / redeemed)
 // ---------------------------------------------------------------------------
 
@@ -1351,6 +1432,7 @@ export interface ReportsBundle {
   giftCards: GiftCardReport;
   endOfDay: EndOfDayReport;
   headCount: HeadCountReport;
+  refunds: RefundsTabReport;
 }
 
 /**
@@ -1383,7 +1465,7 @@ export async function getReportsBundle(
   const activityId =
     rawActivity && activities.some((a) => a.id === rawActivity) ? rawActivity : null;
 
-  const [operator, revenue, sales, merchandise, taxesFees, occupancy, giftCards, endOfDay, headCount] =
+  const [operator, revenue, sales, merchandise, taxesFees, occupancy, giftCards, endOfDay, headCount, refunds] =
     await Promise.all([
       db.operator.findUnique({
         where: { id: operatorId },
@@ -1397,6 +1479,7 @@ export async function getReportsBundle(
       buildGiftCardReport(db, operatorId, start, endExclusive, range),
       buildEndOfDayReport(db, operatorId, start, endExclusive, range),
       buildHeadCountReport(db, operatorId, start, endExclusive, range, activityId),
+      buildRefundsReport(db, operatorId, start, endExclusive, range),
     ]);
 
   return {
@@ -1414,5 +1497,6 @@ export async function getReportsBundle(
     giftCards,
     endOfDay,
     headCount,
+    refunds,
   };
 }

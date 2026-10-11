@@ -255,3 +255,115 @@ export function rollUpByLocation(rows: readonly LocationMetricRow[]): LocationRo
 
   return { rows: rollupRows, totals };
 }
+
+// ---------------------------------------------------------------------------
+// Refunds-by-reason report
+// ---------------------------------------------------------------------------
+
+/**
+ * Canonical "no reason given" bucket key. A refund OrderEvent whose metadata
+ * has a null/blank/missing reason lands here rather than being dropped — a
+ * reasonless refund is itself a signal worth surfacing.
+ */
+export const REFUND_REASON_NONE = 'No reason given';
+
+/**
+ * A minimal refund row, derived from a REFUND OrderEvent's metadata. Pure and
+ * DB-free so the aggregation unit-tests in isolation and is reused across the
+ * admin data layer and CSV export. All money is integer cents.
+ */
+export interface RefundRow {
+  /** Free-text reason from event metadata (null/blank → bucketed as "No reason given"). */
+  reason: string | null | undefined;
+  /** Refunded amount, integer cents. */
+  amountCents: number;
+  /** Activity id this refund is attributed to, or null when none. */
+  activityId: string | null;
+  /** Activity display name (used for the by-activity breakdown). */
+  activityName: string;
+}
+
+/** One reason bucket: total refunded + how many refunds carried that reason. */
+export interface RefundReasonTotal {
+  reason: string;
+  amountCents: number;
+  count: number;
+}
+
+/** One activity bucket: total refunded + refund count for that activity. */
+export interface RefundActivityTotal {
+  activityId: string | null;
+  activityName: string;
+  amountCents: number;
+  count: number;
+}
+
+export interface RefundsReport {
+  byReason: RefundReasonTotal[];
+  byActivity: RefundActivityTotal[];
+  totals: {
+    amountCents: number;
+    count: number;
+  };
+}
+
+/** Normalize a raw reason into a stable bucket key (blank/missing → the NONE bucket). */
+function refundReasonKey(reason: string | null | undefined): string {
+  const trimmed = typeof reason === 'string' ? reason.trim() : '';
+  return trimmed.length > 0 ? trimmed : REFUND_REASON_NONE;
+}
+
+/**
+ * Aggregate refund rows into a by-reason and by-activity breakdown plus grand
+ * totals. Pure and DB-free. Reasons and activities are each merged into stable
+ * buckets, both lists sorted by refunded amount descending (ties broken by name
+ * / reason for determinism). The NONE bucket ("No reason given") is always kept
+ * when present rather than silently dropped. All money is integer cents.
+ */
+export function aggregateRefunds(rows: readonly RefundRow[]): RefundsReport {
+  const reasons = new Map<string, RefundReasonTotal>();
+  const activities = new Map<string, RefundActivityTotal>();
+  let totalCents = 0;
+  let totalCount = 0;
+
+  for (const row of rows) {
+    totalCents += row.amountCents;
+    totalCount += 1;
+
+    const rKey = refundReasonKey(row.reason);
+    const rBucket = reasons.get(rKey);
+    if (rBucket) {
+      rBucket.amountCents += row.amountCents;
+      rBucket.count += 1;
+    } else {
+      reasons.set(rKey, { reason: rKey, amountCents: row.amountCents, count: 1 });
+    }
+
+    const aKey = row.activityId ?? '__none__';
+    const aBucket = activities.get(aKey);
+    if (aBucket) {
+      aBucket.amountCents += row.amountCents;
+      aBucket.count += 1;
+    } else {
+      activities.set(aKey, {
+        activityId: row.activityId ?? null,
+        activityName: row.activityName,
+        amountCents: row.amountCents,
+        count: 1,
+      });
+    }
+  }
+
+  const byReason = Array.from(reasons.values()).sort(
+    (a, b) => b.amountCents - a.amountCents || a.reason.localeCompare(b.reason),
+  );
+  const byActivity = Array.from(activities.values()).sort(
+    (a, b) => b.amountCents - a.amountCents || a.activityName.localeCompare(b.activityName),
+  );
+
+  return {
+    byReason,
+    byActivity,
+    totals: { amountCents: totalCents, count: totalCount },
+  };
+}

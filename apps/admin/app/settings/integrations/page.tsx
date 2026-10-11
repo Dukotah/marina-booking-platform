@@ -66,7 +66,7 @@ export default async function IntegrationsPage() {
       <div className="space-y-8">
         {categories.map((category) => (
           <div key={category}>
-            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-400">
+            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-ink-muted">
               {category}
             </h2>
             <div className="space-y-4">

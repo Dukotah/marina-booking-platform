@@ -1,16 +1,15 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { CalendarDays, GanttChartSquare } from 'lucide-react';
+import { useMemo, useRef, useState } from 'react';
 import { cn } from '../../lib/cn';
 import { DaySchedule } from './DaySchedule';
-import { GanttManifest } from './GanttManifest';
-import type { ManifestListItem, ManifestRow } from './types';
+import type { ManifestListItem, ManifestRow, ManifestStatFilter } from './types';
 
 /**
  * The manifest's working surfaces. Day is THE manifest (owner's call: roomy,
  * time-ordered departure cards, each guest one tap from the full reservation
- * card); Timeline (Gantt) stays one tap away for the spatial view. The old
+ * card). The spatial boat-by-time board moved to its own top-level Schedule
+ * screen (/schedule), so the manifest is purely the day's working list. The old
  * receptionist List view is gone — everything it did per booking (check-in,
  * no-show, charges, waiver links) lives in the reservation card the Day view
  * opens.
@@ -28,7 +27,19 @@ export function ManifestViews({
   /** The day on screen, YYYY-MM-DD, so yesterday's manifest is history and not alarm. */
   isoDate: string;
 }) {
-  const [view, setView] = useState<'day' | 'timeline'>('day');
+  // The active stat filter (null = whole day). Tapping a stat narrows the day list
+  // to just those departures; tapping the lit stat again clears it.
+  const [filter, setFilter] = useState<ManifestStatFilter | null>(null);
+  const dayRef = useRef<HTMLDivElement>(null);
+
+  // Tapping a stat filters the day list to those departures (and scrolls to it, so
+  // the narrowed list is in view even on a long day).
+  function toggleFilter(next: ManifestStatFilter) {
+    setFilter((prev) => (prev === next ? null : next));
+    requestAnimationFrame(() => {
+      dayRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }
 
   // The four numbers a front desk needs at open, computed once from the same rows
   // every view renders. Cancelled bookings never count.
@@ -52,11 +63,31 @@ export function ManifestViews({
         .filter((it) => it.balanceDueCents > 0 && it.status !== 'NO_SHOW')
         .map((it) => it.orderId),
     );
+    // Guests waiting on sold-out slots. Counted on full slots only — the same
+    // condition the departure card shows its "N waiting" chip under, so the
+    // glance total and the per-card chips always agree.
+    const waiting = rows.reduce(
+      (sum, row) =>
+        sum +
+        row.slots.reduce(
+          (s, slot) =>
+            s +
+            (slot.capacityTotal > 0 && slot.capacityBooked >= slot.capacityTotal
+              ? slot.waitlist.length
+              : 0),
+          0,
+        ),
+      0,
+    );
+
     return {
-      departures: active.length,
+      // "Arriving" is who is still to come (UPCOMING), not every booking — a
+      // front desk wants the "still outstanding to greet" number, not the day total.
+      arriving: active.filter((it) => it.status === 'UPCOMING').length,
       unsigned,
       due: dueOrders.size,
       checkedIn: active.filter((it) => it.status === 'CHECKED_IN').length,
+      waiting,
     };
   }, [rows]);
 
@@ -72,42 +103,49 @@ export function ManifestViews({
 
   return (
     <div>
-      {/* The numbers that matter at open — glanceable, not another control row. */}
-      <div className="mb-4 flex flex-wrap items-center gap-2" role="group" aria-label="Day summary">
-        <Stat value={counts.departures} label={counts.departures === 1 ? 'departure' : 'departures'} />
+      {/* The five numbers a front desk runs the day on — glanceable, and each a
+          one-tap filter on the Day list below. Order mirrors the shift: who's still
+          coming, who's in, who owes, who hasn't signed, who's in line. */}
+      <div className="mb-4 flex flex-wrap items-center gap-2" role="group" aria-label="Day summary and filters">
         <Stat
-          value={counts.unsigned}
-          label={counts.unsigned === 1 ? 'unsigned waiver' : 'unsigned waivers'}
-          tone={counts.unsigned > 0 ? 'amber' : undefined}
+          value={counts.arriving}
+          label="arriving"
+          active={filter === 'arriving'}
+          onClick={() => toggleFilter('arriving')}
+        />
+        <Stat
+          value={counts.checkedIn}
+          label="checked in"
+          tone={counts.checkedIn > 0 ? 'emerald' : undefined}
+          active={filter === 'checkedIn'}
+          onClick={() => toggleFilter('checkedIn')}
         />
         <Stat
           value={counts.due}
           label={counts.due === 1 ? 'owes balance' : 'owe balance'}
           tone={counts.due > 0 ? 'rose' : undefined}
+          active={filter === 'due'}
+          onClick={() => toggleFilter('due')}
         />
-        <Stat value={counts.checkedIn} label="checked in" tone={counts.checkedIn > 0 ? 'emerald' : undefined} />
+        <Stat
+          value={counts.unsigned}
+          label={counts.unsigned === 1 ? 'unsigned waiver' : 'unsigned waivers'}
+          tone={counts.unsigned > 0 ? 'amber' : undefined}
+          active={filter === 'unsigned'}
+          onClick={() => toggleFilter('unsigned')}
+        />
+        <Stat
+          value={counts.waiting}
+          label="waiting"
+          tone={counts.waiting > 0 ? 'amber' : undefined}
+          active={filter === 'waiting'}
+          onClick={() => toggleFilter('waiting')}
+        />
       </div>
 
-      {/* role="group" + per-button pressed state so a screen reader hears which view
-          is showing, not two identical buttons. (1.4.1, 4.1.2) */}
-      <div
-        role="group"
-        aria-label="Manifest view"
-        className="mb-4 inline-flex rounded-lg border border-slate-200 bg-white p-0.5"
-      >
-        <TabButton active={view === 'day'} onClick={() => setView('day')}>
-          <CalendarDays className="h-4 w-4" aria-hidden /> Day
-        </TabButton>
-        <TabButton active={view === 'timeline'} onClick={() => setView('timeline')}>
-          <GanttChartSquare className="h-4 w-4" aria-hidden /> Timeline
-        </TabButton>
+      <div ref={dayRef} style={{ scrollMarginTop: '1rem' }}>
+        <DaySchedule rows={liveRows} timeZone={timeZone} isoDate={isoDate} filter={filter} />
       </div>
-
-      {view === 'day' ? (
-        <DaySchedule rows={liveRows} timeZone={timeZone} isoDate={isoDate} />
-      ) : (
-        <GanttManifest rows={liveRows} />
-      )}
 
       <Legend />
     </div>
@@ -121,10 +159,9 @@ function Legend() {
     { label: 'Full', className: 'bg-rose-500' },
   ];
   return (
-    // slate-600/700, not slate-500/600: the legend sits on the page background
-    // (bg-slate-100), where slate-500 is only 4.34:1. (1.4.3)
-    <div className="mt-4 flex flex-wrap items-center gap-4 text-xs text-slate-600">
-      <span className="font-medium text-slate-700">Capacity:</span>
+    // ink-body on the light cool-gray canvas clears AA. (1.4.3)
+    <div className="mt-4 flex flex-wrap items-center gap-4 text-xs text-ink-body">
+      <span className="font-medium text-ink">Capacity:</span>
       {items.map((i) => (
         <span key={i.label} className="inline-flex items-center gap-1.5">
           <span className={`h-2.5 w-2.5 rounded-full ${i.className}`} aria-hidden />
@@ -142,54 +179,52 @@ function Legend() {
 }
 
 /**
- * One glanceable count. Semantic colour marks a non-zero number that needs
- * attention (amber = waivers, rose = money, emerald = in) — a zero renders quiet
- * grey because there is nothing to chase.
+ * One glanceable count, and a one-tap filter on the day list. Semantic colour marks
+ * a non-zero number that needs attention (amber = waivers / waiting, rose = money,
+ * emerald = in) — a zero renders quiet grey because there is nothing to chase. When
+ * lit (`active`) the chip reads as the applied filter via a slate ring + pressed
+ * state; tapping it again clears the filter.
  */
 function Stat({
   value,
   label,
   tone,
+  active,
+  onClick,
 }: {
   value: number;
   label: string;
   tone?: 'amber' | 'rose' | 'emerald';
+  /** Whether this stat is the currently applied day filter. */
+  active: boolean;
+  /** Toggle this stat as the day filter. */
+  onClick: () => void;
 }) {
   const numberClass =
     tone === 'amber'
-      ? 'text-amber-800'
+      ? 'text-amber-700'
       : tone === 'rose'
         ? 'text-rose-700'
         : tone === 'emerald'
           ? 'text-emerald-700'
-          : 'text-slate-900';
-  return (
-    <span className="inline-flex items-baseline gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm">
-      <span className={cn('text-base font-semibold tabular-nums', numberClass)}>{value}</span>
-      <span className="text-xs font-medium text-slate-600">{label}</span>
-    </span>
-  );
-}
-
-function TabButton({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
+          : 'text-ink';
   return (
     <button
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
-        active ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
-      }`}
+      aria-label={`${value} ${label}${active ? ' — filtering the day, tap to clear' : ' — tap to filter the day'}`}
+      className={cn(
+        // min-h-11 (44px) keeps the filter chips a dad-simple tap target.
+        'inline-flex min-h-11 items-baseline gap-1.5 rounded-lg border bg-surface px-3 py-1.5 text-sm shadow-sm transition-colors',
+        'hover:bg-surface-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-focus',
+        // Selected = the one teal accent (law: nav/selected uses teal), not slate.
+        active ? 'border-accent ring-1 ring-accent' : 'border-line',
+      )}
     >
-      {children}
+      <span className={cn('text-base font-semibold tabular-nums', numberClass)}>{value}</span>
+      <span className="text-xs font-medium text-ink-body">{label}</span>
     </button>
   );
 }
+

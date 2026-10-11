@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import { Search, Package, Plus } from 'lucide-react';
 import { formatUSD } from '@marina/core';
 import { cn } from '../../lib/cn';
+import { Input } from '../ui';
 import type { CartLine, PosMerchandise } from './types';
 
 /**
@@ -38,7 +39,7 @@ export function MerchandiseCatalog({ items, onAdd }: MerchandiseCatalogProps) {
 
   if (items.length === 0) {
     return (
-      <div className="rounded-lg border border-dashed border-slate-300 p-8 text-center text-sm text-slate-500">
+      <div className="rounded-lg border border-dashed border-line p-8 text-center text-sm text-ink-body">
         No merchandise yet. Add items under Settings to sell them at the register.
       </div>
     );
@@ -48,27 +49,27 @@ export function MerchandiseCatalog({ items, onAdd }: MerchandiseCatalogProps) {
     <div className="space-y-4">
       <div className="relative w-full sm:w-80">
         <Search
-          className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+          className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-muted"
           aria-hidden
         />
-        <input
+        <Input
           type="search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search merchandise…"
           aria-label="Search merchandise"
-          className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm text-slate-700 placeholder:text-slate-400 focus:border-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-200"
+          className="pl-9"
         />
       </div>
 
       {grouped.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-slate-300 p-8 text-center text-sm text-slate-500">
+        <div className="rounded-lg border border-dashed border-line p-8 text-center text-sm text-ink-body">
           No items match “{query}”.
         </div>
       ) : (
         grouped.map(([category, group]) => (
           <div key={category}>
-            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">
               {category}
             </div>
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
@@ -90,20 +91,20 @@ export function MerchandiseCatalog({ items, onAdd }: MerchandiseCatalogProps) {
                       })
                     }
                     className={cn(
-                      'group flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-3 text-left transition-colors',
+                      'group flex min-h-11 items-center justify-between rounded-lg border border-line bg-surface px-3 py-3 text-left transition-colors',
                       outOfStock
                         ? 'cursor-not-allowed opacity-60'
-                        : 'hover:border-emerald-400 hover:bg-emerald-50',
+                        : 'hover:border-accent hover:bg-accent-tint',
                     )}
                   >
                     <span className="min-w-0">
                       <span className="flex items-center gap-2">
-                        <Package className="h-4 w-4 shrink-0 text-slate-400" aria-hidden />
-                        <span className="truncate text-sm font-medium text-slate-800">
+                        <Package className="h-4 w-4 shrink-0 text-ink-muted" aria-hidden />
+                        <span className="truncate text-sm font-medium text-ink">
                           {item.name}
                         </span>
                       </span>
-                      <span className="mt-0.5 block text-xs text-slate-500">
+                      <span className="mt-0.5 block text-xs text-ink-body">
                         {item.onHandQty === null
                           ? 'In stock'
                           : outOfStock
@@ -111,11 +112,11 @@ export function MerchandiseCatalog({ items, onAdd }: MerchandiseCatalogProps) {
                             : `${item.onHandQty} on hand`}
                       </span>
                     </span>
-                    <span className="ml-2 flex shrink-0 items-center gap-1 font-semibold text-slate-900">
+                    <span className="ml-2 flex shrink-0 items-center gap-1 font-semibold text-ink tabular-nums">
                       {formatUSD(item.priceCents)}
                       {!outOfStock ? (
                         <Plus
-                          className="h-4 w-4 text-slate-300 transition-colors group-hover:text-emerald-600"
+                          className="h-4 w-4 text-ink-muted transition-colors group-hover:text-accent"
                           aria-hidden
                         />
                       ) : null}

@@ -137,7 +137,7 @@ export function StaffForm({ value, onChange, locations, disabled, errors }: Staf
                   className={cn(
                     'inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-sm transition-colors',
                     on
-                      ? 'border-sky-600 bg-sky-50 text-sky-700'
+                      ? 'border-accent bg-accent-tint text-accent-ink'
                       : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300',
                     disabled && 'cursor-not-allowed opacity-60',
                   )}
@@ -193,7 +193,7 @@ export function StaffForm({ value, onChange, locations, disabled, errors }: Staf
                           checked={checked}
                           disabled={fromRole || disabled}
                           onChange={() => toggleExtra(permission)}
-                          className="mt-0.5 h-4 w-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500 disabled:opacity-60"
+                          className="mt-0.5 h-4 w-4 rounded border-slate-300 text-accent accent-accent focus:ring-focus disabled:opacity-60"
                         />
                         <span className="min-w-0">
                           <span className="flex items-center gap-2 text-sm font-medium text-slate-800">
@@ -203,7 +203,7 @@ export function StaffForm({ value, onChange, locations, disabled, errors }: Staf
                                 Role
                               </span>
                             ) : checked ? (
-                              <span className="rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-700">
+                              <span className="rounded-full bg-accent-tint px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent-ink">
                                 Extra
                               </span>
                             ) : null}

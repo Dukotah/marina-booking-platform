@@ -2,6 +2,7 @@ import Link from 'next/link';
 import type { Metadata } from 'next';
 import { Plus } from 'lucide-react';
 import { AdminShell, PageHeader, DataTable, type Column } from '../../components/shell';
+import { Badge, buttonClasses } from '../../components/ui';
 import { CatalogTabs } from '../../components/catalog/CatalogTabs';
 import { ActivityRowActions } from '../../components/activities/ActivityRowActions';
 import { CATEGORY_LABELS, type ActivityCategory } from '../../components/activities/types';
@@ -91,9 +92,9 @@ export default async function CatalogListingsPage() {
             aria-hidden
           />
           <span className="min-w-0">
-            <span className="block truncate font-medium text-slate-900">{row.name_external}</span>
+            <span className="block truncate font-medium text-ink">{row.name_external}</span>
             {row.name_internal !== row.name_external ? (
-              <span className="block truncate text-xs text-slate-400">{row.name_internal}</span>
+              <span className="block truncate text-xs text-ink-muted">{row.name_internal}</span>
             ) : null}
           </span>
         </Link>
@@ -102,21 +103,15 @@ export default async function CatalogListingsPage() {
     {
       id: 'category',
       header: 'Category',
-      cell: (row) => <span className="text-slate-600">{CATEGORY_LABELS[row.category]}</span>,
+      cell: (row) => <span className="text-ink-body">{CATEGORY_LABELS[row.category]}</span>,
     },
     {
       id: 'status',
       header: 'Status',
       cell: (row) => (
-        <span
-          className={
-            row.status === 'ACTIVE'
-              ? 'inline-flex rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700'
-              : 'inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500'
-          }
-        >
+        <Badge tone={row.status === 'ACTIVE' ? 'success' : 'cancelled'}>
           {row.status === 'ACTIVE' ? 'Active' : 'Inactive'}
-        </span>
+        </Badge>
       ),
     },
     {
@@ -129,9 +124,9 @@ export default async function CatalogListingsPage() {
           row.visible_register && 'Register',
         ].filter(Boolean) as string[];
         return tags.length ? (
-          <span className="text-xs text-slate-500">{tags.join(' · ')}</span>
+          <span className="text-xs text-ink-body">{tags.join(' · ')}</span>
         ) : (
-          <span className="text-xs text-slate-400">Hidden</span>
+          <span className="text-xs text-ink-muted">Hidden</span>
         );
       },
     },
@@ -139,7 +134,7 @@ export default async function CatalogListingsPage() {
       id: 'rates',
       header: 'Rates',
       align: 'right',
-      cell: (row) => <span className="text-slate-600">{row.rateCount}</span>,
+      cell: (row) => <span className="text-ink-body tabular-nums">{row.rateCount}</span>,
     },
     {
       id: 'price',
@@ -147,9 +142,9 @@ export default async function CatalogListingsPage() {
       align: 'right',
       cell: (row) =>
         row.fromPriceCents !== null ? (
-          <span className="font-medium text-slate-900">{formatUSD(row.fromPriceCents)}</span>
+          <span className="font-medium text-ink tabular-nums">{formatUSD(row.fromPriceCents)}</span>
         ) : (
-          <span className="text-slate-400">—</span>
+          <span className="text-ink-muted">—</span>
         ),
     },
     {
@@ -174,10 +169,7 @@ export default async function CatalogListingsPage() {
         description="Everything you sell — boats, patios, gift certificates, and memberships."
         actions={
           canWrite ? (
-            <Link
-              href="/activities/new"
-              className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
-            >
+            <Link href="/activities/new" className={buttonClasses('primary', 'md')}>
               <Plus className="h-4 w-4" aria-hidden />
               New activity
             </Link>
@@ -195,7 +187,7 @@ export default async function CatalogListingsPage() {
           <div className="space-y-2">
             <p>No activities yet.</p>
             {canWrite ? (
-              <Link href="/activities/new" className="font-medium text-slate-900 underline">
+              <Link href="/activities/new" className="font-medium text-accent hover:text-accent-hover">
                 Create your first activity
               </Link>
             ) : null}

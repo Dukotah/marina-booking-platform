@@ -19,9 +19,14 @@
 
 import { revalidatePath } from 'next/cache';
 import { withTenant, type Prisma } from '@marina/database';
-import { createId, computeSlotStatus } from '@marina/core';
+import {
+  createId,
+  computeSlotStatus,
+  computeCancellationRefund,
+  type CancellationPolicy,
+} from '@marina/core';
 import { AuthorizationError, type Permission } from '@marina/auth';
-import { requirePermission, type OperatorContext } from '../../lib/session';
+import { requirePermission, getTenantDb, type OperatorContext } from '../../lib/session';
 
 /** Uniform result returned to client components driving optimistic UI + toasts. */
 export interface ActionResult {
@@ -172,6 +177,144 @@ export async function cancelOrderAction(input: {
 
   revalidateOrder(input.orderId);
   return ok('Order cancelled.');
+}
+
+// ---------------------------------------------------------------------------
+// Refund preview (read-only) — what a cancel would refund, before committing
+// ---------------------------------------------------------------------------
+
+/**
+ * A built-in full-refund policy, used ONLY when neither the Activity nor the
+ * Operator has one configured. Mirrors `SAFE_DEFAULT_CANCELLATION_POLICY` in the
+ * API's booking service so the preview matches exactly what `cancelBooking` would
+ * do: a missing policy must never silently keep a guest's money.
+ */
+const SAFE_DEFAULT_CANCELLATION_POLICY: CancellationPolicy = {
+  tiers: [{ min_hours_before: 0, refund_percent: 100 }],
+  cancellation_fee_cents: 0,
+  fee_scope: 'order',
+  self_cancel_hours: 0,
+  refund_method: 'card',
+};
+
+/**
+ * Coerce an untyped `cancellation_policy` JSON blob into a `CancellationPolicy`, or
+ * null when absent / malformed. Same guard the API uses so a bad row degrades to
+ * "no policy at this level" rather than throwing in the preview.
+ */
+function coercePolicy(raw: unknown): CancellationPolicy | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const p = raw as Partial<CancellationPolicy>;
+  if (!Array.isArray(p.tiers)) return null;
+  return {
+    tiers: p.tiers,
+    cancellation_fee_cents: Math.max(0, Number(p.cancellation_fee_cents ?? 0) | 0),
+    fee_scope: p.fee_scope === 'guest' ? 'guest' : 'order',
+    self_cancel_hours: Math.max(0, Number(p.self_cancel_hours ?? 0)),
+    refund_method:
+      p.refund_method === 'gift_card' || p.refund_method === 'card_then_gift'
+        ? p.refund_method
+        : 'card',
+  };
+}
+
+/** What the reservation card shows before staff confirm a cancel. */
+export interface RefundPreview {
+  ok: boolean;
+  message?: string;
+  /** Cents that would be refunded after the tier % and any fee. */
+  refundCents?: number;
+  /** Tier percent applied (0-100). */
+  tierPercent?: number;
+  /** Flat fee withheld (cents). */
+  feeCents?: number;
+  /** Amount the guest has paid so far (cents) — the refund can never exceed it. */
+  amountPaidCents?: number;
+}
+
+/**
+ * Compute (read-only) the refund a cancel WOULD issue, so staff see "$X will be
+ * refunded (50% tier, minus $Y fee)" before committing. This reuses the exact same
+ * inputs the API's `cancelBooking` uses:
+ *   - effective policy = Activity.cancellation_policy ?? Operator.cancellation_policy
+ *     ?? a safe full-refund default,
+ *   - the booking's EARLIEST still-active item start vs. now,
+ *   - total guest count (for a per-guest fee),
+ *   - amount_paid_cents,
+ * fed through the shared `computeCancellationRefund` core helper. Nothing is
+ * written; staff can preview freely regardless of the approval gate.
+ */
+export async function previewCancellationRefund(input: {
+  orderId: string;
+}): Promise<RefundPreview> {
+  const auth = await authorize('order:write', 'You do not have permission to view this.');
+  if ('denied' in auth) return { ok: false, message: auth.denied.message };
+
+  if (!input.orderId) return { ok: false, message: 'Missing order.' };
+
+  try {
+    const db = await getTenantDb();
+
+    const order = await db.order.findFirst({
+      where: { id: input.orderId },
+      select: {
+        amount_paid_cents: true,
+        status: true,
+        items: {
+          where: { status: { not: 'CANCELLED' } },
+          select: {
+            quantity: true,
+            activity: { select: { cancellation_policy: true } },
+            timeslot: { select: { datetime: true } },
+          },
+        },
+      },
+    });
+    if (!order) return { ok: false, message: 'Order not found.' };
+    if (order.status === 'CANCELLED') return { ok: false, message: 'Order is already cancelled.' };
+    if (order.items.length === 0) return { ok: false, message: 'Nothing left to cancel.' };
+
+    const operator = await db.operator.findFirst({ select: { cancellation_policy: true } });
+
+    // Activity override wins (first active item carrying one), else operator default,
+    // else the safe full-refund fallback — the same precedence as cancelBooking.
+    const activityPolicyRaw =
+      order.items.find((i) => i.activity?.cancellation_policy)?.activity?.cancellation_policy ??
+      null;
+    const policy: CancellationPolicy =
+      coercePolicy(activityPolicyRaw) ??
+      coercePolicy(operator?.cancellation_policy ?? null) ??
+      SAFE_DEFAULT_CANCELLATION_POLICY;
+
+    // Earliest still-active start; the whole order is evaluated against it.
+    const earliestStart = order.items.reduce<Date | null>((min, i) => {
+      const d = i.timeslot?.datetime ?? null;
+      if (!d) return min;
+      return min === null || d < min ? d : min;
+    }, null);
+
+    const guestCount = order.items.reduce((n, i) => n + i.quantity, 0) || 1;
+
+    const now = new Date();
+    const computed = computeCancellationRefund({
+      policy,
+      startsAt: earliestStart ?? now,
+      now,
+      amountPaidCents: order.amount_paid_cents,
+      guestCount,
+    });
+
+    return {
+      ok: true,
+      refundCents: computed.refundCents,
+      tierPercent: computed.tierPercent,
+      feeCents: computed.feeCents,
+      amountPaidCents: order.amount_paid_cents,
+    };
+  } catch (err) {
+    console.error('[orders] previewCancellationRefund failed:', err);
+    return { ok: false, message: 'Could not compute the refund preview.' };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -514,22 +657,51 @@ export async function addOrderChargeAction(input: {
   category: string;
   label?: string;
   amountCents: number;
+  /**
+   * Optional reusable charge preset. When supplied it pre-fills the charge's
+   * category/label/amount, but any explicit field the caller sends still wins — the
+   * staff can tweak a preset before posting it. A preset from another tenant is
+   * invisible under RLS (findFirst returns null), so a bad id is simply ignored.
+   */
+  presetId?: string;
 }): Promise<ActionResult> {
   const auth = await authorize('order:write', 'You do not have permission to add charges.');
   if ('denied' in auth) return auth.denied;
   const { ctx } = auth;
 
-  const amountCents = Math.trunc(input.amountCents);
+  // Resolve a preset first (tenant-scoped) so its values seed anything the caller
+  // left blank. Explicit caller input always overrides the preset.
+  let preset: { category: string; label: string; amount_cents: number } | null = null;
+  if (input.presetId) {
+    try {
+      preset = await withTenant(ctx.operatorId, (tx) =>
+        tx.chargePreset.findFirst({
+          where: { id: input.presetId, active: true },
+          select: { category: true, label: true, amount_cents: true },
+        }),
+      );
+    } catch (err) {
+      console.error('[orders] addOrderChargeAction preset lookup failed:', err);
+    }
+  }
+
+  const rawAmount =
+    typeof input.amountCents === 'number' && Number.isFinite(input.amountCents) && input.amountCents > 0
+      ? input.amountCents
+      : preset?.amount_cents ?? input.amountCents;
+  const amountCents = Math.trunc(rawAmount);
   if (!Number.isFinite(amountCents) || amountCents <= 0) {
     return fail('Enter a charge amount greater than zero.');
   }
   if (amountCents > 1_000_000) {
     return fail('That charge looks too large — enter dollars, not cents.');
   }
-  const category = (CHARGE_CATEGORIES as readonly string[]).includes(input.category)
-    ? input.category
+  const requestedCategory = input.category || preset?.category || 'OTHER';
+  const category = (CHARGE_CATEGORIES as readonly string[]).includes(requestedCategory)
+    ? requestedCategory
     : 'OTHER';
-  const label = cleanReason(input.label) ?? defaultChargeLabel(category);
+  const label =
+    cleanReason(input.label) ?? cleanReason(preset?.label) ?? defaultChargeLabel(category);
 
   try {
     await withTenant(ctx.operatorId, async (tx) => {

@@ -3,7 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { type Column, DataTable } from '../shell/DataTable';
 import { formatDate, formatUSD } from '../../lib/format';
-import { cn } from '../../lib/cn';
+import { Badge, type BadgeTone } from '../ui';
 
 /** Serializable order row for a customer's booking history. */
 export interface BookingRow {
@@ -20,11 +20,14 @@ export interface BookingHistoryProps {
   rows: BookingRow[];
 }
 
-const STATUS_STYLES: Record<string, string> = {
-  UPCOMING: 'bg-sky-50 text-sky-700',
-  COMPLETED: 'bg-emerald-50 text-emerald-700',
-  CANCELLED: 'bg-slate-100 text-slate-500',
-  NO_SHOW: 'bg-amber-50 text-amber-700',
+// Status color law: UPCOMING is quiet/neutral (slate), COMPLETED reads as a
+// finished/past booking (slate/cancelled), CANCELLED is the muted inactive
+// slate, and NO_SHOW is the amber attention tone.
+const STATUS_TONES: Record<string, BadgeTone> = {
+  UPCOMING: 'neutral',
+  COMPLETED: 'cancelled',
+  CANCELLED: 'cancelled',
+  NO_SHOW: 'waiver',
 };
 
 function statusLabel(status: string): string {
@@ -48,28 +51,21 @@ export function BookingHistory({ rows }: BookingHistoryProps) {
       header: 'Order',
       cell: (row) => (
         <div className="min-w-0">
-          <div className="font-medium text-slate-900">{row.orderNumber}</div>
-          <div className="truncate text-xs text-slate-500">{row.itemSummary}</div>
+          <div className="font-medium text-ink">{row.orderNumber}</div>
+          <div className="truncate text-xs text-ink-muted">{row.itemSummary}</div>
         </div>
       ),
     },
     {
       id: 'date',
       header: 'Date',
-      cell: (row) => <span className="text-slate-600">{formatDate(row.createdAt)}</span>,
+      cell: (row) => <span className="text-ink-body">{formatDate(row.createdAt)}</span>,
     },
     {
       id: 'status',
       header: 'Status',
       cell: (row) => (
-        <span
-          className={cn(
-            'inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium',
-            STATUS_STYLES[row.status] ?? 'bg-slate-100 text-slate-600',
-          )}
-        >
-          {statusLabel(row.status)}
-        </span>
+        <Badge tone={STATUS_TONES[row.status] ?? 'neutral'}>{statusLabel(row.status)}</Badge>
       ),
     },
     {
@@ -78,11 +74,11 @@ export function BookingHistory({ rows }: BookingHistoryProps) {
       align: 'right',
       cell: (row) =>
         row.balanceDueCents > 0 ? (
-          <span className="font-medium tabular-nums text-amber-700">
+          <span className="font-medium tabular-nums text-rose-700">
             {formatUSD(row.balanceDueCents)}
           </span>
         ) : (
-          <span className="text-slate-400">—</span>
+          <span className="text-ink-muted">—</span>
         ),
     },
     {

@@ -41,10 +41,10 @@ export function OccupancySnapshot({
     <div className="flex flex-col gap-5">
       <div className="flex items-end justify-between gap-4">
         <div>
-          <div className="text-3xl font-semibold tracking-tight text-slate-900">
+          <div className="text-3xl font-semibold tracking-tight tabular-nums text-ink">
             {formatPercent(ratio)}
           </div>
-          <div className="mt-1 text-sm text-slate-500">
+          <div className="mt-1 text-sm text-ink-body">
             {formatNumber(capacityBooked)} of {formatNumber(capacityTotal)} seats booked today
           </div>
         </div>
@@ -62,15 +62,15 @@ export function OccupancySnapshot({
                     style={{ backgroundColor: s.color }}
                     aria-hidden
                   />
-                  <span className="truncate font-medium text-slate-700">
+                  <span className="truncate font-medium text-ink-body">
                     {s.activityName}
                   </span>
                 </span>
-                <span className="shrink-0 tabular-nums text-slate-500">
+                <span className="shrink-0 tabular-nums text-ink-muted">
                   {s.capacityBooked}/{s.capacityTotal}
                 </span>
               </div>
-              <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
+              <div className="h-2 w-full overflow-hidden rounded-full bg-surface-muted">
                 <div
                   className="h-full rounded-full"
                   style={{ width: barWidth(sliceRatio), backgroundColor: s.color }}

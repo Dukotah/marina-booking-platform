@@ -90,7 +90,15 @@ async function auditSettingsChange(
 // Customer Questions
 // ===========================================================================
 
-const QUESTION_TYPES = ['TEXT', 'TEXTAREA', 'SELECT', 'CHECKBOX', 'NUMBER'] as const;
+const QUESTION_TYPES = [
+  'TEXT',
+  'TEXTAREA',
+  'SELECT',
+  'CHECKBOX',
+  'NUMBER',
+  'DATE',
+  'PHONE',
+] as const;
 
 const questionCreateSchema = z
   .object({
@@ -99,6 +107,8 @@ const questionCreateSchema = z
     required: z.boolean().default(false),
     options: z.array(z.string().trim().min(1).max(120)).max(50).default([]),
     applies_to: z.string().min(1).nullable().optional(),
+    applies_to_rate: z.string().min(1).nullable().optional(),
+    show_in_confirmation: z.boolean().default(false),
     is_active: z.boolean().default(true),
     sort_index: z.number().int().min(0).max(9999).default(0),
   })
@@ -127,6 +137,8 @@ settings.post('/questions', requireStaff, async (c) => {
       required: d.required,
       options: d.options,
       applies_to: d.applies_to ?? null,
+      applies_to_rate: d.applies_to_rate ?? null,
+      show_in_confirmation: d.show_in_confirmation,
       is_active: d.is_active,
       sort_index: d.sort_index,
     },
@@ -152,6 +164,10 @@ settings.patch('/questions/:id', requireStaff, async (c) => {
       ...(d.required !== undefined ? { required: d.required } : {}),
       ...(d.options !== undefined ? { options: d.options } : {}),
       ...(d.applies_to !== undefined ? { applies_to: d.applies_to } : {}),
+      ...(d.applies_to_rate !== undefined ? { applies_to_rate: d.applies_to_rate } : {}),
+      ...(d.show_in_confirmation !== undefined
+        ? { show_in_confirmation: d.show_in_confirmation }
+        : {}),
       ...(d.is_active !== undefined ? { is_active: d.is_active } : {}),
       ...(d.sort_index !== undefined ? { sort_index: d.sort_index } : {}),
     },
@@ -264,6 +280,8 @@ const templateUpsertSchema = z
     enabled: z.boolean().default(true),
     subject_override: z.string().trim().max(300).nullable().optional(),
     body_override: z.string().trim().max(20000).nullable().optional(),
+    // SMS has no subject; a shorter cap keeps operators honest about text length.
+    sms_body_override: z.string().trim().max(1600).nullable().optional(),
   })
   .strict();
 
@@ -279,6 +297,7 @@ settings.get('/templates', requireStaff, async (c) => {
       enabled: row?.enabled ?? true,
       subject_override: row?.subject_override ?? null,
       body_override: row?.body_override ?? null,
+      sms_body_override: row?.sms_body_override ?? null,
     };
   });
   return c.json({ templates });
@@ -308,11 +327,13 @@ settings.put('/templates/:kind', requireStaff, async (c) => {
       enabled: d.enabled,
       subject_override: d.subject_override ?? null,
       body_override: d.body_override ?? null,
+      sms_body_override: d.sms_body_override ?? null,
     },
     update: {
       enabled: d.enabled,
       subject_override: d.subject_override ?? null,
       body_override: d.body_override ?? null,
+      sms_body_override: d.sms_body_override ?? null,
     },
   });
   await auditSettingsChange(c, 'MessageTemplate', template.id, {

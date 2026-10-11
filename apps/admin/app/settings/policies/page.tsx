@@ -2,6 +2,10 @@ import { PageHeader } from '../../../components/shell';
 import { getTenantDb, requirePermission } from '../../../lib/session';
 import { PoliciesForm, type PoliciesFormValues } from '../../../components/settings/PoliciesForm';
 import { ApprovalForm, type ApprovalFormValues } from '../../../components/settings/ApprovalForm';
+import {
+  CancellationPolicyForm,
+  type CancellationPolicyFormValues,
+} from '../../../components/settings/CancellationPolicyForm';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,6 +17,50 @@ interface PolicyConfig {
 
 function readString(value: unknown): string {
   return typeof value === 'string' ? value : '';
+}
+
+/**
+ * Coerce the stored `Operator.cancellation_policy` JSON into the editor's form
+ * values. A missing/garbage policy falls back to the same sensible default the
+ * seed writes (168h→100%, 24h→50%, 0h→0%), so the editor always opens on a usable
+ * starting point rather than an empty form.
+ */
+function readCancellationPolicy(raw: unknown): CancellationPolicyFormValues {
+  const fallback: CancellationPolicyFormValues = {
+    tiers: [
+      { min_hours_before: 168, refund_percent: 100 },
+      { min_hours_before: 24, refund_percent: 50 },
+      { min_hours_before: 0, refund_percent: 0 },
+    ],
+    cancellation_fee_dollars: 0,
+    fee_scope: 'order',
+    self_cancel_hours: 24,
+    refund_method: 'card_then_gift',
+  };
+  if (!raw || typeof raw !== 'object') return fallback;
+  const p = raw as Record<string, unknown>;
+  if (!Array.isArray(p.tiers)) return fallback;
+
+  const tiers = p.tiers
+    .map((t) => {
+      const row = (t ?? {}) as Record<string, unknown>;
+      return {
+        min_hours_before: Math.max(0, Number(row.min_hours_before) || 0),
+        refund_percent: Math.min(100, Math.max(0, Number(row.refund_percent) || 0)),
+      };
+    })
+    .sort((a, b) => b.min_hours_before - a.min_hours_before);
+
+  return {
+    tiers: tiers.length > 0 ? tiers : fallback.tiers,
+    cancellation_fee_dollars: Math.max(0, Number(p.cancellation_fee_cents) || 0) / 100,
+    fee_scope: p.fee_scope === 'guest' ? 'guest' : 'order',
+    self_cancel_hours: Math.max(0, Number(p.self_cancel_hours) || 0),
+    refund_method:
+      p.refund_method === 'gift_card' || p.refund_method === 'card_then_gift'
+        ? p.refund_method
+        : 'card',
+  };
 }
 
 /**
@@ -31,6 +79,7 @@ export default async function PoliciesPage() {
         timezone: true,
         approval_threshold_cents: true,
         refund_requires_approval: true,
+        cancellation_policy: true,
       },
     }),
     db.integration.findFirst({ where: { key: 'policies' }, select: { config: true } }),
@@ -44,6 +93,8 @@ export default async function PoliciesPage() {
     cancellation_policy: readString(cfg.cancellation_policy),
     checkin_instructions: readString(cfg.checkin_instructions),
   };
+
+  const cancellationInitial = readCancellationPolicy(operator?.cancellation_policy ?? null);
 
   const approvalInitial: ApprovalFormValues = {
     approval_threshold_dollars: operator?.approval_threshold_cents
@@ -59,6 +110,10 @@ export default async function PoliciesPage() {
         description="Adult age, timezone, cancellation, and check-in rules for your bookings."
       />
       <PoliciesForm initial={initial} />
+
+      <div className="mt-8">
+        <CancellationPolicyForm initial={cancellationInitial} />
+      </div>
 
       <div className="mt-8">
         <ApprovalForm initial={approvalInitial} />

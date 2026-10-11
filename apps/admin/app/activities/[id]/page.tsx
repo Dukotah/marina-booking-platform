@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { ChevronLeft } from 'lucide-react';
 import { AdminShell, PageHeader } from '../../../components/shell';
+import { buttonClasses } from '../../../components/ui';
 import { ActivityWizard } from '../../../components/activities/ActivityWizard';
 import {
   ScheduleEditor,
@@ -14,7 +15,9 @@ import {
   type BlackoutGroupView,
   type CopyOption,
 } from '../../../components/activities/RuleScheduler';
-import type { RuleView } from '../schedule-rules-actions';
+import { RentalWeekGrid, type ClosedDateView } from '../../../components/activities/RentalWeekGrid';
+import { type RuleView } from '../schedule-rules-actions';
+import { toRuleView } from '../rule-view';
 import { addIsoDays, localDayRangeUtc, toLocalParts, todayIsoIn } from '../../../components/manifest/tz';
 import { loadActivityForm, loadLocationOptions } from '../loaders';
 import { getTenantDb, requirePermission } from '../../../lib/session';
@@ -188,8 +191,12 @@ function mostCommon(entries: Array<[number, number]>): number | null {
 async function loadRuleSchedulerData(activityId: string): Promise<{
   boatCapacity: number;
   today: string;
+  defaultKind: 'rental' | 'departures';
+  defaultOpenMinute: number | null;
+  defaultCloseMinute: number | null;
   rules: RuleView[];
   blackouts: BlackoutGroupView[];
+  closedDates: ClosedDateView[];
   copyOptions: CopyOption[];
 } | null> {
   const db = await getTenantDb();
@@ -198,6 +205,8 @@ async function loadRuleSchedulerData(activityId: string): Promise<{
     select: {
       max_participants: true,
       location_id: true,
+      rental_open_minute: true,
+      rental_close_minute: true,
       location: { select: { timezone: true } },
       operator: { select: { timezone: true } },
     },
@@ -254,25 +263,54 @@ async function loadRuleSchedulerData(activityId: string): Promise<{
     }
   }
 
+  const ruleViews = ruleRows.map(toRuleView);
+
+  // Which rule kind this boat's "Add a schedule" form should open on. A boat
+  // configured as an open-duration rental (both edges set on the activity), or
+  // one that already keeps rental-window rules, defaults to the rental kind;
+  // fixed-departure tour boats default to departures. Whichever it opens on,
+  // the operator can still flip the toggle per rule.
+  const activityIsRental =
+    activity.rental_open_minute !== null && activity.rental_close_minute !== null;
+  const hasRentalRule = ruleViews.some((r) => r.kind === 'rental');
+  const hasDepartureRule = ruleViews.some((r) => r.kind === 'departures');
+  const defaultKind: 'rental' | 'departures' =
+    activityIsRental || (hasRentalRule && !hasDepartureRule) ? 'rental' : 'departures';
+
   const counts = new Map(ruleCounts.map((r) => [r.activity_id, r._count._all]));
   const copyOptions: CopyOption[] = otherActivities
     .map((a) => ({ id: a.id, name: a.name_internal, ruleCount: counts.get(a.id) ?? 0 }))
     .filter((a) => a.ruleCount > 0);
 
+  // Per-date closures the week grid can draw + toggle. The grid only shows the
+  // next 7 days; collapse all blackout rows on a date into one entry carrying the
+  // ids to re-open. A date is only re-openable from the grid when every row on it
+  // is activity-scoped — an operator (whole-marina) row pins it closed here.
+  const windowEnd = addIsoDays(today, 6);
+  const closedByDate = new Map<string, ClosedDateView>();
+  for (const row of blackoutRows) {
+    const date = row.date.toISOString().slice(0, 10);
+    if (date < today || date > windowEnd) continue;
+    const scope: ClosedDateView['scope'] = row.activity_id ? 'activity' : 'operator';
+    const entry = closedByDate.get(date);
+    if (entry) {
+      entry.ids.push(row.id);
+      if (scope === 'operator') entry.scope = 'operator';
+      if (!entry.reason && row.reason) entry.reason = row.reason;
+    } else {
+      closedByDate.set(date, { date, ids: [row.id], reason: row.reason, scope });
+    }
+  }
+
   return {
     boatCapacity: activity.max_participants,
     today,
-    rules: ruleRows.map((r) => ({
-      id: r.id,
-      name: r.name,
-      startDate: r.start_date,
-      endDate: r.end_date,
-      weekdays: r.weekdays,
-      startMinutes: r.start_minutes,
-      capacity: r.capacity,
-      isActive: r.is_active,
-    })),
+    defaultKind,
+    defaultOpenMinute: activity.rental_open_minute,
+    defaultCloseMinute: activity.rental_close_minute,
+    rules: ruleViews,
     blackouts,
+    closedDates: [...closedByDate.values()],
     copyOptions,
   };
 }
@@ -306,10 +344,7 @@ export default async function EditActivityPage({ params }: { params: { id: strin
         title={defaultValues.name_external || 'Edit activity'}
         description="Update details, rates, and scheduling."
         actions={
-          <Link
-            href="/activities"
-            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-          >
+          <Link href="/activities" className={buttonClasses('secondary', 'md')}>
             <ChevronLeft className="h-4 w-4" aria-hidden />
             Back to activities
           </Link>
@@ -324,7 +359,28 @@ export default async function EditActivityPage({ params }: { params: { id: strin
           locations={locations}
         />
 
-        {ruleData ? <RuleScheduler activityId={params.id} {...ruleData} /> : null}
+        {ruleData
+          ? (() => {
+              const { closedDates, ...schedulerProps } = ruleData;
+              return (
+                <>
+                  <RuleScheduler activityId={params.id} {...schedulerProps} />
+                  <RentalWeekGrid
+                    activityId={params.id}
+                    today={schedulerProps.today}
+                    rules={schedulerProps.rules}
+                    closedDates={closedDates}
+                  />
+                </>
+              );
+            })()
+          : null}
+        {/*
+          Follow-up (out of scope this build): the customer-facing web rental
+          picker. The admin can now author + preview rental-window rules and the
+          booking engine honors them (isHourRentable), but apps/web has no
+          duration-picker UI yet to sell an arbitrary sub-window to a guest.
+        */}
 
         {schedule ? (
           <ScheduleEditor

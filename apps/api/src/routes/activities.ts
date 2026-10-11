@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { assertPermission } from '@marina/auth';
+import { sanitizeDescriptionHtml } from '@marina/core';
 import type { Env } from '../context.js';
 import { requireStaff } from '../middleware/auth.js';
 
@@ -136,7 +137,11 @@ activities.get('/:id', async (c) => {
       color: row.color,
       photoUrls: row.photo_urls,
       waiverRequired: row.waiver_required,
-      descriptionHtml: row.description_html,
+      // Defense in depth: sanitize on the way out of this PUBLIC, unauthenticated
+      // endpoint too, so any legacy row stored before write-time sanitization (or
+      // via another path) can never serve an executable payload to the booking page
+      // or the embed widget.
+      descriptionHtml: sanitizeDescriptionHtml(row.description_html) ?? null,
       selfRescheduleHours: row.self_reschedule_hours,
       hidePrice: row.hide_price,
       fromPriceCents,
@@ -194,6 +199,35 @@ activities.get('/:id/availability', async (c) => {
   } catch (err) {
     if (err instanceof AvailabilityError) {
       return c.json({ error: err.message }, err.status as 400 | 404);
+    }
+    throw err;
+  }
+});
+
+/**
+ * GET /api/activities/:id/rental-availability?date=YYYY-MM-DD[&rateId=...]
+ *
+ * Open-duration RENTAL availability: the day's rentable window(s) (season/weekday
+ * match), the free gaps after whole-day blackout + spans already taken on the boat,
+ * and — per rate — the bookable start times for a rental of that rate's duration.
+ * Returns 409 NOT_RENTAL for a fixed-departure activity so the caller falls back to
+ * /:id/availability. (The customer web rental picker is a follow-up; this endpoint
+ * is the data source the admin POS/rental action and that future picker share.)
+ */
+activities.get('/:id/rental-availability', async (c) => {
+  const activityId = c.req.param('id');
+  const date = c.req.query('date');
+  const rateId = c.req.query('rateId') || undefined;
+  if (!date) {
+    return c.json({ error: 'date query param is required (YYYY-MM-DD)' }, 400);
+  }
+  const { getRentalAvailability, RentalError } = await import('../services/rental.js');
+  try {
+    const result = await getRentalAvailability(c.var.db, { activityId, date, rateId });
+    return c.json(result);
+  } catch (err) {
+    if (err instanceof RentalError) {
+      return c.json({ error: err.message, code: err.code }, err.status as 400 | 404 | 409);
     }
     throw err;
   }

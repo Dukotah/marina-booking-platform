@@ -3,10 +3,12 @@ import {
   applyMemberPrice,
   calculatePricing,
   computeDepositCents,
+  priceRateClasses,
   resolveDepositPercent,
   resolveEffectivePrice,
   type PricingFee,
   type PricingItem,
+  type RateClassSpec,
 } from './pricing.js';
 
 const TAX_9_25: PricingFee = { name: 'Sales Tax', type: 'PERCENT', value: 9.25 };
@@ -169,6 +171,36 @@ describe('calculatePricing — tax', () => {
       fees: [{ name: 'STATE TAX', type: 'PERCENT', value: 5 }],
     });
     expect(result.taxCents).toBe(500);
+  });
+
+  it('identifies tax by the first-class isTax flag regardless of name', () => {
+    // A fee NOT named "tax" but flagged is_tax must be treated as tax.
+    const result = calculatePricing({
+      items: [{ unitPriceCents: 10000, quantity: 1 }],
+      fees: [{ name: 'Government levy', type: 'PERCENT', value: 5, isTax: true }],
+    });
+    expect(result.taxCents).toBe(500);
+  });
+
+  it('isTax: false forces a tax-named fee to be a plain surcharge', () => {
+    // Explicit flag overrides the legacy name heuristic.
+    const result = calculatePricing({
+      items: [{ unitPriceCents: 10000, quantity: 1 }],
+      fees: [{ name: 'Tax', type: 'PERCENT', value: 5, isTax: false }],
+    });
+    // Treated as a generic surcharge on the base, not as tax.
+    expect(result.taxCents).toBe(0);
+    expect(result.totalCents).toBe(10500);
+  });
+
+  it('skips an is_tax fee for a tax-exempt customer', () => {
+    const result = calculatePricing({
+      items: [{ unitPriceCents: 10000, quantity: 1 }],
+      fees: [{ name: 'Government levy', type: 'PERCENT', value: 5, isTax: true }],
+      taxExempt: true,
+    });
+    expect(result.taxCents).toBe(0);
+    expect(result.totalCents).toBe(10000);
   });
 });
 
@@ -535,5 +567,54 @@ describe('resolveEffectivePrice', () => {
       discountValue: 15,
     });
     expect(member).toBe(10200); // 12000 - 15%
+  });
+});
+
+describe('priceRateClasses — per-head rate classes', () => {
+  const ADULT: RateClassSpec = { id: 'adult', label: 'Adult', priceModifierCents: 0 };
+  const CHILD: RateClassSpec = { id: 'child', label: 'Child', priceModifierCents: -1500 };
+  const SENIOR: RateClassSpec = { id: 'senior', label: 'Senior', priceModifierCents: -500 };
+
+  it('prices a mixed party: base + modifier per head, summed over counts', () => {
+    const r = priceRateClasses(10000, [ADULT, CHILD, SENIOR], [
+      { classId: 'adult', count: 2 },
+      { classId: 'child', count: 1 },
+    ]);
+    expect(r.totalQuantity).toBe(3);
+    expect(r.lines).toEqual([
+      { classId: 'adult', label: 'Adult', unitPriceCents: 10000, count: 2 },
+      { classId: 'child', label: 'Child', unitPriceCents: 8500, count: 1 },
+    ]);
+    // Quote == what calculatePricing would sum (no fees): 2*10000 + 1*8500 = 28500.
+    const subtotal = r.lines.reduce((s, l) => s + l.unitPriceCents * l.count, 0);
+    expect(subtotal).toBe(28500);
+  });
+
+  it('clamps a per-head price at >= 0 when the modifier exceeds the base', () => {
+    const r = priceRateClasses(1000, [{ id: 'free', label: 'Infant', priceModifierCents: -5000 }], [
+      { classId: 'free', count: 2 },
+    ]);
+    expect(r.lines[0]!.unitPriceCents).toBe(0);
+    expect(r.totalQuantity).toBe(2);
+  });
+
+  it('skips zero-count classes and unknown class ids (tamper: unknown id is never priced)', () => {
+    const r = priceRateClasses(10000, [ADULT, CHILD], [
+      { classId: 'adult', count: 1 },
+      { classId: 'child', count: 0 }, // zero -> skipped
+      { classId: 'ghost', count: 3 }, // unknown -> skipped, NOT priced at base
+    ]);
+    expect(r.totalQuantity).toBe(1);
+    expect(r.lines).toEqual([
+      { classId: 'adult', label: 'Adult', unitPriceCents: 10000, count: 1 },
+    ]);
+  });
+
+  it('supports a positive (premium) modifier', () => {
+    const r = priceRateClasses(10000, [{ id: 'vip', label: 'VIP', priceModifierCents: 2500 }], [
+      { classId: 'vip', count: 2 },
+    ]);
+    expect(r.lines[0]!.unitPriceCents).toBe(12500);
+    expect(r.totalQuantity).toBe(2);
   });
 });

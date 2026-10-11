@@ -4,6 +4,7 @@ import { useState, useTransition } from 'react';
 import { ScanLine, Loader2 } from 'lucide-react';
 import { formatUSD } from '@marina/core';
 import { cn } from '../../lib/cn';
+import { Button, Card, Input } from '../ui';
 import { lookupByCode } from '../../app/pos/actions';
 import type { CodeLookupResult } from './types';
 
@@ -29,31 +30,31 @@ export function CodeSearch() {
   }
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+    <Card className="p-4">
       <form onSubmit={onSubmit} className="flex items-center gap-2">
         <div className="relative flex-1">
           <ScanLine
-            className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+            className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-muted"
             aria-hidden
           />
-          <input
+          <Input
             type="search"
             value={code}
             onChange={(e) => setCode(e.target.value)}
             placeholder="Scan QR or enter order code…"
             aria-label="Scan QR or enter order code"
             autoComplete="off"
-            className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm uppercase tracking-wide text-slate-700 placeholder:normal-case placeholder:tracking-normal placeholder:text-slate-400 focus:border-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            className="pl-9 uppercase tracking-wide placeholder:normal-case placeholder:tracking-normal"
           />
         </div>
-        <button
+        <Button
           type="submit"
+          variant="secondary"
           disabled={isPending || code.trim().length === 0}
-          className="inline-flex h-9 items-center gap-2 rounded-lg bg-slate-900 px-4 text-sm font-medium text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
           Look up
-        </button>
+        </Button>
       </form>
 
       {result ? (
@@ -62,7 +63,7 @@ export function CodeSearch() {
             'mt-3 rounded-lg border p-3 text-sm',
             result.found
               ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
-              : 'border-slate-200 bg-slate-50 text-slate-600',
+              : 'border-line bg-surface-muted text-ink-body',
           )}
         >
           {result.found && result.order ? (
@@ -89,6 +90,6 @@ export function CodeSearch() {
           )}
         </div>
       ) : null}
-    </div>
+    </Card>
   );
 }

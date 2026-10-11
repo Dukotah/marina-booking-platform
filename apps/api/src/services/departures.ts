@@ -128,7 +128,7 @@ async function loadBoardActivities(db: TenantClient): Promise<BoardActivity[]> {
   // activity: enabled fees scoped to the activity or operator-wide).
   const feeRows = await db.fee.findMany({
     where: { enabled: true },
-    select: { name: true, type: true, value: true, activity_id: true },
+    select: { name: true, type: true, value: true, activity_id: true, is_tax: true },
     orderBy: { name: 'asc' },
   });
 
@@ -149,7 +149,7 @@ async function loadBoardActivities(db: TenantClient): Promise<BoardActivity[]> {
         },
         fees: feeRows
           .filter((f) => f.activity_id === null || f.activity_id === a.id)
-          .map((f) => ({ name: f.name, type: f.type, value: f.value })),
+          .map((f) => ({ name: f.name, type: f.type, value: f.value, isTax: f.is_tax })),
       };
     });
 }

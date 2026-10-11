@@ -67,8 +67,8 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
         actions={<DateNav date={isoDate} stepDays={7} label={label} />}
       />
       <ViewToggle view="week" isoDate={isoDate} />
-      <p className="mt-4 text-sm text-slate-600">
-        <span className="font-semibold tabular-nums text-slate-900">{totalBookings}</span>{' '}
+      <p className="mt-4 text-sm text-ink-body">
+        <span className="font-semibold tabular-nums text-ink">{totalBookings}</span>{' '}
         {totalBookings === 1 ? 'booking' : 'bookings'} this week
       </p>
       <div className="mt-2">
@@ -81,24 +81,24 @@ export default async function CalendarPage({ searchParams }: CalendarPageProps) 
 /** Day / Week tabs. Server-rendered links that preserve the selected date. */
 function ViewToggle({ view, isoDate }: { view: 'day' | 'week'; isoDate: string }) {
   const base =
-    'inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors';
+    'inline-flex min-h-11 items-center gap-2 rounded-lg px-4 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-focus';
   return (
     <div
       role="group"
       aria-label="Calendar view"
-      className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5 shadow-sm"
+      className="inline-flex rounded-lg border border-line bg-surface p-1 shadow-sm"
     >
       <Link
         href={`/calendar?view=day&date=${isoDate}`}
         aria-current={view === 'day' ? 'page' : undefined}
-        className={cn(base, view === 'day' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100')}
+        className={cn(base, view === 'day' ? 'bg-accent-tint text-accent-ink' : 'text-ink-body hover:bg-surface-muted')}
       >
         <CalendarDays className="h-4 w-4" aria-hidden /> Day
       </Link>
       <Link
         href={`/calendar?view=week&date=${isoDate}`}
         aria-current={view === 'week' ? 'page' : undefined}
-        className={cn(base, view === 'week' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100')}
+        className={cn(base, view === 'week' ? 'bg-accent-tint text-accent-ink' : 'text-ink-body hover:bg-surface-muted')}
       >
         <CalendarRange className="h-4 w-4" aria-hidden /> Week
       </Link>

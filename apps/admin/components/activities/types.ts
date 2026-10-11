@@ -8,6 +8,18 @@ import { ACTIVITY_CATEGORIES } from '@marina/core';
 
 export type ActivityCategory = (typeof ACTIVITY_CATEGORIES)[number];
 
+export type RateClassKind = 'ADULT' | 'CHILD' | 'INFANT' | 'YOUTH' | 'SENIOR' | 'OTHER';
+
+export interface RateClassFormValues {
+  /** Present when editing an existing class; absent for newly added rows. */
+  id?: string;
+  kind: RateClassKind;
+  label: string;
+  /** Signed delta on the rate base, in DOLLARS; converted to cents on submit. */
+  price_modifier_dollars: number;
+  is_active: boolean;
+}
+
 export interface RateFormValues {
   /** Present when editing an existing rate; absent for newly added rows. */
   id?: string;
@@ -20,7 +32,18 @@ export interface RateFormValues {
   online_only: boolean;
   internal_only: boolean;
   is_from_price: boolean;
+  /** Per-head rate classes (adult/child/…). Empty = single-quantity rate. */
+  rate_classes: RateClassFormValues[];
 }
+
+export const RATE_CLASS_KIND_LABELS: Record<RateClassKind, string> = {
+  ADULT: 'Adult',
+  CHILD: 'Child',
+  INFANT: 'Infant',
+  YOUTH: 'Youth',
+  SENIOR: 'Senior',
+  OTHER: 'Other',
+};
 
 export interface ActivityFormValues {
   name_internal: string;
@@ -112,5 +135,16 @@ export function emptyRate(): RateFormValues {
     online_only: false,
     internal_only: false,
     is_from_price: false,
+    rate_classes: [],
+  };
+}
+
+/** A blank per-head rate class, defaulted to an active "Adult" at +$0. */
+export function emptyRateClass(): RateClassFormValues {
+  return {
+    kind: 'ADULT',
+    label: 'Adult',
+    price_modifier_dollars: 0,
+    is_active: true,
   };
 }

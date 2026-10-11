@@ -40,6 +40,30 @@ export async function activityResourcePools(
   });
 }
 
+/**
+ * Serialise concurrent bookings that touch the same resource pools.
+ *
+ * The timeslot FOR UPDATE row lock only serialises bookings on the SAME slot, but a
+ * shared pool is drawn down across DIFFERENT slots/activities over overlapping windows.
+ * Two such bookings lock disjoint Timeslot rows, so under READ COMMITTED both aggregate
+ * `reservedSeats` as 0, both pass the capacity check, and both insert — overselling the
+ * pool. We take a transaction-scoped advisory lock keyed on each pool id so the second
+ * booking blocks until the first COMMITs and its ResourceBooking inserts are visible.
+ *
+ * Locks are acquired in sorted id order across ALL callers so two transactions grabbing
+ * the same two pools can never deadlock. No-op when there are no pools.
+ */
+export async function lockResourcePools(
+  tx: Prisma.TransactionClient,
+  poolIds: string[],
+): Promise<void> {
+  const sorted = [...new Set(poolIds)].sort();
+  for (const id of sorted) {
+    // hashtextextended → bigint; two-arg advisory lock keyed on the hash of the pool id.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${id}, 0))`;
+  }
+}
+
 /** Seats already reserved on a pool by bookings overlapping [startsAt, endsAt). */
 export async function reservedSeats(
   tx: Prisma.TransactionClient,

@@ -95,6 +95,9 @@ export function translateHref(href: string, session: EmbedSessionParams): Destin
       kind: 'embed',
       href: buildEmbedHref(session, 'confirmation', {
         order: q.get('order') ?? q.get('orderNumber') ?? undefined,
+        // Carry the identity proof the order lookup is gated on through the embed
+        // step change, so the embedded confirmation can load the guest's booking.
+        email: q.get('email') ?? undefined,
       }),
     };
   }

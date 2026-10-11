@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { ChevronLeft } from 'lucide-react';
 import { AdminShell, PageHeader } from '../../../components/shell';
+import { buttonClasses } from '../../../components/ui';
 import { ActivityWizard } from '../../../components/activities/ActivityWizard';
 import { emptyActivityForm } from '../../../components/activities/types';
 import { loadLocationOptions } from '../loaders';
@@ -22,10 +23,7 @@ export default async function NewActivityPage() {
         title="New activity"
         description="Set up a bookable offering in four quick steps."
         actions={
-          <Link
-            href="/activities"
-            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-          >
+          <Link href="/activities" className={buttonClasses('secondary', 'md')}>
             <ChevronLeft className="h-4 w-4" aria-hidden />
             Back to activities
           </Link>

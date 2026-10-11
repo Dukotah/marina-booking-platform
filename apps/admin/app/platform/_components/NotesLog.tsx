@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { AlertTriangle, Flag, FlagOff } from 'lucide-react';
 import { addNoteAction, setNoteBlockerAction, type PlatformResult } from '../actions';
 import { formatDateTime, formatRelative } from '../../../lib/format';
+import { Button } from '../../../components/ui';
 
 export interface NoteView {
   id: string;
@@ -18,13 +19,9 @@ export interface NoteView {
 function Submit() {
   const { pending } = useFormStatus();
   return (
-    <button
-      type="submit"
-      disabled={pending}
-      className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400 disabled:opacity-50"
-    >
+    <Button type="submit" variant="primary" size="md" disabled={pending}>
       {pending ? 'Adding…' : 'Add note'}
-    </button>
+    </Button>
   );
 }
 
@@ -66,7 +63,7 @@ export function NotesLog({
         <div>
           <label
             htmlFor="note-body"
-            className="block text-xs font-medium uppercase tracking-wide text-slate-400"
+            className="mb-1.5 block text-sm font-medium text-ink"
           >
             What happened?
           </label>
@@ -78,10 +75,10 @@ export function NotesLog({
             placeholder="Called Tuesday — waiting on their dock photos before we can finish the activity pages."
             aria-invalid={bodyError ? true : undefined}
             aria-describedby={bodyError ? 'note-body-error' : undefined}
-            className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink placeholder:text-ink-muted shadow-sm transition-colors focus:border-accent focus:outline-none focus:ring-2 focus:ring-focus"
           />
           {bodyError && (
-            <p id="note-body-error" role="alert" className="mt-1 text-xs text-rose-300">
+            <p id="note-body-error" role="alert" className="mt-1 text-xs text-rose-700">
               {bodyError}
             </p>
           )}
@@ -92,14 +89,14 @@ export function NotesLog({
             id="note-is-blocker"
             name="is_blocker"
             type="checkbox"
-            className="h-4 w-4 rounded border-slate-600 bg-slate-900 text-emerald-500 focus:ring-2 focus:ring-emerald-400 focus:ring-offset-2 focus:ring-offset-slate-950"
+            className="h-4 w-4 rounded border-line-strong text-accent accent-accent focus:ring-2 focus:ring-focus"
           />
-          <label htmlFor="note-is-blocker" className="text-sm text-slate-300">
+          <label htmlFor="note-is-blocker" className="text-sm text-ink-body">
             This is what is blocking them right now
           </label>
           <div className="ml-auto flex items-center gap-3">
             {state && !state.ok && state.message && (
-              <p role="alert" className="text-sm text-rose-300">
+              <p role="alert" className="text-sm text-rose-700">
                 {state.message}
               </p>
             )}
@@ -109,7 +106,7 @@ export function NotesLog({
       </form>
 
       {notes.length === 0 ? (
-        <p className="rounded-lg border border-dashed border-slate-700 px-4 py-6 text-center text-sm text-slate-400">
+        <p className="rounded-lg border border-dashed border-line-strong px-4 py-6 text-center text-sm text-ink-muted">
           No notes yet. The first one is usually the kickoff call.
         </p>
       ) : (
@@ -120,7 +117,7 @@ export function NotesLog({
             ))}
           </ol>
           {truncated && (
-            <p className="text-xs text-slate-400">
+            <p className="text-xs text-ink-muted">
               Showing the {notes.length} most recent notes. Older ones are still stored.
             </p>
           )}
@@ -149,20 +146,20 @@ function NoteRow({ operatorId, note }: { operatorId: string; note: NoteView }) {
 
   return (
     <li
-      className={`rounded-xl border p-4 ${
-        note.isBlocker ? 'border-amber-500/50 bg-amber-500/5' : 'border-slate-800 bg-slate-900/40'
+      className={`rounded-lg border p-4 ${
+        note.isBlocker ? 'border-amber-200 bg-amber-50' : 'border-line bg-surface shadow-sm'
       }`}
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           {note.isBlocker && (
-            <p className="mb-1 inline-flex items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-xs font-semibold text-amber-200">
+            <p className="mb-1 inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">
               <AlertTriangle className="h-3.5 w-3.5" aria-hidden />
               Current blocker
             </p>
           )}
-          <p className="whitespace-pre-wrap break-words text-sm text-slate-100">{note.body}</p>
-          <p className="mt-1.5 text-xs text-slate-400">
+          <p className="whitespace-pre-wrap break-words text-sm text-ink">{note.body}</p>
+          <p className="mt-1.5 text-xs text-ink-muted">
             {note.author} ·{' '}
             <time dateTime={note.createdAt.toISOString()} title={formatDateTime(note.createdAt)}>
               {formatRelative(note.createdAt)}
@@ -173,7 +170,7 @@ function NoteRow({ operatorId, note }: { operatorId: string; note: NoteView }) {
           type="button"
           onClick={toggleBlocker}
           disabled={pending}
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-700 px-2.5 py-1.5 text-xs text-slate-300 transition hover:bg-slate-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 disabled:opacity-50"
+          className="inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-xs text-ink-body shadow-sm transition-colors hover:bg-surface-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-focus disabled:opacity-50"
         >
           {note.isBlocker ? (
             <>
@@ -188,7 +185,7 @@ function NoteRow({ operatorId, note }: { operatorId: string; note: NoteView }) {
         </button>
       </div>
       {error && (
-        <p role="alert" className="mt-2 text-xs text-rose-300">
+        <p role="alert" className="mt-2 text-xs text-rose-700">
           {error}
         </p>
       )}

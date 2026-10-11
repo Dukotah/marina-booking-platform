@@ -12,10 +12,13 @@ import {
 } from 'recharts';
 import type { OccupancyReport } from './queries';
 
+/** The single accent (teal-600) — charts use the one accent, never a second color. */
+const ACCENT = 'rgb(var(--accent))';
+
 export interface OccupancyReportChartProps {
   data: OccupancyReport['daily'];
-  /** Operator brand color (hex) — keeps the chart white-label. */
-  brandColor: string;
+  /** Accepted for call-site compatibility; the line renders on the teal accent. */
+  brandColor?: string;
 }
 
 interface ChartRow {
@@ -44,10 +47,10 @@ function ChartTooltip({
   const row = payload[0]?.payload;
   if (!row) return null;
   return (
-    <div className="rounded-md border border-slate-200 bg-white px-3 py-2 text-xs shadow-md">
-      <div className="font-medium text-slate-900">{row.label}</div>
-      <div className="mt-0.5 text-slate-600">{row.percent.toFixed(0)}% occupancy</div>
-      <div className="text-slate-400">
+    <div className="rounded-lg border border-line bg-surface px-3 py-2 text-xs shadow-sm">
+      <div className="font-medium text-ink">{row.label}</div>
+      <div className="mt-0.5 text-ink-body">{row.percent.toFixed(0)}% occupancy</div>
+      <div className="text-ink-muted">
         {row.capacityBooked}/{row.capacityTotal} seats
       </div>
     </div>
@@ -59,7 +62,7 @@ function ChartTooltip({
  * selected range. The line uses the operator's brand color for white-label, and
  * the Y axis is pinned to 0–100% so trends read consistently across ranges.
  */
-export function OccupancyReportChart({ data, brandColor }: OccupancyReportChartProps) {
+export function OccupancyReportChart({ data }: OccupancyReportChartProps) {
   const rows = useMemo<ChartRow[]>(
     () =>
       data.map((p) => ({
@@ -95,15 +98,15 @@ export function OccupancyReportChart({ data, brandColor }: OccupancyReportChartP
           />
           <Tooltip
             content={<ChartTooltip />}
-            cursor={{ stroke: brandColor, strokeWidth: 1, strokeOpacity: 0.3 }}
+            cursor={{ stroke: ACCENT, strokeWidth: 1, strokeOpacity: 0.3 }}
           />
           <Line
             type="monotone"
             dataKey="percent"
-            stroke={brandColor}
+            stroke={ACCENT}
             strokeWidth={2}
             dot={false}
-            activeDot={{ r: 4, fill: brandColor }}
+            activeDot={{ r: 4, fill: ACCENT }}
             isAnimationActive={false}
           />
         </LineChart>

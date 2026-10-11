@@ -39,3 +39,38 @@ export function assignLanes(bookings: ManifestBooking[]): {
 
   return { laned, laneCount: Math.max(1, laneEnds.length) };
 }
+
+/**
+ * The same greedy lane packing over any [startMin, endMin] intervals, so the
+ * Timeline can stack booked blocks AND open-slot blocks in one shared grid (a
+ * booking and its own slot overlap, so they must never share a lane). Returns each
+ * input's lane index in the original order, plus the total lane count.
+ */
+export function assignLanesGeneric<T extends { startMin: number; endMin: number }>(
+  items: T[],
+): { lanes: number[]; laneCount: number } {
+  const order = items
+    .map((item, index) => ({ item, index }))
+    .sort((a, b) => a.item.startMin - b.item.startMin || a.item.endMin - b.item.endMin);
+  const laneEnds: number[] = [];
+  const lanes = new Array<number>(items.length).fill(0);
+
+  for (const { item, index } of order) {
+    let placed = -1;
+    for (let i = 0; i < laneEnds.length; i += 1) {
+      if (item.startMin >= laneEnds[i]) {
+        placed = i;
+        break;
+      }
+    }
+    if (placed === -1) {
+      placed = laneEnds.length;
+      laneEnds.push(item.endMin);
+    } else {
+      laneEnds[placed] = item.endMin;
+    }
+    lanes[index] = placed;
+  }
+
+  return { lanes, laneCount: Math.max(1, laneEnds.length) };
+}

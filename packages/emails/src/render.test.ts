@@ -19,6 +19,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { render } from '@react-email/components';
 import type * as React from 'react';
 import {
+  BookingCancelled,
   BookingConfirmation,
   BookingReminder,
   RefundReceipt,
@@ -124,6 +125,22 @@ const REFUND_PROPS = {
   processedDateLabel: 'June 2, 2026',
   paymentMethodLabel: 'Visa ending 4242',
 } satisfies Parameters<typeof RefundReceipt>[0];
+
+const CANCELLED_PROPS = {
+  ...BRAND,
+  orderNumber: 'LSRA-2606-0041',
+  customerName: 'Dana',
+  activityName: SEEDED_ACTIVITY,
+  dateLabel: 'Thursday, June 4, 2026',
+  timeLabel: '9:00 AM',
+  locationLabel: 'Lake Sonoma Marina',
+  reason: 'Weather cancellation',
+  refundedCents: 36_000,
+  cardRefundCents: 30_000,
+  giftRefundCents: 6_000,
+  feeCents: 2_500,
+  cardLabel: 'Visa ending 4242',
+} satisfies Parameters<typeof BookingCancelled>[0];
 
 const WAIVER_PROPS = {
   ...BRAND,
@@ -254,6 +271,22 @@ const CASES: Array<{ name: string; make: (filler: string) => React.ReactElement 
       }),
   },
   {
+    name: 'BookingCancelled (full refund split + fee)',
+    make: (f) => BookingCancelled({ ...CANCELLED_PROPS, reason: `Weather cancellation${f}` }),
+  },
+  {
+    name: 'BookingCancelled (no refund, no location, no reason)',
+    make: (f) =>
+      BookingCancelled({
+        ...BRAND,
+        orderNumber: 'LSRA-2606-0041',
+        customerName: 'Dana',
+        activityName: SEEDED_ACTIVITY + f,
+        dateLabel: 'Thursday, June 4, 2026',
+        refundedCents: 0,
+      }),
+  },
+  {
     name: 'WaiverRequest (with deadline)',
     make: (f) => WaiverRequest({ ...WAIVER_PROPS, activityName: SEEDED_ACTIVITY + f }),
   },
@@ -376,6 +409,42 @@ describe('render guard', () => {
     expect(html).not.toContain('Sign your waiver');
     const reminder = await renderEmail(BookingReminder(REMINDER_PROPS));
     expect(reminder).not.toContain('Sign your waiver');
+  });
+
+  it('states what was cancelled, the refund amount/method and the fee', async () => {
+    const html = await renderEmail(BookingCancelled(CANCELLED_PROPS));
+    const text = await renderEmailText(BookingCancelled(CANCELLED_PROPS));
+    // What was cancelled.
+    expect(html).toContain('has been cancelled');
+    expect(html).toContain(CANCELLED_PROPS.orderNumber);
+    expect(html).toContain(SEEDED_ACTIVITY);
+    // Refund amount + the split by method + the withheld fee.
+    expect(html).toContain('$360.00'); // refundedCents = 36_000
+    expect(html).toContain('$300.00'); // cardRefundCents = 30_000
+    expect(html).toContain('$60.00'); // giftRefundCents = 6_000
+    expect(html).toContain('Visa ending 4242');
+    expect(html).toContain('$25.00'); // feeCents = 2_500
+    expect(text).toContain('$360.00');
+    // Never leaks dev/test/fake/simulated wording to the guest.
+    expect(html.toLowerCase()).not.toMatch(/\b(fake|simulated|sandbox|dev mode|test payment)\b/);
+  });
+
+  it('says plainly when a cancellation issued no refund', async () => {
+    const html = await renderEmail(
+      BookingCancelled({
+        ...BRAND,
+        orderNumber: 'LSRA-2606-0041',
+        customerName: 'Dana',
+        activityName: SEEDED_ACTIVITY,
+        dateLabel: 'Thursday, June 4, 2026',
+        refundedCents: 0,
+      }),
+    );
+    expect(html).toContain('No refund issued');
+    expect(html).toContain('outside the refund window');
+    // No stray money lines when there is nothing to refund and no fee.
+    expect(html).not.toContain('Refunded to card');
+    expect(html).not.toContain('Gift-card credit');
   });
 });
 

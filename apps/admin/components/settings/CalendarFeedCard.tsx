@@ -85,18 +85,18 @@ export function CalendarFeedCard({
   }
 
   return (
-    <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
-      <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-5 py-4">
+    <section className="rounded-lg border border-line bg-surface shadow-sm">
+      <div className="flex items-start justify-between gap-4 border-b border-line px-5 py-4">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <h3 className="text-base font-semibold text-slate-900">{def.name}</h3>
+            <h3 className="text-base font-semibold text-ink">{def.name}</h3>
             {live ? (
               <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
                 <Check className="h-3 w-3" aria-hidden /> Live
               </span>
             ) : null}
           </div>
-          <p className="mt-0.5 text-sm text-slate-500">{def.description}</p>
+          <p className="mt-0.5 text-sm text-ink-muted">{def.description}</p>
         </div>
         {token ? (
           <label className="flex shrink-0 cursor-pointer items-center gap-2">
@@ -105,7 +105,7 @@ export function CalendarFeedCard({
               type="checkbox"
               checked={enabled}
               onChange={(e) => toggleEnabled(e.target.checked)}
-              className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-400"
+              className="h-4 w-4 rounded border-line-strong text-accent accent-accent focus:ring-focus"
             />
           </label>
         ) : null}
@@ -114,8 +114,8 @@ export function CalendarFeedCard({
       <div className="space-y-4 px-5 py-5">
         {feedUrl ? (
           <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700" htmlFor="calendar-feed-url">
-              Feed URL <span className="font-normal text-slate-400">(secret — anyone with it can see your schedule)</span>
+            <label className="mb-1 block text-sm font-medium text-ink-body" htmlFor="calendar-feed-url">
+              Feed URL <span className="font-normal text-ink-muted">(secret — anyone with it can see your schedule)</span>
             </label>
             <div className="flex items-center gap-2">
               <input
@@ -123,21 +123,21 @@ export function CalendarFeedCard({
                 readOnly
                 value={feedUrl}
                 onFocus={(e) => e.currentTarget.select()}
-                className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 font-mono text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
+                className="w-full rounded-lg border border-line bg-surface-muted px-3 py-2 font-mono text-xs text-ink-body focus:outline-none focus:ring-2 focus:ring-focus"
               />
               <SecondaryButton type="button" onClick={copyUrl}>
                 {copied ? <Check className="h-4 w-4" aria-hidden /> : <Copy className="h-4 w-4" aria-hidden />}
                 <span className="sr-only sm:not-sr-only sm:ml-1.5">{copied ? 'Copied' : 'Copy'}</span>
               </SecondaryButton>
             </div>
-            <p className="mt-2 text-xs text-slate-500">
-              In Google Calendar: <span className="font-medium text-slate-600">Other calendars → + → From URL</span>,
+            <p className="mt-2 text-xs text-ink-muted">
+              In Google Calendar: <span className="font-medium text-ink-body">Other calendars → + → From URL</span>,
               paste the feed URL. Apple Calendar: File → New Calendar Subscription. Outlook: Add calendar →
               Subscribe from web. Bookings appear and update automatically (Google refreshes every few hours).
             </p>
           </div>
         ) : (
-          <p className="text-sm text-slate-600">
+          <p className="text-sm text-ink-body">
             Generate a secret feed URL, then subscribe to it from Google Calendar, Apple Calendar, or
             Outlook — every booking shows up on your calendar with guest, party size, waiver, and
             balance details, and stays up to date as bookings change.

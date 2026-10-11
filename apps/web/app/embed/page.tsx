@@ -117,7 +117,7 @@ async function ConfirmationStep({
     ? buildEmbedHref(session, 'activity', { activityId: session.activity })
     : buildEmbedHref(session, 'catalog');
 
-  if (!params.order) {
+  if (!params.order || !params.email) {
     return (
       <EmbedNotice
         title="No booking to show"
@@ -129,7 +129,7 @@ async function ConfirmationStep({
   }
 
   try {
-    const order = await getOrder(params.order);
+    const order = await getOrder(params.order, params.email);
     return (
       <EmbedConfirmation
         order={order}

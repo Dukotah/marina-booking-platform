@@ -27,6 +27,7 @@ import {
   OrderActions,
   type RefundablePayment,
 } from '../../../components/orders/OrderActions';
+import { Badge, Card, SectionCard, buttonClasses } from '../../../components/ui';
 import {
   getTenantDb,
   requirePermission,
@@ -180,8 +181,8 @@ export default async function OrderDetailPage({
       header: 'Activity',
       cell: (row) => (
         <div className="min-w-0">
-          <div className="font-medium text-slate-800">{row.activity}</div>
-          <div className="text-xs text-slate-500">{row.rate}</div>
+          <div className="font-medium text-ink">{row.activity}</div>
+          <div className="text-xs text-ink-muted">{row.rate}</div>
         </div>
       ),
     },
@@ -190,8 +191,8 @@ export default async function OrderDetailPage({
       header: 'When',
       cell: (row) => (
         <div>
-          <div className="text-slate-700">{formatDate(row.datetime)}</div>
-          <div className="text-xs text-slate-500">{formatTime(row.datetime)}</div>
+          <div className="text-ink-body">{formatDate(row.datetime)}</div>
+          <div className="text-xs text-ink-muted">{formatTime(row.datetime)}</div>
         </div>
       ),
     },
@@ -199,20 +200,20 @@ export default async function OrderDetailPage({
       id: 'qty',
       header: 'Qty',
       align: 'right',
-      cell: (row) => row.quantity,
+      cell: (row) => <span className="tabular-nums">{row.quantity}</span>,
     },
     {
       id: 'unit',
       header: 'Unit',
       align: 'right',
-      cell: (row) => formatUSD(row.unitPriceCents),
+      cell: (row) => <span className="tabular-nums">{formatUSD(row.unitPriceCents)}</span>,
     },
     {
       id: 'lineTotal',
       header: 'Line total',
       align: 'right',
       cell: (row) => (
-        <span className="font-medium text-slate-800">
+        <span className="font-medium text-ink tabular-nums">
           {formatUSD(row.unitPriceCents * row.quantity)}
         </span>
       ),
@@ -221,7 +222,7 @@ export default async function OrderDetailPage({
       id: 'status',
       header: 'Status',
       cell: (row) => (
-        <span className="text-xs font-medium text-slate-600">
+        <span className="text-xs font-medium text-ink-body">
           {ITEM_STATUS_LABELS[row.status] ?? row.status}
         </span>
       ),
@@ -231,7 +232,7 @@ export default async function OrderDetailPage({
       header: 'Waiver',
       cell: (row) =>
         !row.waiverRequired ? (
-          <span className="text-xs text-slate-500">N/A</span>
+          <span className="text-xs text-ink-muted">N/A</span>
         ) : row.waiverSigned ? (
           <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700">
             <ShieldCheck className="h-3.5 w-3.5" aria-hidden /> Signed
@@ -250,8 +251,8 @@ export default async function OrderDetailPage({
       header: 'Method',
       cell: (row) => (
         <div className="flex items-center gap-2">
-          <CreditCard className="h-4 w-4 text-slate-400" aria-hidden />
-          <span className="text-slate-700">
+          <CreditCard className="h-4 w-4 text-ink-muted" aria-hidden />
+          <span className="text-ink-body">
             {row.cardLabel ?? PAYMENT_METHOD_LABELS[row.method] ?? row.method}
           </span>
         </div>
@@ -266,7 +267,7 @@ export default async function OrderDetailPage({
       id: 'amount',
       header: 'Amount',
       align: 'right',
-      cell: (row) => formatUSD(row.amountCents),
+      cell: (row) => <span className="tabular-nums">{formatUSD(row.amountCents)}</span>,
     },
     {
       id: 'refunded',
@@ -274,12 +275,11 @@ export default async function OrderDetailPage({
       align: 'right',
       cell: (row) =>
         row.refundedCents > 0 ? (
-          <span className="text-amber-700">{formatUSD(row.refundedCents)}</span>
+          <span className="text-amber-700 tabular-nums">{formatUSD(row.refundedCents)}</span>
         ) : (
           // The dash is typography, not information: spoken it is silence or
-          // "dash", so the cell states its own value. slate-500, not slate-400
-          // (2.45:1 on white). (1.3.1, 1.4.3)
-          <span className="text-slate-500">
+          // "dash", so the cell states its own value. (1.3.1, 1.4.3)
+          <span className="text-ink-muted">
             <span aria-hidden>—</span>
             <span className="sr-only">None</span>
           </span>
@@ -288,7 +288,7 @@ export default async function OrderDetailPage({
     {
       id: 'processed',
       header: 'Processed',
-      cell: (row) => <span className="text-slate-500">{formatDateTime(row.processedAt)}</span>,
+      cell: (row) => <span className="text-ink-muted">{formatDateTime(row.processedAt)}</span>,
     },
   ];
 
@@ -296,9 +296,7 @@ export default async function OrderDetailPage({
     <AdminShell>
       <Link
         href="/orders"
-        // This link sits on the page background (bg-slate-100), where slate-500 is
-        // 4.34:1 — under the floor. slate-600 is 6.9:1 on the same ground. (1.4.3)
-        className="mb-3 inline-flex items-center gap-1.5 text-sm font-medium text-slate-600 hover:text-slate-800"
+        className="mb-3 inline-flex min-h-11 items-center gap-1.5 text-sm font-medium text-ink-body hover:text-ink"
       >
         <ArrowLeft className="h-4 w-4" aria-hidden />
         Back to orders
@@ -313,10 +311,7 @@ export default async function OrderDetailPage({
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">
           {/* Items */}
-          <section>
-            <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-600">
-              Items
-            </h2>
+          <SectionCard title="Items" bodyPadding={false}>
             <DataTable
               columns={itemColumns}
               rows={itemRows}
@@ -324,13 +319,10 @@ export default async function OrderDetailPage({
               caption={`Items on order ${order.order_number}`}
               emptyState="This order has no items."
             />
-          </section>
+          </SectionCard>
 
           {/* Payments */}
-          <section>
-            <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-600">
-              Payments
-            </h2>
+          <SectionCard title="Payments" bodyPadding={false}>
             <DataTable
               columns={paymentColumns}
               rows={paymentRows}
@@ -338,24 +330,18 @@ export default async function OrderDetailPage({
               caption={`Payments on order ${order.order_number}`}
               emptyState="No payments recorded for this order."
             />
-          </section>
+          </SectionCard>
 
           {/* Timeline */}
-          <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-600">
-              Timeline
-            </h2>
+          <SectionCard title="Timeline">
             <OrderTimeline events={events} />
-          </section>
+          </SectionCard>
         </div>
 
         <div className="space-y-6">
           {/* Actions */}
           {canWrite || canRefund ? (
-            <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-              <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-600">
-                Actions
-              </h2>
+            <SectionCard title="Actions">
               <OrderActions
                 orderId={order.id}
                 isCancelled={status === 'CANCELLED'}
@@ -365,14 +351,11 @@ export default async function OrderDetailPage({
                 refundablePayments={refundablePayments}
                 balanceDueCents={order.balance_due_cents}
               />
-            </section>
+            </SectionCard>
           ) : null}
 
           {/* Summary */}
-          <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-600">
-              Summary
-            </h2>
+          <SectionCard title="Summary">
             <dl className="space-y-2 text-sm">
               <SummaryRow label="Subtotal" value={formatUSD(order.subtotal_cents)} />
               {order.discount_cents > 0 ? (
@@ -387,57 +370,53 @@ export default async function OrderDetailPage({
               {order.tip_cents > 0 ? (
                 <SummaryRow label="Tip" value={formatUSD(order.tip_cents)} />
               ) : null}
-              <div className="my-2 border-t border-slate-100" />
+              <div className="my-2 border-t border-line" />
               <SummaryRow label="Total" value={formatUSD(order.total_cents)} strong />
               <SummaryRow label="Paid" value={formatUSD(order.amount_paid_cents)} />
               <SummaryRow
                 label="Balance due"
                 value={formatUSD(order.balance_due_cents)}
                 strong={order.balance_due_cents > 0}
-                accent={order.balance_due_cents > 0 ? 'amber' : undefined}
+                accent={order.balance_due_cents > 0 ? 'owed' : undefined}
               />
             </dl>
-          </section>
+          </SectionCard>
 
           {/* Customer */}
-          <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-600">
-              Customer
-            </h2>
+          <SectionCard title="Customer">
             <div className="space-y-2 text-sm">
-              <div className="flex items-center gap-2 text-slate-800">
-                <User className="h-4 w-4 text-slate-400" aria-hidden />
+              <div className="flex items-center gap-2 text-ink">
+                <User className="h-4 w-4 text-ink-muted" aria-hidden />
                 <span className="font-medium">{customerName}</span>
               </div>
               {order.customer.email ? (
-                <div className="flex items-center gap-2 text-slate-600">
-                  <Mail className="h-4 w-4 text-slate-400" aria-hidden />
+                <div className="flex items-center gap-2 text-ink-body">
+                  <Mail className="h-4 w-4 text-ink-muted" aria-hidden />
                   <a href={`mailto:${order.customer.email}`} className="hover:underline">
                     {order.customer.email}
                   </a>
                 </div>
               ) : null}
               {order.customer.phone ? (
-                <div className="flex items-center gap-2 text-slate-600">
-                  <Phone className="h-4 w-4 text-slate-400" aria-hidden />
+                <div className="flex items-center gap-2 text-ink-body">
+                  <Phone className="h-4 w-4 text-ink-muted" aria-hidden />
                   <a href={`tel:${order.customer.phone}`} className="hover:underline">
                     {order.customer.phone}
                   </a>
                 </div>
               ) : null}
               {order.is_returning_guest ? (
-                <p className="pt-1 text-xs font-medium text-sky-700">Returning guest</p>
+                <div className="pt-1">
+                  <Badge tone="accent">Returning guest</Badge>
+                </div>
               ) : null}
             </div>
-          </section>
+          </SectionCard>
 
           {/* Waiver status */}
-          <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-600">
-              Waiver status
-            </h2>
+          <SectionCard title="Waiver status">
             {waiverItems.length === 0 ? (
-              <p className="text-sm text-slate-500">No waiver required for this order.</p>
+              <p className="text-sm text-ink-muted">No waiver required for this order.</p>
             ) : (
               <>
                 <div
@@ -466,9 +445,9 @@ export default async function OrderDetailPage({
                       .map((item) => (
                         <li
                           key={item.id}
-                          className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50/60 px-3 py-2"
+                          className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2"
                         >
-                          <span className="text-xs font-medium text-slate-700">
+                          <span className="text-xs font-medium text-ink-body">
                             {item.activity.name_external}
                           </span>
                           <SignLinkActions
@@ -482,7 +461,7 @@ export default async function OrderDetailPage({
                 {waiversSigned > 0 ? (
                   <Link
                     href={`/orders/${order.id}/waiver-packet`}
-                    className="mt-3 inline-flex items-center gap-2 rounded-md border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                    className={buttonClasses('secondary', 'md', 'mt-3')}
                   >
                     <Printer className="h-4 w-4" aria-hidden />
                     Print waiver packet
@@ -490,7 +469,7 @@ export default async function OrderDetailPage({
                 ) : null}
               </>
             )}
-          </section>
+          </SectionCard>
         </div>
       </div>
     </AdminShell>
@@ -506,18 +485,18 @@ function SummaryRow({
   label: string;
   value: string;
   strong?: boolean;
-  accent?: 'amber';
+  accent?: 'owed';
 }) {
   return (
     <div className="flex items-center justify-between">
-      <dt className="text-slate-500">{label}</dt>
+      <dt className="text-ink-body">{label}</dt>
       <dd
         className={
-          accent === 'amber'
-            ? 'font-semibold text-amber-700'
+          accent === 'owed'
+            ? 'font-semibold text-rose-700 tabular-nums'
             : strong
-              ? 'font-semibold text-slate-900'
-              : 'text-slate-700'
+              ? 'font-semibold text-ink tabular-nums'
+              : 'text-ink-body tabular-nums'
         }
       >
         {value}

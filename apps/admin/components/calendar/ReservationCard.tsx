@@ -16,16 +16,19 @@ import {
   CalendarClock,
   Check,
   Loader2,
+  MessageSquare,
   Pencil,
   Phone,
   Plus,
   RotateCcw,
+  Send,
   UserX,
   Users,
   X,
 } from 'lucide-react';
 import { cn } from '../../lib/cn';
 import { formatRelative, formatUSD } from '../../lib/format';
+import { Button, Badge, type BadgeTone } from '../ui';
 import { SignLinkActions } from '../waiver/SignLinkActions';
 import {
   checkInOrderItem,
@@ -37,11 +40,14 @@ import {
   addOrderChargeAction,
   cancelOrderAction,
   collectBalanceAction,
+  previewCancellationRefund,
+  type RefundPreview,
 } from '../../app/orders/actions';
 import {
   addOrderNote,
   listRescheduleSlots,
   loadReservationCard,
+  messageGuestAction,
   rescheduleReservation,
   updateGuestContact,
   type ReservationCardData,
@@ -179,14 +185,14 @@ export function ReservationCard({
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        className="absolute inset-y-0 right-0 flex w-full max-w-md flex-col border-l border-slate-200 bg-white shadow-xl focus:outline-none"
+        className="absolute inset-y-0 right-0 flex w-full max-w-md flex-col border-l border-line bg-surface shadow-xl focus:outline-none"
       >
         <p role="status" aria-live="polite" className="sr-only">
           {announcement}
         </p>
 
         {/* Header */}
-        <div className="relative shrink-0 border-b border-slate-200 px-5 py-4">
+        <div className="relative shrink-0 border-b border-line px-5 py-4">
           <span
             aria-hidden
             className="absolute inset-y-0 left-0 w-1"
@@ -194,15 +200,15 @@ export function ReservationCard({
           />
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <h2 id={titleId} className="truncate text-base font-semibold text-slate-900">
+              <h2 id={titleId} className="truncate text-base font-semibold text-ink">
                 {card ? card.activityName : 'Reservation'}
               </h2>
               {card ? (
-                <p className="mt-0.5 text-sm text-slate-600">
-                  <span className="font-medium tabular-nums text-slate-800">
+                <p className="mt-0.5 text-sm text-ink-body">
+                  <span className="font-medium tabular-nums text-ink">
                     {card.dayLabel} · {card.timeLabel}
                   </span>
-                  <span className="mx-1.5 text-slate-300">|</span>
+                  <span className="mx-1.5 text-line-strong">|</span>
                   <span className="font-mono text-xs">{card.orderNumber}</span>
                 </p>
               ) : null}
@@ -213,7 +219,7 @@ export function ReservationCard({
                 type="button"
                 onClick={onClose}
                 aria-label="Close reservation card"
-                className="inline-flex h-9 w-9 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-500"
+                className="inline-flex h-11 w-11 items-center justify-center rounded-lg text-ink-muted hover:bg-surface-muted hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-focus"
               >
                 <X className="h-5 w-5" aria-hidden />
               </button>
@@ -228,7 +234,7 @@ export function ReservationCard({
               {loadError}
             </p>
           ) : !card ? (
-            <p className="flex items-center gap-2 py-8 text-sm text-slate-500">
+            <p className="flex items-center gap-2 py-8 text-sm text-ink-muted">
               <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Loading reservation…
             </p>
           ) : (
@@ -240,7 +246,7 @@ export function ReservationCard({
               ) : null}
 
               {inactive ? (
-                <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                <p className="rounded-lg bg-surface-muted px-3 py-2 text-sm text-ink-body">
                   This reservation is cancelled. It can be reviewed but not changed here.
                 </p>
               ) : null}
@@ -260,6 +266,8 @@ export function ReservationCard({
 
               <WaiverSection card={card} />
 
+              <MessageGuestSection card={card} pending={pending} canWrite={canWrite} run={run} />
+
               <NotesSection card={card} pending={pending} canWrite={Boolean(card.canWrite)} run={run} />
             </div>
           )}
@@ -267,10 +275,10 @@ export function ReservationCard({
 
         {/* Footer */}
         {card ? (
-          <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-5 py-3">
+          <div className="shrink-0 border-t border-line bg-surface-muted px-5 py-3">
             <Link
               href={`/orders/${card.orderId}`}
-              className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-700 hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-500"
+              className="inline-flex min-h-11 items-center gap-1.5 text-sm font-medium text-accent hover:text-accent-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-focus"
             >
               Open full order <ArrowRight className="h-4 w-4" aria-hidden />
             </Link>
@@ -289,20 +297,22 @@ type RunFn = (
 
 function SectionHeading({ children }: { children: React.ReactNode }) {
   return (
-    <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">{children}</h3>
+    <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-muted">{children}</h3>
   );
 }
 
 function StatusPill({ status }: { status: ReservationCardData['itemStatus'] }) {
-  const map: Record<string, { label: string; cls: string }> = {
-    UPCOMING: { label: 'Upcoming', cls: 'bg-sky-50 text-sky-700' },
-    CHECKED_IN: { label: 'Checked in', cls: 'bg-emerald-50 text-emerald-700' },
-    NO_SHOW: { label: 'No-show', cls: 'bg-slate-100 text-slate-600' },
-    CANCELLED: { label: 'Cancelled', cls: 'bg-rose-50 text-rose-700' },
-    COMPLETED: { label: 'Completed', cls: 'bg-slate-100 text-slate-600' },
+  // Status color law: UPCOMING + COMPLETED are quiet slate, CHECKED_IN is success,
+  // NO_SHOW/CANCELLED are muted. No sky.
+  const map: Record<string, { label: string; tone: BadgeTone }> = {
+    UPCOMING: { label: 'Upcoming', tone: 'neutral' },
+    CHECKED_IN: { label: 'Checked in', tone: 'success' },
+    NO_SHOW: { label: 'No-show', tone: 'cancelled' },
+    CANCELLED: { label: 'Cancelled', tone: 'owed' },
+    COMPLETED: { label: 'Completed', tone: 'cancelled' },
   };
-  const s = map[status] ?? { label: status, cls: 'bg-slate-100 text-slate-600' };
-  return <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${s.cls}`}>{s.label}</span>;
+  const s = map[status] ?? { label: status, tone: 'neutral' as BadgeTone };
+  return <Badge tone={s.tone}>{s.label}</Badge>;
 }
 
 /** One-tap check-in / no-show / undo — the same manifest actions, from the card. */
@@ -319,24 +329,22 @@ function StatusOps({
   if (card.itemStatus === 'UPCOMING') {
     return (
       <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
+        <Button
+          variant="primary"
           disabled={pending}
           onClick={() => run(`Checked in ${name}.`, () => checkInOrderItem(card.orderItemId))}
-          className="inline-flex min-h-10 items-center gap-1.5 rounded-md bg-emerald-700 px-3 text-sm font-semibold text-white hover:bg-emerald-800 disabled:opacity-50"
         >
           <Check className="h-4 w-4" aria-hidden /> Check in
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button
+          variant="secondary"
           disabled={pending}
           onClick={() =>
             run(`Marked ${name} as a no-show.`, () => markNoShowOrderItem(card.orderItemId))
           }
-          className="inline-flex min-h-10 items-center gap-1.5 rounded-md border border-slate-300 px-3 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"
         >
           <UserX className="h-4 w-4" aria-hidden /> No-show
-        </button>
+        </Button>
       </div>
     );
   }
@@ -344,8 +352,8 @@ function StatusOps({
     const isCheckIn = card.itemStatus === 'CHECKED_IN';
     return (
       <div>
-        <button
-          type="button"
+        <Button
+          variant="secondary"
           disabled={pending}
           onClick={() =>
             run(
@@ -356,11 +364,10 @@ function StatusOps({
                   : undoNoShowOrderItem(card.orderItemId),
             )
           }
-          className="inline-flex min-h-10 items-center gap-1.5 rounded-md border border-slate-300 px-3 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"
         >
           <RotateCcw className="h-4 w-4" aria-hidden />
           {isCheckIn ? 'Undo check-in' : 'Undo no-show'}
-        </button>
+        </Button>
       </div>
     );
   }
@@ -419,7 +426,7 @@ function GuestSection({
   }
 
   const inputCls =
-    'mt-0.5 block w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500';
+    'mt-0.5 block w-full rounded-lg border border-line bg-surface px-2.5 py-2 text-sm text-ink focus:border-accent focus:outline-none focus:ring-1 focus:ring-focus';
 
   return (
     <section aria-label="Guest">
@@ -431,7 +438,7 @@ function GuestSection({
             ref={editTriggerRef}
             onClick={() => setEditing(true)}
             aria-label={`Edit contact details for ${card.customer.firstName} ${card.customer.lastName}`}
-            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-500"
+            className="inline-flex min-h-11 items-center gap-1 rounded-lg px-2.5 text-xs font-medium text-ink-body hover:bg-surface-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-focus"
           >
             <Pencil className="h-3.5 w-3.5" aria-hidden /> Edit
           </button>
@@ -440,62 +447,62 @@ function GuestSection({
 
       {!editing ? (
         <div className="mt-1.5">
-          <p className="text-base font-medium text-slate-900">
+          <p className="text-base font-medium text-ink">
             {card.customer.firstName} {card.customer.lastName}
           </p>
-          <p className="mt-0.5 text-sm text-slate-600">{card.customer.email}</p>
+          <p className="mt-0.5 text-sm text-ink-body">{card.customer.email}</p>
           {card.customer.phone ? (
             <a
               href={`tel:${card.customer.phone}`}
-              className="mt-0.5 inline-flex items-center gap-1 text-sm text-slate-600 hover:text-slate-800"
+              className="mt-0.5 inline-flex items-center gap-1 text-sm text-ink-body hover:text-ink"
             >
               <Phone className="h-3.5 w-3.5" aria-hidden /> {card.customer.phone}
             </a>
           ) : (
-            <p className="mt-0.5 text-sm text-slate-500">No phone on file</p>
+            <p className="mt-0.5 text-sm text-ink-muted">No phone on file</p>
           )}
         </div>
       ) : (
-        <div className="mt-2 space-y-2 rounded-lg border border-slate-200 bg-slate-50/60 p-3">
+        <div className="mt-2 space-y-2 rounded-lg border border-line bg-surface-muted p-3">
           <div className="grid grid-cols-2 gap-2">
-            <label htmlFor={ids.first} className="text-xs font-medium text-slate-600">
+            <label htmlFor={ids.first} className="text-xs font-medium text-ink-body">
               First name
               <input id={ids.first} ref={firstFieldRef} value={first} onChange={(e) => setFirst(e.target.value)} className={inputCls} />
             </label>
-            <label htmlFor={ids.last} className="text-xs font-medium text-slate-600">
+            <label htmlFor={ids.last} className="text-xs font-medium text-ink-body">
               Last name
               <input id={ids.last} value={last} onChange={(e) => setLast(e.target.value)} className={inputCls} />
             </label>
           </div>
-          <label htmlFor={ids.email} className="block text-xs font-medium text-slate-600">
+          <label htmlFor={ids.email} className="block text-xs font-medium text-ink-body">
             Email
             <input id={ids.email} type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={inputCls} />
           </label>
-          <label htmlFor={ids.phone} className="block text-xs font-medium text-slate-600">
+          <label htmlFor={ids.phone} className="block text-xs font-medium text-ink-body">
             Phone
             <input id={ids.phone} type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="(707) 555-0100" className={inputCls} />
           </label>
           <div className="flex gap-2 pt-1">
-            <button
-              type="button"
+            <Button
+              variant="primary"
+              size="sm"
               disabled={pending || !first.trim() || !last.trim() || !email.trim()}
               onClick={save}
-              className="inline-flex min-h-9 items-center gap-1.5 rounded-md bg-slate-900 px-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
             >
               {pending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
               Save
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
               disabled={pending}
               onClick={() => {
                 setEditing(false);
                 editTriggerRef.current?.focus();
               }}
-              className="inline-flex min-h-9 items-center rounded-md border border-slate-300 px-3 text-sm font-medium text-slate-600 hover:bg-slate-50"
             >
               Cancel
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -553,8 +560,8 @@ function RescheduleSection({
     <section aria-label="Date and time">
       <SectionHeading>When</SectionHeading>
       <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm text-slate-700">
-          <span className="font-semibold tabular-nums text-slate-900">
+        <p className="text-sm text-ink-body">
+          <span className="font-semibold tabular-nums text-ink">
             {card.dayLabel} · {card.timeLabel}
           </span>
         </p>
@@ -565,7 +572,7 @@ function RescheduleSection({
             aria-expanded={open}
             aria-controls={open ? panelId : undefined}
             onClick={() => setOpen((v) => !v)}
-            className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-500"
+            className="inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-line px-3 text-xs font-medium text-ink-body hover:bg-surface-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-focus"
           >
             <CalendarClock className="h-3.5 w-3.5" aria-hidden />
             {open ? 'Close' : 'Reschedule'}
@@ -574,26 +581,26 @@ function RescheduleSection({
       </div>
 
       {open ? (
-        <div id={panelId} className="mt-2 rounded-lg border border-slate-200 bg-slate-50/60 p-3">
+        <div id={panelId} className="mt-2 rounded-lg border border-line bg-surface-muted p-3">
           {slotsError ? (
             <p role="alert" className="text-sm font-medium text-rose-700">
               {slotsError}
             </p>
           ) : slots === null ? (
-            <p className="flex items-center gap-2 text-sm text-slate-500">
+            <p className="flex items-center gap-2 text-sm text-ink-muted">
               <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Loading available times…
             </p>
           ) : slots.length === 0 ? (
-            <p className="text-sm text-slate-600">No upcoming timeslots for this activity.</p>
+            <p className="text-sm text-ink-body">No upcoming timeslots for this activity.</p>
           ) : (
             <>
-              <p className="text-xs text-slate-600">
+              <p className="text-xs text-ink-body">
                 Pick a new time for this {card.quantity}-guest booking. Full slots are disabled.
               </p>
               <div className="mt-2 max-h-64 space-y-3 overflow-y-auto pr-1">
                 {groups.map((g) => (
                   <div key={g.day}>
-                    <p className="text-xs font-semibold text-slate-700">{g.day}</p>
+                    <p className="text-xs font-semibold text-ink">{g.day}</p>
                     <div className="mt-1 flex flex-wrap gap-1.5">
                       {g.slots.map((s) => {
                         const disabled = s.isCurrent || !s.hasRoom;
@@ -613,12 +620,12 @@ function RescheduleSection({
                             }
                             onClick={() => setSelected(isSelected ? null : s)}
                             className={cn(
-                              'rounded-md border px-2 py-1 text-xs font-medium tabular-nums focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-500',
+                              'min-h-11 rounded-lg border px-2.5 text-xs font-medium tabular-nums focus:outline-none focus-visible:ring-2 focus-visible:ring-focus',
                               isSelected
-                                ? 'border-slate-900 bg-slate-900 text-white'
+                                ? 'border-accent bg-accent text-white'
                                 : disabled
-                                  ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400'
-                                  : 'border-slate-300 bg-white text-slate-700 hover:border-slate-400 hover:bg-slate-50',
+                                  ? 'cursor-not-allowed border-line bg-surface-muted text-ink-muted'
+                                  : 'border-line bg-surface text-ink-body hover:border-line-strong hover:bg-surface-muted',
                             )}
                           >
                             {s.timeLabel}
@@ -639,8 +646,9 @@ function RescheduleSection({
                 ))}
               </div>
               <div className="mt-3 flex gap-2">
-                <button
-                  type="button"
+                <Button
+                  variant="primary"
+                  size="sm"
                   disabled={pending || !selected}
                   onClick={() =>
                     selected &&
@@ -658,22 +666,21 @@ function RescheduleSection({
                       },
                     )
                   }
-                  className="inline-flex min-h-9 items-center gap-1.5 rounded-md bg-slate-900 px-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
                 >
                   {pending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
                   {selected ? `Move to ${selected.dayLabel} · ${selected.timeLabel}` : 'Pick a time'}
-                </button>
-                <button
-                  type="button"
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
                   disabled={pending}
                   onClick={() => {
                     setOpen(false);
                     triggerRef.current?.focus();
                   }}
-                  className="inline-flex min-h-9 items-center rounded-md border border-slate-300 px-3 text-sm font-medium text-slate-600 hover:bg-slate-50"
                 >
                   Keep current time
-                </button>
+                </Button>
               </div>
             </>
           )}
@@ -736,18 +743,18 @@ function PartySection({
   return (
     <section aria-label="Party and charges">
       <SectionHeading>Party &amp; extras</SectionHeading>
-      <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-slate-700">
-        <span className="inline-flex items-center gap-1 font-medium text-slate-900">
-          <Users className="h-4 w-4 text-slate-500" aria-hidden /> {card.quantity}{' '}
+      <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-ink-body">
+        <span className="inline-flex items-center gap-1 font-medium text-ink">
+          <Users className="h-4 w-4 text-ink-muted" aria-hidden /> {card.quantity}{' '}
           {card.quantity === 1 ? 'guest' : 'guests'}
         </span>
         <span>
           {card.rateName} · {formatUSD(card.unitPriceCents)} each
         </span>
       </div>
-      <p className="mt-1 text-xs text-slate-500">
+      <p className="mt-1 text-xs text-ink-muted">
         Party-size changes reprice the order —{' '}
-        <Link href={`/orders/${card.orderId}`} className="font-medium text-slate-700 underline underline-offset-2 hover:text-slate-900">
+        <Link href={`/orders/${card.orderId}`} className="font-medium text-accent underline underline-offset-2 hover:text-accent-hover">
           make them on the full order
         </Link>
         .
@@ -759,35 +766,35 @@ function PartySection({
             type="button"
             ref={triggerRef}
             onClick={() => setOpen(true)}
-            className="mt-2 inline-flex items-center gap-1 rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-500"
+            className="mt-2 inline-flex min-h-11 items-center gap-1 rounded-lg border border-line px-3 text-xs font-medium text-ink-body hover:bg-surface-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-focus"
           >
             <Plus className="h-3.5 w-3.5" aria-hidden /> Add fuel / charge
           </button>
         ) : (
-          <div className="mt-2 space-y-2 rounded-lg border border-slate-200 bg-slate-50/60 p-3">
+          <div className="mt-2 space-y-2 rounded-lg border border-line bg-surface-muted p-3">
             <div className="flex flex-wrap items-end gap-2">
-              <label htmlFor={ids.amount} className="text-xs font-medium text-slate-600">
+              <label htmlFor={ids.amount} className="text-xs font-medium text-ink-body">
                 Amount
-                <div className="mt-0.5 flex items-center rounded-md border border-slate-300 bg-white px-2 focus-within:border-slate-500 focus-within:ring-1 focus-within:ring-slate-500">
-                  <span className="text-slate-500">$</span>
+                <div className="mt-0.5 flex items-center rounded-lg border border-line bg-surface px-2 focus-within:border-accent focus-within:ring-1 focus-within:ring-focus">
+                  <span className="text-ink-muted">$</span>
                   <input
                     id={ids.amount}
                     inputMode="decimal"
                     value={amount}
                     onChange={(e) => setAmount(e.target.value)}
                     placeholder="0.00"
-                    className="w-20 border-0 bg-transparent py-1.5 pl-1 text-sm focus:outline-none focus:ring-0"
+                    className="w-20 border-0 bg-transparent py-2 pl-1 text-sm focus:outline-none focus:ring-0"
                     autoFocus
                   />
                 </div>
               </label>
-              <label htmlFor={ids.category} className="text-xs font-medium text-slate-600">
+              <label htmlFor={ids.category} className="text-xs font-medium text-ink-body">
                 For
                 <select
                   id={ids.category}
                   value={category}
                   onChange={(e) => setCategory(e.target.value)}
-                  className="mt-0.5 block rounded-md border border-slate-300 bg-white py-1.5 pl-2 pr-7 text-sm"
+                  className="mt-0.5 block rounded-lg border border-line bg-surface py-2 pl-2 pr-7 text-sm focus:border-accent focus:outline-none focus:ring-1 focus:ring-focus"
                 >
                   {CHARGE_CATEGORIES.map((c) => (
                     <option key={c.value} value={c.value}>
@@ -797,7 +804,7 @@ function PartySection({
                 </select>
               </label>
             </div>
-            <label htmlFor={ids.note} className="block text-xs font-medium text-slate-600">
+            <label htmlFor={ids.note} className="block text-xs font-medium text-ink-body">
               Note (optional)
               <input
                 id={ids.note}
@@ -805,29 +812,29 @@ function PartySection({
                 onChange={(e) => setNote(e.target.value)}
                 maxLength={200}
                 placeholder="e.g. half tank"
-                className="mt-0.5 block w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-sm"
+                className="mt-0.5 block w-full rounded-lg border border-line bg-surface px-2.5 py-2 text-sm focus:border-accent focus:outline-none focus:ring-1 focus:ring-focus"
               />
             </label>
             <div className="flex gap-2 pt-1">
-              <button
-                type="button"
+              <Button
+                variant="primary"
+                size="sm"
                 disabled={pending || parsedCents <= 0}
                 onClick={submit}
-                className="inline-flex min-h-9 items-center rounded-md bg-emerald-700 px-3 text-sm font-semibold text-white hover:bg-emerald-800 disabled:opacity-50"
               >
                 Add charge{parsedCents > 0 ? ` ${formatUSD(parsedCents)}` : ''}
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
                 disabled={pending}
                 onClick={() => {
                   setOpen(false);
                   triggerRef.current?.focus();
                 }}
-                className="inline-flex min-h-9 items-center rounded-md border border-slate-300 px-3 text-sm font-medium text-slate-600 hover:bg-slate-50"
               >
                 Cancel
-              </button>
+              </Button>
             </div>
           </div>
         )
@@ -850,6 +857,8 @@ function MoneySection({
 }) {
   const [showCancel, setShowCancel] = useState(false);
   const [reason, setReason] = useState('');
+  const [preview, setPreview] = useState<RefundPreview | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
   const cancelTriggerRef = useRef<HTMLButtonElement>(null);
   const cancelPanelRef = useRef<HTMLDivElement>(null);
   const reasonId = useId();
@@ -859,20 +868,41 @@ function MoneySection({
     if (showCancel) cancelPanelRef.current?.focus();
   }, [showCancel]);
 
+  // Load the computed refund when the cancel panel opens, so staff see exactly
+  // what the policy would refund BEFORE they confirm. Read-only; re-opening
+  // re-reads in case money changed meanwhile.
+  useEffect(() => {
+    if (!showCancel) {
+      setPreview(null);
+      return;
+    }
+    let live = true;
+    setPreviewLoading(true);
+    setPreview(null);
+    void previewCancellationRefund({ orderId: card.orderId }).then((res) => {
+      if (!live) return;
+      setPreview(res);
+      setPreviewLoading(false);
+    });
+    return () => {
+      live = false;
+    };
+  }, [showCancel, card.orderId, card.amountPaidCents, card.totalCents]);
+
   return (
     <section aria-label="Money">
       <SectionHeading>Money</SectionHeading>
       <dl className="mt-1.5 space-y-1 text-sm">
         <div className="flex justify-between">
-          <dt className="text-slate-600">Total</dt>
-          <dd className="font-medium tabular-nums text-slate-900">{formatUSD(card.totalCents)}</dd>
+          <dt className="text-ink-body">Total</dt>
+          <dd className="font-medium tabular-nums text-ink">{formatUSD(card.totalCents)}</dd>
         </div>
         <div className="flex justify-between">
-          <dt className="text-slate-600">Paid</dt>
-          <dd className="tabular-nums text-slate-700">{formatUSD(card.amountPaidCents)}</dd>
+          <dt className="text-ink-body">Paid</dt>
+          <dd className="tabular-nums text-ink-body">{formatUSD(card.amountPaidCents)}</dd>
         </div>
         <div className="flex justify-between">
-          <dt className="text-slate-600">Balance due</dt>
+          <dt className="text-ink-body">Balance due</dt>
           <dd
             className={cn(
               'font-semibold tabular-nums',
@@ -886,42 +916,42 @@ function MoneySection({
 
       {canWrite && card.balanceDueCents > 0 ? (
         <div className="mt-2 flex flex-wrap gap-2">
-          <button
-            type="button"
+          <Button
+            variant="primary"
+            size="sm"
             disabled={pending}
             onClick={() =>
               run('Charged the card on file.', () =>
                 collectBalanceAction({ orderId: card.orderId, method: 'CARD' }),
               )
             }
-            className="inline-flex min-h-9 items-center rounded-md bg-slate-900 px-3 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
           >
             Charge card ({formatUSD(card.balanceDueCents)})
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
             disabled={pending}
             onClick={() =>
               run('Marked paid in cash.', () =>
                 collectBalanceAction({ orderId: card.orderId, method: 'CASH' }),
               )
             }
-            className="inline-flex min-h-9 items-center rounded-md border border-slate-300 px-3 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
           >
             Mark paid (cash)
-          </button>
+          </Button>
         </div>
       ) : null}
 
       {canWrite ? (
-        <div className="mt-3 border-t border-slate-100 pt-3">
+        <div className="mt-3 border-t border-line pt-3">
           {!showCancel ? (
             <button
               type="button"
               ref={cancelTriggerRef}
               aria-expanded={showCancel}
               onClick={() => setShowCancel(true)}
-              className="text-xs font-medium text-rose-700 underline-offset-2 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500"
+              className="inline-flex min-h-11 items-center text-xs font-medium text-rose-700 underline-offset-2 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-300"
             >
               Cancel this reservation…
             </button>
@@ -944,10 +974,12 @@ function MoneySection({
                 Cancel this order?
               </p>
               <p className="mt-1 text-xs text-rose-700">
-                Cancels every item on {card.orderNumber} and frees its capacity. Refunds (if owed)
-                are then issued from the full order page.
+                Cancels every item on {card.orderNumber} and frees its capacity.
               </p>
-              <label htmlFor={reasonId} className="mt-2 block text-xs font-medium text-slate-600">
+
+              <RefundPreviewLine loading={previewLoading} preview={preview} />
+
+              <label htmlFor={reasonId} className="mt-2 block text-xs font-medium text-ink-body">
                 Reason (optional)
               </label>
               <textarea
@@ -957,11 +989,12 @@ function MoneySection({
                 rows={2}
                 maxLength={500}
                 placeholder="e.g. Guest called to cancel"
-                className="mt-1 w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-sm placeholder:text-slate-500"
+                className="mt-1 w-full rounded-lg border border-line bg-surface px-2.5 py-2 text-sm placeholder:text-ink-muted focus:border-accent focus:outline-none focus:ring-1 focus:ring-focus"
               />
               <div className="mt-2 flex gap-2">
-                <button
-                  type="button"
+                <Button
+                  variant="danger"
+                  size="sm"
                   disabled={pending}
                   onClick={() =>
                     run(
@@ -970,28 +1003,84 @@ function MoneySection({
                       () => setShowCancel(false),
                     )
                   }
-                  className="inline-flex min-h-9 items-center gap-1.5 rounded-md bg-rose-700 px-3 text-sm font-semibold text-white hover:bg-rose-800 disabled:opacity-50"
                 >
                   {pending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
                   Confirm cancellation
-                </button>
-                <button
-                  type="button"
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
                   disabled={pending}
                   onClick={() => {
                     setShowCancel(false);
                     cancelTriggerRef.current?.focus();
                   }}
-                  className="inline-flex min-h-9 items-center rounded-md px-3 text-sm font-medium text-slate-600 hover:bg-slate-100"
                 >
                   Keep booking
-                </button>
+                </Button>
               </div>
             </div>
           )}
         </div>
       ) : null}
     </section>
+  );
+}
+
+/**
+ * The computed refund staff see before they confirm a cancel — "$X will be
+ * refunded (50% tier, minus $Y fee)". Reads the shared cancellation calculator via
+ * previewCancellationRefund; purely informational, so a failed read degrades to a
+ * quiet note rather than blocking the cancel.
+ */
+function RefundPreviewLine({
+  loading,
+  preview,
+}: {
+  loading: boolean;
+  preview: RefundPreview | null;
+}) {
+  if (loading) {
+    return (
+      <p className="mt-2 flex items-center gap-2 rounded-lg border border-rose-200 bg-surface px-3 py-2 text-xs text-ink-muted">
+        <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> Checking the refund…
+      </p>
+    );
+  }
+  if (!preview) return null;
+  if (!preview.ok || preview.refundCents === undefined) {
+    return (
+      <p className="mt-2 rounded-lg border border-rose-200 bg-surface px-3 py-2 text-xs text-ink-body">
+        {preview.message ?? 'Refund will be calculated when you cancel.'}
+      </p>
+    );
+  }
+
+  const refund = preview.refundCents;
+  const fee = preview.feeCents ?? 0;
+  const tier = preview.tierPercent ?? 0;
+
+  const detail: string[] = [`${tier}% tier`];
+  if (fee > 0) detail.push(`minus ${formatUSD(fee)} fee`);
+
+  return (
+    <p
+      className="mt-2 rounded-lg border border-rose-200 bg-surface px-3 py-2 text-sm text-ink"
+      aria-live="polite"
+    >
+      {refund > 0 ? (
+        <>
+          <span className="font-semibold tabular-nums text-emerald-700">{formatUSD(refund)}</span>{' '}
+          will be refunded{' '}
+          <span className="text-ink-body">({detail.join(', ')})</span>.
+        </>
+      ) : (
+        <>
+          <span className="font-semibold text-ink">No refund</span> at this time{' '}
+          <span className="text-ink-body">({detail.join(', ')})</span>.
+        </>
+      )}
+    </p>
   );
 }
 
@@ -1003,18 +1092,142 @@ function WaiverSection({ card }: { card: ReservationCardData }) {
       <SectionHeading>Waiver</SectionHeading>
       <div className="mt-1.5 flex flex-wrap items-center gap-2">
         {card.waiverSigned ? (
-          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
+          <Badge tone="success">
             <Check className="h-3 w-3" aria-hidden /> Waiver signed
-          </span>
+          </Badge>
         ) : (
           <>
-            <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800">
-              Waiver needed
-            </span>
+            <Badge tone="waiver">Waiver needed</Badge>
             <SignLinkActions signUrl={card.waiverSignUrl} label={guest} compact />
           </>
         )}
       </div>
+    </section>
+  );
+}
+
+/**
+ * Message this one guest a free-text note by email and/or SMS (the "Message
+ * guest" surface). Goes through messageGuestAction → the API's message choke
+ * points; email is on by default, SMS is opt-in and disabled when no phone is on
+ * file. order:write, so it rides the shared canWrite gate.
+ */
+function MessageGuestSection({
+  card,
+  pending,
+  canWrite,
+  run,
+}: {
+  card: ReservationCardData;
+  pending: boolean;
+  canWrite: boolean;
+  run: RunFn;
+}) {
+  const [open, setOpen] = useState(false);
+  const [body, setBody] = useState('');
+  const [email, setEmail] = useState(true);
+  const [sms, setSms] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const fieldId = useId();
+  const hasPhone = Boolean(card.customer.phone);
+  const guest = `${card.customer.firstName} ${card.customer.lastName}`.trim() || 'guest';
+
+  if (!canWrite) return null;
+
+  return (
+    <section aria-label="Message guest">
+      <SectionHeading>Message guest</SectionHeading>
+      {!open ? (
+        <button
+          type="button"
+          ref={triggerRef}
+          onClick={() => setOpen(true)}
+          className="mt-1.5 inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-line px-3 text-xs font-medium text-ink-body hover:bg-surface-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+        >
+          <MessageSquare className="h-3.5 w-3.5" aria-hidden /> Message {card.customer.firstName || 'guest'}
+        </button>
+      ) : (
+        <div className="mt-2 space-y-2 rounded-lg border border-line bg-surface-muted p-3">
+          <label htmlFor={fieldId} className="block text-xs font-medium text-ink-body">
+            Message to {guest}
+            <textarea
+              id={fieldId}
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              rows={3}
+              maxLength={1000}
+              autoFocus
+              placeholder="e.g. Heads up — we're on a short weather hold, back on the water by 2:30."
+              className="mt-0.5 block w-full rounded-lg border border-line bg-surface px-2.5 py-2 text-sm text-ink placeholder:text-ink-muted focus:border-accent focus:outline-none focus:ring-1 focus:ring-focus"
+            />
+          </label>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs font-medium text-ink-body">
+            <label className="inline-flex min-h-11 cursor-pointer items-center gap-1.5">
+              <input
+                type="checkbox"
+                checked={email}
+                onChange={(e) => setEmail(e.target.checked)}
+                className="h-4 w-4 rounded border-line-strong text-accent accent-accent focus:ring-focus"
+              />
+              Email
+            </label>
+            <label
+              className={cn(
+                'inline-flex min-h-11 items-center gap-1.5',
+                hasPhone ? 'cursor-pointer' : 'cursor-not-allowed text-ink-muted',
+              )}
+              title={hasPhone ? undefined : 'No phone on file'}
+            >
+              <input
+                type="checkbox"
+                checked={sms && hasPhone}
+                disabled={!hasPhone}
+                onChange={(e) => setSms(e.target.checked)}
+                className="h-4 w-4 rounded border-line-strong text-accent accent-accent focus:ring-focus disabled:opacity-50"
+              />
+              Text {hasPhone ? '' : '(no phone)'}
+            </label>
+          </div>
+          <div className="flex gap-2 pt-1">
+            <Button
+              variant="primary"
+              size="sm"
+              disabled={pending || !body.trim() || (!email && !(sms && hasPhone))}
+              onClick={() =>
+                run(
+                  `Message sent to ${guest}.`,
+                  () =>
+                    messageGuestAction({
+                      orderId: card.orderId,
+                      body,
+                      email,
+                      sms: sms && hasPhone,
+                    }),
+                  () => {
+                    setOpen(false);
+                    setBody('');
+                    triggerRef.current?.focus();
+                  },
+                )
+              }
+            >
+              {pending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Send className="h-4 w-4" aria-hidden />}
+              Send message
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={pending}
+              onClick={() => {
+                setOpen(false);
+                triggerRef.current?.focus();
+              }}
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
@@ -1038,13 +1251,13 @@ function NotesSection({
     <section aria-label="Notes">
       <SectionHeading>Notes</SectionHeading>
       {card.notes.length === 0 ? (
-        <p className="mt-1.5 text-sm text-slate-500">No notes yet.</p>
+        <p className="mt-1.5 text-sm text-ink-muted">No notes yet.</p>
       ) : (
         <ul className="mt-1.5 space-y-2">
           {card.notes.map((n) => (
-            <li key={n.id} className="rounded-lg bg-slate-50 px-3 py-2">
-              <p className="whitespace-pre-wrap text-sm text-slate-700">{n.content}</p>
-              <p className="mt-1 text-xs text-slate-500">{formatRelative(n.createdAtISO)}</p>
+            <li key={n.id} className="rounded-lg bg-surface-muted px-3 py-2">
+              <p className="whitespace-pre-wrap text-sm text-ink-body">{n.content}</p>
+              <p className="mt-1 text-xs text-ink-muted">{formatRelative(n.createdAtISO)}</p>
             </li>
           ))}
         </ul>
@@ -1061,10 +1274,12 @@ function NotesSection({
             rows={2}
             maxLength={2000}
             placeholder="Add a note for the crew…"
-            className="w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-sm placeholder:text-slate-500 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+            className="w-full rounded-lg border border-line bg-surface px-2.5 py-2 text-sm placeholder:text-ink-muted focus:border-accent focus:outline-none focus:ring-1 focus:ring-focus"
           />
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            size="sm"
+            className="mt-1"
             disabled={pending || !draft.trim()}
             onClick={() =>
               run(
@@ -1073,10 +1288,9 @@ function NotesSection({
                 () => setDraft(''),
               )
             }
-            className="mt-1 inline-flex min-h-9 items-center rounded-md border border-slate-300 px-3 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
           >
             Add note
-          </button>
+          </Button>
         </div>
       ) : null}
     </section>

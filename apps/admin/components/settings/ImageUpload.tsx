@@ -266,7 +266,7 @@ export function ImageUpload({
 
   return (
     <div className={cn('flex flex-col gap-1.5', className)}>
-      <span className="text-sm font-medium text-slate-700">{label}</span>
+      <span className="text-sm font-medium text-ink-body">{label}</span>
 
       <input
         ref={inputRef}
@@ -283,15 +283,15 @@ export function ImageUpload({
       />
 
       {value && !busy ? (
-        <div className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white p-3">
+        <div className="flex items-center gap-3 rounded-lg border border-line bg-surface p-3">
           <div
             className={cn(
-              'flex h-16 w-24 shrink-0 items-center justify-center overflow-hidden rounded-md border border-slate-200',
-              previewTone === 'dark' ? 'bg-slate-900' : 'bg-slate-50',
+              'flex h-16 w-24 shrink-0 items-center justify-center overflow-hidden rounded-md border border-line',
+              previewTone === 'dark' ? 'bg-slate-900' : 'bg-surface-muted',
             )}
           >
             {previewFailed ? (
-              <ImageIcon className="h-5 w-5 text-slate-400" aria-hidden />
+              <ImageIcon className="h-5 w-5 text-ink-muted" aria-hidden />
             ) : (
               // eslint-disable-next-line @next/next/no-img-element -- operator-supplied URL on an unknown host; next/image would need a remotePatterns entry per tenant
               <img
@@ -303,8 +303,8 @@ export function ImageUpload({
             )}
           </div>
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium text-slate-800">{displayName(value)}</p>
-            <p className="truncate text-xs text-slate-400">
+            <p className="truncate text-sm font-medium text-ink">{displayName(value)}</p>
+            <p className="truncate text-xs text-ink-muted">
               {previewFailed ? 'This image could not be loaded.' : value}
             </p>
           </div>
@@ -313,7 +313,7 @@ export function ImageUpload({
               type="button"
               onClick={openPicker}
               disabled={disabled}
-              className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+              className="rounded-lg border border-line-strong bg-surface px-3 py-1.5 text-xs font-medium text-ink-body transition-colors hover:bg-surface-muted disabled:cursor-not-allowed disabled:opacity-60"
             >
               Replace
             </button>
@@ -325,19 +325,19 @@ export function ImageUpload({
               }}
               disabled={disabled}
               aria-label={`Remove ${label}`}
-              className="rounded-lg border border-slate-300 bg-white p-1.5 text-slate-500 transition-colors hover:bg-rose-50 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-60"
+              className="rounded-lg border border-line-strong bg-surface p-1.5 text-ink-muted transition-colors hover:bg-rose-50 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-60"
             >
               <Trash2 className="h-4 w-4" aria-hidden />
             </button>
           </div>
         </div>
       ) : busy ? (
-        <div className="rounded-lg border border-slate-200 bg-white p-3">
+        <div className="rounded-lg border border-line bg-surface p-3">
           <div className="flex items-center gap-3">
             <div
               className={cn(
-                'flex h-16 w-24 shrink-0 items-center justify-center overflow-hidden rounded-md border border-slate-200',
-                previewTone === 'dark' ? 'bg-slate-900' : 'bg-slate-50',
+                'flex h-16 w-24 shrink-0 items-center justify-center overflow-hidden rounded-md border border-line',
+                previewTone === 'dark' ? 'bg-slate-900' : 'bg-surface-muted',
               )}
             >
               {/* eslint-disable-next-line @next/next/no-img-element -- a blob: URL for the file being uploaded */}
@@ -348,9 +348,9 @@ export function ImageUpload({
               />
             </div>
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium text-slate-800">{phase.name}</p>
+              <p className="truncate text-sm font-medium text-ink">{phase.name}</p>
               <div
-                className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-100"
+                className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-surface-muted"
                 role="progressbar"
                 aria-valuenow={phase.percent}
                 aria-valuemin={0}
@@ -358,11 +358,11 @@ export function ImageUpload({
                 aria-label={`Uploading ${label}`}
               >
                 <div
-                  className="h-full rounded-full bg-slate-900 transition-[width] duration-200"
+                  className="h-full rounded-full bg-accent transition-[width] duration-200"
                   style={{ width: `${phase.percent}%` }}
                 />
               </div>
-              <p className="mt-1 flex items-center gap-1.5 text-xs text-slate-500">
+              <p className="mt-1 flex items-center gap-1.5 text-xs text-ink-muted">
                 <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
                 Uploading… {phase.percent}%
               </p>
@@ -371,7 +371,7 @@ export function ImageUpload({
               type="button"
               onClick={() => xhrRef.current?.abort()}
               aria-label="Cancel upload"
-              className="shrink-0 rounded-lg border border-slate-300 bg-white p-1.5 text-slate-500 transition-colors hover:bg-slate-50"
+              className="shrink-0 rounded-lg border border-line-strong bg-surface p-1.5 text-ink-muted transition-colors hover:bg-surface-muted"
             >
               <X className="h-4 w-4" aria-hidden />
             </button>
@@ -389,18 +389,18 @@ export function ImageUpload({
           aria-describedby={describedBy}
           className={cn(
             'flex w-full flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed px-4 py-6 text-center transition-colors',
-            'focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-300',
+            'focus:outline-none focus-visible:ring-2 focus-visible:ring-focus',
             dragging
-              ? 'border-slate-500 bg-slate-50'
-              : 'border-slate-300 bg-white hover:border-slate-400 hover:bg-slate-50',
+              ? 'border-accent bg-accent-tint'
+              : 'border-line-strong bg-surface hover:border-line-strong hover:bg-surface-muted',
             disabled && 'cursor-not-allowed opacity-60',
           )}
         >
-          <UploadCloud className="h-5 w-5 text-slate-400" aria-hidden />
-          <span className="text-sm font-medium text-slate-700">
+          <UploadCloud className="h-5 w-5 text-ink-muted" aria-hidden />
+          <span className="text-sm font-medium text-ink-body">
             Drop an image here, or click to choose
           </span>
-          <span className="text-xs text-slate-400">
+          <span className="text-xs text-ink-muted">
             {ACCEPT_LABEL} · up to {formatBytes(limit.maxBytes)}
           </span>
         </button>
@@ -413,7 +413,7 @@ export function ImageUpload({
       ) : error ? (
         <p className="text-xs font-medium text-rose-600">{error}</p>
       ) : hint ? (
-        <p id={describedBy} className="text-xs text-slate-400">
+        <p id={describedBy} className="text-xs text-ink-muted">
           {hint}
         </p>
       ) : (

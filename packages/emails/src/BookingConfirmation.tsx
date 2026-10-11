@@ -9,6 +9,14 @@ export interface PriceLine {
   amountCents: number;
 }
 
+/** One operator-question answer echoed back to the guest in the confirmation. */
+export interface CustomerDetail {
+  /** The question label, e.g. "Trailer license plate". */
+  label: string;
+  /** The guest's answer, already formatted to a display string. */
+  value: string;
+}
+
 /** One outstanding waiver: which rental it covers + the absolute signing URL. */
 export interface WaiverLink {
   /** Activity the waiver covers, e.g. "24' Pontoon Rental". */
@@ -43,6 +51,19 @@ export interface BookingConfirmationProps extends BrandProps {
   balanceDueCents?: number;
   /** Cancellation policy text to display to the guest. */
   cancellationPolicy: string;
+  /**
+   * Inline SVG markup for the booking's real, HMAC-signed check-in QR (built by
+   * the API from @marina/core). When present it renders a scannable code staff
+   * verify at the dock; when absent (e.g. a cancelled order) the email falls back
+   * to the plain "present your confirmation number" note. The order number is
+   * always shown as the human-readable fallback.
+   */
+  checkinQrSvg?: string;
+  /**
+   * Answers to operator custom questions flagged `show_in_confirmation`, echoed
+   * back so the guest sees what they told you. Omitted/empty renders nothing.
+   */
+  customerDetails?: CustomerDetail[];
   /**
    * Sign-before-you-arrive links, one per booked item that still needs a signed
    * liability waiver. When present, the email renders a prominent call-to-action
@@ -196,8 +217,11 @@ export function BookingConfirmation({
   totalCents,
   balanceDueCents = 0,
   cancellationPolicy,
+  checkinQrSvg,
   waiverLinks,
+  customerDetails,
 }: BookingConfirmationProps): React.ReactElement {
+  const hasDetails = Boolean(customerDetails && customerDetails.length > 0);
   const owesAtMarina = balanceDueCents > 0;
   const needsWaiver = Boolean(waiverLinks && waiverLinks.length > 0);
   const waiverButton: React.CSSProperties = {
@@ -278,6 +302,21 @@ export function BookingConfirmation({
         </Row>
       </Section>
 
+      {hasDetails && (
+        <>
+          <Hr style={{ borderColor: '#e5e7eb', margin: '8px 0' }} />
+          <Section style={{ margin: '8px 0' }}>
+            <Text style={policyHeading}>Your details</Text>
+            {customerDetails!.map((detail, i) => (
+              <React.Fragment key={`${detail.label}-${i}`}>
+                <Text style={label}>{detail.label}</Text>
+                <Text style={value}>{detail.value}</Text>
+              </React.Fragment>
+            ))}
+          </Section>
+        </>
+      )}
+
       <Hr style={{ borderColor: '#e5e7eb', margin: '8px 0' }} />
 
       <Section>
@@ -314,10 +353,25 @@ export function BookingConfirmation({
         </Section>
       )}
 
-      <Text style={qrNote}>
-        Your check-in QR code will appear here in the confirmation on your device.
-        Present it (or your confirmation number {orderNumber}) when you arrive.
-      </Text>
+      {checkinQrSvg ? (
+        <Section style={qrNote}>
+          <div
+            style={{ margin: '0 auto 8px', width: '160px', height: '160px' }}
+            // Trusted, self-contained SVG from the @marina/core QR encoder — no
+            // user HTML. Falls back to the confirmation number in clients that
+            // strip inline SVG.
+            dangerouslySetInnerHTML={{ __html: checkinQrSvg }}
+          />
+          <Text style={{ margin: 0, color: '#6b7280', fontSize: '13px', lineHeight: '20px' }}>
+            Show this check-in code at the dock, or give your confirmation number{' '}
+            {orderNumber}.
+          </Text>
+        </Section>
+      ) : (
+        <Text style={qrNote}>
+          Present your confirmation number {orderNumber} when you arrive.
+        </Text>
+      )}
 
       <Text style={policyHeading}>Cancellation policy</Text>
       <Text style={policyText}>{cancellationPolicy}</Text>

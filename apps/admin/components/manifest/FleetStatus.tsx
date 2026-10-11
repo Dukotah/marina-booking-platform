@@ -644,7 +644,7 @@ function ImpactPanel({
               type="checkbox"
               checked={acknowledged}
               onChange={(e) => onAcknowledge(e.target.checked)}
-              className="mt-0.5 h-5 w-5 shrink-0 rounded border-slate-400 text-rose-700 focus:ring-rose-500"
+              className="mt-0.5 h-5 w-5 shrink-0 rounded border-slate-400 text-rose-700 accent-rose-600 focus:ring-rose-500"
             />
             <span className="text-xs font-medium text-slate-800">
               I know {impact.guestsTotal} booked {plural(impact.guestsTotal, 'trip', 'trips')}{' '}

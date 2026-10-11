@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Clock, Users, Plus, Minus } from 'lucide-react';
 import { formatUSD } from '@marina/core';
 import { cn } from '../../lib/cn';
+import { Button } from '../ui';
 import { formatTime } from '../../lib/format';
 import type { CartLine, PosActivity, PosRate, PosTimeslot } from './types';
 
@@ -20,7 +21,7 @@ export interface ActivityCatalogProps {
 const STATUS_STYLES: Record<PosTimeslot['status'], string> = {
   AVAILABLE: 'border-emerald-200 bg-emerald-50 text-emerald-800 hover:border-emerald-400',
   FILLING_UP: 'border-amber-200 bg-amber-50 text-amber-800 hover:border-amber-400',
-  FULL: 'border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed',
+  FULL: 'border-line bg-surface-muted text-ink-muted cursor-not-allowed',
 };
 
 export function ActivityCatalog({ activities, onAdd }: ActivityCatalogProps) {
@@ -62,7 +63,7 @@ export function ActivityCatalog({ activities, onAdd }: ActivityCatalogProps) {
 
   if (activities.length === 0) {
     return (
-      <div className="rounded-lg border border-dashed border-slate-300 p-8 text-center text-sm text-slate-500">
+      <div className="rounded-lg border border-dashed border-line p-8 text-center text-sm text-ink-body">
         No register-visible activities with active rates. Add one under Activities to sell
         walk-ups here.
       </div>
@@ -79,10 +80,10 @@ export function ActivityCatalog({ activities, onAdd }: ActivityCatalogProps) {
             type="button"
             onClick={() => selectActivity(a)}
             className={cn(
-              'flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition-colors',
+              'inline-flex min-h-11 items-center gap-2 rounded-lg border px-3 text-sm font-medium transition-colors',
               a.id === activityId
-                ? 'border-slate-900 bg-slate-900 text-white'
-                : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300',
+                ? 'border-accent bg-accent-tint text-accent-ink'
+                : 'border-line bg-surface text-ink-body hover:border-line-strong',
             )}
           >
             <span
@@ -99,7 +100,7 @@ export function ActivityCatalog({ activities, onAdd }: ActivityCatalogProps) {
         <>
           {/* Rate picker */}
           <div>
-            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">
               Rate
             </div>
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
@@ -109,20 +110,20 @@ export function ActivityCatalog({ activities, onAdd }: ActivityCatalogProps) {
                   type="button"
                   onClick={() => setRateId(r.id)}
                   className={cn(
-                    'flex items-center justify-between rounded-lg border px-3 py-2 text-left text-sm transition-colors',
+                    'flex min-h-11 items-center justify-between rounded-lg border px-3 py-2 text-left text-sm transition-colors',
                     r.id === rateId
-                      ? 'border-slate-900 ring-1 ring-slate-900'
-                      : 'border-slate-200 hover:border-slate-300',
+                      ? 'border-accent bg-accent-tint ring-1 ring-accent'
+                      : 'border-line hover:border-line-strong',
                   )}
                 >
                   <span className="min-w-0">
-                    <span className="block truncate font-medium text-slate-800">{r.name}</span>
-                    <span className="flex items-center gap-1 text-xs text-slate-500">
+                    <span className="block truncate font-medium text-ink">{r.name}</span>
+                    <span className="flex items-center gap-1 text-xs text-ink-body">
                       <Clock className="h-3 w-3" aria-hidden />
                       {r.durationMinutes} min
                     </span>
                   </span>
-                  <span className="ml-2 shrink-0 font-semibold text-slate-900">
+                  <span className="ml-2 shrink-0 font-semibold text-ink tabular-nums">
                     {formatUSD(r.priceCents)}
                   </span>
                 </button>
@@ -132,11 +133,11 @@ export function ActivityCatalog({ activities, onAdd }: ActivityCatalogProps) {
 
           {/* Timeslot picker */}
           <div>
-            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">
               Today’s timeslots
             </div>
             {activity.timeslots.length === 0 ? (
-              <div className="rounded-lg border border-dashed border-slate-300 p-4 text-center text-sm text-slate-500">
+              <div className="rounded-lg border border-dashed border-line p-4 text-center text-sm text-ink-body">
                 No timeslots scheduled today for this activity.
               </div>
             ) : (
@@ -151,9 +152,9 @@ export function ActivityCatalog({ activities, onAdd }: ActivityCatalogProps) {
                       disabled={disabled}
                       onClick={() => setTimeslotId(t.id)}
                       className={cn(
-                        'flex flex-col items-start rounded-lg border px-3 py-2 text-sm transition-colors',
+                        'flex min-h-11 flex-col items-start rounded-lg border px-3 py-2 text-sm transition-colors',
                         STATUS_STYLES[t.status],
-                        t.id === timeslotId && !disabled && 'ring-2 ring-offset-1 ring-slate-900',
+                        t.id === timeslotId && !disabled && 'ring-2 ring-offset-1 ring-accent',
                       )}
                     >
                       <span className="font-semibold">{formatTime(t.datetime)}</span>
@@ -169,42 +170,37 @@ export function ActivityCatalog({ activities, onAdd }: ActivityCatalogProps) {
           </div>
 
           {/* Quantity + add */}
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4">
             <div className="flex items-center gap-3">
-              <span className="text-sm font-medium text-slate-600">Quantity</span>
-              <div className="flex items-center rounded-lg border border-slate-200">
+              <span className="text-sm font-medium text-ink-body">Quantity</span>
+              <div className="flex items-center rounded-lg border border-line">
                 <button
                   type="button"
                   aria-label="Decrease quantity"
                   onClick={() => setQuantity((q) => Math.max(1, q - 1))}
-                  className="flex h-9 w-9 items-center justify-center text-slate-600 hover:bg-slate-100"
+                  className="flex h-11 w-11 items-center justify-center text-ink-body hover:bg-surface-muted"
                 >
                   <Minus className="h-4 w-4" aria-hidden />
                 </button>
-                <span className="w-10 text-center text-sm font-semibold text-slate-900">
+                <span className="w-10 text-center text-sm font-semibold text-ink tabular-nums">
                   {quantity}
                 </span>
                 <button
                   type="button"
                   aria-label="Increase quantity"
                   onClick={() => setQuantity((q) => Math.min(activity.maxParticipants, q + 1))}
-                  className="flex h-9 w-9 items-center justify-center text-slate-600 hover:bg-slate-100"
+                  className="flex h-11 w-11 items-center justify-center text-ink-body hover:bg-surface-muted"
                 >
                   <Plus className="h-4 w-4" aria-hidden />
                 </button>
               </div>
             </div>
 
-            <button
-              type="button"
-              disabled={!canAdd}
-              onClick={add}
-              className="inline-flex h-10 items-center gap-2 rounded-lg bg-emerald-600 px-5 text-sm font-semibold text-white transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
-            >
+            <Button type="button" disabled={!canAdd} onClick={add}>
               <Plus className="h-4 w-4" aria-hidden />
               Add to cart
-              {rate ? <span className="opacity-80">· {formatUSD(rate.priceCents * quantity)}</span> : null}
-            </button>
+              {rate ? <span className="opacity-80 tabular-nums">· {formatUSD(rate.priceCents * quantity)}</span> : null}
+            </Button>
           </div>
         </>
       ) : null}

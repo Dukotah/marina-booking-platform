@@ -18,6 +18,7 @@
 import { computeSlotStatus, generateTimeslots, type SlotStatus } from '@marina/core';
 import type { Prisma, TenantClient } from '@marina/database';
 import { activityResourcePools, poolSeats } from './resources.js';
+import { heldSeatsByTimeslot } from './holds.js';
 
 /**
  * Why a slot's true capacity is lower than its own timeslot capacity — i.e. a shared
@@ -424,11 +425,13 @@ function toView(
   },
   pools: PoolLedger[],
   durationMs: number,
+  heldSeats = 0,
 ): TimeslotView {
   const startsAt = slot.datetime.getTime();
   const cap = resolveTrueCapacity({
     capacityTotal: slot.capacity_total,
-    capacityBooked: slot.capacity_booked,
+    // Un-expired cart holds count against capacity exactly like booked seats.
+    capacityBooked: slot.capacity_booked + heldSeats,
     pools,
     startsAt,
     endsAt: startsAt + durationMs,
@@ -485,7 +488,15 @@ export async function getDayAvailability(
   });
 
   const { pools, durationMs } = await loadPoolLedgers(db, params.activityId, start, end);
-  const timeslots = slots.map((slot) => toView(slot, pools, durationMs));
+
+  // Cart holds: subtract every un-expired, un-consumed hold from what's sellable so
+  // two guests can't both reach "pay" for the last seat. A held seat behaves exactly
+  // like a booked one here; the hold's own expiry (lazy, measured against `now`)
+  // frees it automatically, so a lapsed hold stops hiding the seat.
+  const held = await heldSeatsByTimeslot(db, slots.map((s) => s.id), new Date());
+  const timeslots = slots.map((slot) =>
+    toView(slot, pools, durationMs, held.get(slot.id) ?? 0),
+  );
 
   return {
     activityId: params.activityId,
@@ -606,6 +617,7 @@ export async function getRangeAvailability(
       },
       orderBy: { datetime: 'asc' },
       select: {
+        id: true,
         datetime: true,
         capacity_total: true,
         capacity_booked: true,
@@ -614,6 +626,9 @@ export async function getRangeAvailability(
     blackoutDayKeys(db, params.activityId, timeZone, rangeStart, rangeEnd),
     loadPoolLedgers(db, params.activityId, rangeStart, rangeEnd),
   ]);
+
+  // Live cart holds reduce what each day can still sell, same as a booking does.
+  const held = await heldSeatsByTimeslot(db, slots.map((s) => s.id), new Date());
 
   interface DayBucket {
     slotCount: number;
@@ -653,7 +668,8 @@ export async function getRangeAvailability(
     const startsAt = slot.datetime.getTime();
     const cap = resolveTrueCapacity({
       capacityTotal: slot.capacity_total,
-      capacityBooked: slot.capacity_booked,
+      // Un-expired cart holds count against the day's sellable capacity.
+      capacityBooked: slot.capacity_booked + (held.get(slot.id) ?? 0),
       pools: resources.pools,
       startsAt,
       endsAt: startsAt + resources.durationMs,

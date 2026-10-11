@@ -55,10 +55,10 @@ export function CatalogTabs() {
             href={tab.href}
             aria-current={active ? 'page' : undefined}
             className={cn(
-              'inline-flex items-center gap-2 rounded-lg border px-3.5 py-2 text-sm font-medium transition-colors',
+              'inline-flex min-h-11 items-center gap-2 rounded-lg border px-3.5 text-sm font-medium transition-colors',
               active
-                ? 'border-slate-900 bg-slate-900 text-white'
-                : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900',
+                ? 'border-accent bg-accent-tint text-accent-ink'
+                : 'border-line bg-surface text-ink-body hover:bg-surface-muted hover:text-ink',
             )}
           >
             <Icon className="h-4 w-4 shrink-0" aria-hidden />

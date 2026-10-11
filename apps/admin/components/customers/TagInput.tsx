@@ -71,7 +71,7 @@ export function TagInput({ customerId, initialTags, canEdit }: TagInputProps) {
         ))}
       </div>
     ) : (
-      <p className="text-sm text-slate-400">No tags.</p>
+      <p className="text-sm text-ink-muted">No tags.</p>
     );
   }
 
@@ -79,7 +79,7 @@ export function TagInput({ customerId, initialTags, canEdit }: TagInputProps) {
     <div>
       <div
         className={cn(
-          'flex flex-wrap items-center gap-1.5 rounded-lg border border-slate-200 bg-white p-2 focus-within:border-slate-300 focus-within:ring-2 focus-within:ring-slate-200',
+          'flex flex-wrap items-center gap-1.5 rounded-lg border border-line bg-surface p-2 shadow-sm focus-within:border-accent focus-within:ring-2 focus-within:ring-focus',
           isPending && 'opacity-70',
         )}
       >
@@ -94,7 +94,7 @@ export function TagInput({ customerId, initialTags, canEdit }: TagInputProps) {
               onClick={() => removeTag(tag)}
               disabled={isPending}
               aria-label={`Remove tag ${tag}`}
-              className="rounded-full p-0.5 text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-700"
+              className="rounded-full p-0.5 text-ink-muted transition-colors hover:bg-slate-200 hover:text-ink"
             >
               <X className="h-3 w-3" aria-hidden />
             </button>
@@ -109,10 +109,10 @@ export function TagInput({ customerId, initialTags, canEdit }: TagInputProps) {
           disabled={isPending}
           placeholder={tags.length ? 'Add tag…' : 'Add a tag (Enter to confirm)'}
           aria-label="Add tag"
-          className="min-w-[8rem] flex-1 bg-transparent px-1 py-0.5 text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none"
+          className="min-w-[8rem] flex-1 bg-transparent px-1 py-0.5 text-sm text-ink placeholder:text-ink-muted focus:outline-none"
         />
       </div>
-      {error ? <p className="mt-1.5 text-xs text-red-600">{error}</p> : null}
+      {error ? <p className="mt-1.5 text-xs text-rose-600">{error}</p> : null}
     </div>
   );
 }

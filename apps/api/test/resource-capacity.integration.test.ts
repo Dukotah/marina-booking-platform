@@ -185,3 +185,95 @@ describe.skipIf(!HAS_DB)('shared-resource capacity (live vs LSRA)', () => {
     expect(reservations.reduce((n, r) => n + r.seats, 0)).toBe(4);
   });
 });
+
+/**
+ * Concurrency regression for conc-shared-resource: two bookings on DIFFERENT slots of a
+ * shared pool, fired at once, each wanting the whole pool. The timeslot FOR UPDATE lock
+ * can't serialise them (disjoint rows), so without a per-pool lock both read used=0 and
+ * both insert — overselling the boat. Exactly ONE must win. Isolated fixtures so the
+ * racing writes never touch the sequential suite's pool.
+ */
+describe.skipIf(!HAS_DB)('shared-resource capacity — concurrency (live vs LSRA)', () => {
+  const CEMAIL = 'resource-conc-itest@example.com';
+  const orderIds: string[] = [];
+  let resourceId: string;
+  let activityA: string;
+  let activityB: string;
+  let rateA: string;
+  let rateB: string;
+  let slotA: string;
+  let slotB: string;
+
+  beforeAll(async () => {
+    await adminPrisma.customer.deleteMany({ where: { operator_id: OP, email: CEMAIL } });
+    const a = await makeActivity('ITEST Conc A');
+    const b = await makeActivity('ITEST Conc B');
+    const resource = await adminPrisma.resource.create({
+      data: {
+        operator_id: OP,
+        name: 'ITEST Conc Jet Skis',
+        seat_capacity: 1,
+        quantity: 2, // exactly 2 units — one booking of 2 exhausts the pool
+        out_of_service_qty: 0,
+        is_active: true,
+        activities: { connect: [{ id: a.activityId }, { id: b.activityId }] },
+      },
+      select: { id: true },
+    });
+    const w = new Date(Date.now() + 41 * 24 * 60 * 60 * 1000); // distinct from sequential suite
+    resourceId = resource.id;
+    activityA = a.activityId;
+    activityB = b.activityId;
+    rateA = a.rateId;
+    rateB = b.rateId;
+    slotA = await makeSlot(a.activityId, w); // A @ W
+    slotB = await makeSlot(b.activityId, w); // B @ W (overlaps A on the shared pool)
+  });
+
+  afterAll(async () => {
+    for (const id of orderIds) await adminPrisma.order.deleteMany({ where: { id } });
+    await adminPrisma.resource.deleteMany({ where: { id: resourceId } });
+    await adminPrisma.timeslot.deleteMany({ where: { id: { in: [slotA, slotB] } } });
+    await adminPrisma.rate.deleteMany({ where: { id: { in: [rateA, rateB] } } });
+    await adminPrisma.activity.deleteMany({ where: { id: { in: [activityA, activityB] } } });
+    await adminPrisma.customer.deleteMany({ where: { operator_id: OP, email: CEMAIL } });
+  });
+
+  it('refuses to oversell a shared pool across concurrent bookings on different slots', async () => {
+    const mk = (activityId: string, rateId: string, timeslotId: string) =>
+      createBooking(
+        OP,
+        {
+          activityId,
+          rateId,
+          timeslotId,
+          quantity: 2, // each wants the whole 2-unit pool
+          customer: { first_name: 'Conc', last_name: 'Itest', email: CEMAIL },
+          participants: [],
+        },
+        { channel: 'CUSTOMER', actor: 'resource-capacity.integration.test' },
+      );
+
+    const results = await Promise.allSettled([
+      mk(activityA, rateA, slotA),
+      mk(activityB, rateB, slotB),
+    ]);
+
+    for (const r of results) {
+      if (r.status === 'fulfilled') orderIds.push(r.value.id);
+    }
+
+    const fulfilled = results.filter((r) => r.status === 'fulfilled');
+    const rejected = results.filter((r) => r.status === 'rejected') as PromiseRejectedResult[];
+
+    // Exactly one wins; the loser is a typed INSUFFICIENT_RESOURCE, not a crash.
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]!.reason).toBeInstanceOf(BookingError);
+    expect(rejected[0]!.reason).toMatchObject({ code: 'INSUFFICIENT_RESOURCE' });
+
+    // Ground truth in the DB: the pool holds no more than its 2 seats.
+    const held = await adminPrisma.resourceBooking.findMany({ where: { resource_id: resourceId } });
+    expect(held.reduce((n, r) => n + r.seats, 0)).toBe(2);
+  });
+});

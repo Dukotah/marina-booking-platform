@@ -15,6 +15,7 @@ import { customers } from './routes/customers.js';
 import { waivers } from './routes/waivers.js';
 import { promos } from './routes/promos.js';
 import { giftCards } from './routes/gift-cards.js';
+import { giftCardsPurchase } from './routes/gift-cards-purchase.js';
 import { giftCertificates } from './routes/gift-certificates.js';
 import { packages } from './routes/packages.js';
 import { merchandise } from './routes/merchandise.js';
@@ -33,6 +34,10 @@ import { uploads } from './routes/uploads.js';
 import { accounting } from './routes/accounting.js';
 import { channels } from './routes/channels.js';
 import { customerAuth } from './routes/customer-auth.js';
+import { waitlist } from './routes/waitlist.js';
+import { holds } from './routes/holds.js';
+import { timeslots } from './routes/timeslots.js';
+import { checkin } from './routes/checkin.js';
 import { sandbox } from './routes/sandbox.js';
 
 export const app = new Hono<Env>();
@@ -130,6 +135,9 @@ api.route('/customers', customers);
 api.route('/waivers', waivers);
 api.route('/promos', promos);
 api.route('/gift-cards', giftCards);
+// Public online gift-card purchase (card charge -> issue -> email). Separate mount
+// so the path is /api/public/gift-cards/purchase.
+api.route('/public/gift-cards', giftCardsPurchase);
 api.route('/gift-certificates', giftCertificates);
 api.route('/packages', packages);
 api.route('/merchandise', merchandise);
@@ -143,6 +151,11 @@ api.route('/pricing-rules', pricingRules);
 api.route('/accounting', accounting);
 api.route('/channels', channels);
 api.route('/customer-auth', customerAuth);
+api.route('/waitlist', waitlist);
+api.route('/holds', holds);
+api.route('/timeslots', timeslots);
+// QR check-in scan — staff verify a confirmation QR token and check the guest in.
+api.route('/checkin', checkin);
 // Local sandbox control plane (payment simulator, webhook log, clock). The router
 // 404s itself unless SANDBOX is local, so mounting it here costs nothing in cloud.
 api.route('/sandbox', sandbox);

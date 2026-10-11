@@ -26,6 +26,7 @@ export default async function FeesPage() {
         value: true,
         enabled: true,
         ignore_tax_exempt: true,
+        is_tax: true,
         activity_id: true,
       },
     }),
@@ -42,6 +43,7 @@ export default async function FeesPage() {
     value: f.value,
     enabled: f.enabled,
     ignore_tax_exempt: f.ignore_tax_exempt,
+    is_tax: f.is_tax,
     activityId: f.activity_id,
   }));
 

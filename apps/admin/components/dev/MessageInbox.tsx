@@ -66,7 +66,7 @@ export function MessageInbox({ messages, emailCount, smsCount }: MessageInboxPro
           Take a booking on the customer site at{' '}
           <a
             href="http://localhost:3000"
-            className="font-medium text-sky-600 underline-offset-2 hover:underline"
+            className="font-medium text-accent underline-offset-2 hover:underline"
           >
             localhost:3000
           </a>{' '}
@@ -114,14 +114,14 @@ export function MessageInbox({ messages, emailCount, smsCount }: MessageInboxPro
                   type="button"
                   onClick={() => setSelectedId(m.id)}
                   className={`w-full px-4 py-3 text-left transition ${
-                    active ? 'bg-sky-50' : 'hover:bg-slate-50'
+                    active ? 'bg-accent-tint' : 'hover:bg-slate-50'
                   }`}
                 >
                   <div className="flex items-center gap-2">
                     <span
                       className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
                         m.channel === 'EMAIL'
-                          ? 'bg-indigo-100 text-indigo-700'
+                          ? 'bg-accent-tint text-accent-ink'
                           : 'bg-emerald-100 text-emerald-700'
                       }`}
                     >

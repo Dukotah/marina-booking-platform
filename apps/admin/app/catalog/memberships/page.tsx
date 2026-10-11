@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { AdminShell, PageHeader, DataTable, KpiCard, type Column } from '../../../components/shell';
+import { AdminShell, PageHeader, DataTable, type Column } from '../../../components/shell';
+import { StatCard, Badge } from '../../../components/ui';
 import { CatalogTabs } from '../../../components/catalog/CatalogTabs';
 import { getTenantDb, requirePermission, currentPermissions } from '../../../lib/session';
 import { formatUSD, formatNumber } from '../../../lib/format';
@@ -107,14 +108,19 @@ export default async function MembershipsPage() {
       cell: (r) => (
         <Link
           href={`/memberships/${r.id}`}
-          className="font-medium text-sky-800 underline underline-offset-2 hover:text-sky-900 focus:outline-none focus:ring-2 focus:ring-sky-600"
+          className="font-medium text-accent hover:text-accent-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-focus"
         >
           {r.name}
         </Link>
       ),
     },
     { id: 'kind', header: 'Type', cell: (r) => kindLabel(r.kind) },
-    { id: 'price', header: 'Price', align: 'right', cell: (r) => formatUSD(r.priceCents) },
+    {
+      id: 'price',
+      header: 'Price',
+      align: 'right',
+      cell: (r) => <span className="tabular-nums">{formatUSD(r.priceCents)}</span>,
+    },
     {
       id: 'benefit',
       header: 'Member gets',
@@ -124,28 +130,27 @@ export default async function MembershipsPage() {
       id: 'uses',
       header: 'Uses',
       align: 'right',
-      cell: (r) => (r.kind === 'PUNCH_CARD' ? formatNumber(r.totalUses ?? 0) : 'Unlimited'),
+      cell: (r) => (
+        <span className="tabular-nums">
+          {r.kind === 'PUNCH_CARD' ? formatNumber(r.totalUses ?? 0) : 'Unlimited'}
+        </span>
+      ),
     },
     { id: 'validity', header: 'Valid for', cell: (r) => durationLabel(r.durationDays) },
     {
       id: 'holders',
       header: 'Members',
       align: 'right',
-      cell: (r) => formatNumber(r.activeHolders),
+      cell: (r) => <span className="tabular-nums">{formatNumber(r.activeHolders)}</span>,
     },
     {
       id: 'status',
       header: 'Status',
-      cell: (r) =>
-        r.isActive ? (
-          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">
-            For sale
-          </span>
-        ) : (
-          <span className="rounded-full bg-slate-200 px-2 py-0.5 text-xs font-medium text-slate-700">
-            Not for sale
-          </span>
-        ),
+      cell: (r) => (
+        <Badge tone={r.isActive ? 'success' : 'cancelled'}>
+          {r.isActive ? 'For sale' : 'Not for sale'}
+        </Badge>
+      ),
     },
   ];
 
@@ -160,9 +165,9 @@ export default async function MembershipsPage() {
       <CatalogTabs />
 
       <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <KpiCard label="Memberships for sale" value={formatNumber(forSale)} />
-        <KpiCard label="Active members" value={formatNumber(distinctMembers.size)} />
-        <KpiCard label="Punches outstanding" value={formatNumber(punchesOutstanding)} />
+        <StatCard label="Memberships for sale" value={formatNumber(forSale)} />
+        <StatCard label="Active members" value={formatNumber(distinctMembers.size)} tone="success" />
+        <StatCard label="Punches outstanding" value={formatNumber(punchesOutstanding)} />
       </div>
 
       <DataTable
@@ -174,7 +179,7 @@ export default async function MembershipsPage() {
       />
 
       {holdings.length === HOLDING_SCAN_LIMIT ? (
-        <p className="mt-3 text-xs text-slate-600">
+        <p className="mt-3 text-xs text-ink-body">
           Member counts are based on the {formatNumber(HOLDING_SCAN_LIMIT)} most recent active
           memberships.
         </p>
@@ -185,7 +190,7 @@ export default async function MembershipsPage() {
           <MembershipForm />
         </div>
       ) : (
-        <p className="mt-8 text-sm text-slate-600">
+        <p className="mt-8 text-sm text-ink-body">
           You have read-only access to memberships. Ask an administrator to add or change one.
         </p>
       )}

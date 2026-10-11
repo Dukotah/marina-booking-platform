@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
-import { AdminShell, PageHeader, DataTable, KpiCard, type Column } from '../../../components/shell';
+import { AdminShell, PageHeader, DataTable, type Column } from '../../../components/shell';
+import { StatCard, Badge } from '../../../components/ui';
 import { CatalogTabs } from '../../../components/catalog/CatalogTabs';
 import { getTenantDb, requirePermission } from '../../../lib/session';
 import { formatUSD, formatDate } from '../../../lib/format';
@@ -67,11 +68,36 @@ export default async function GiftCertificatesPage() {
   const activeCount = rows.filter((r) => r.status === 'ACTIVE').length;
 
   const columns: Array<Column<CertRow>> = [
-    { id: 'code', header: 'Code', cell: (r) => <span className="font-mono">{r.code}</span> },
-    { id: 'value', header: 'Value', align: 'right', cell: (r) => formatUSD(r.valueCents) },
-    { id: 'scope', header: 'Scope', cell: (r) => r.activityName ?? 'Any (dollar value)' },
-    { id: 'status', header: 'Status', cell: (r) => r.status },
-    { id: 'recipient', header: 'Recipient', cell: (r) => r.recipientEmail ?? '—' },
+    {
+      id: 'code',
+      header: 'Code',
+      cell: (r) => <span className="font-mono text-ink">{r.code}</span>,
+    },
+    {
+      id: 'value',
+      header: 'Value',
+      align: 'right',
+      cell: (r) => <span className="tabular-nums">{formatUSD(r.valueCents)}</span>,
+    },
+    {
+      id: 'scope',
+      header: 'Scope',
+      cell: (r) => r.activityName ?? 'Any (dollar value)',
+    },
+    {
+      id: 'status',
+      header: 'Status',
+      cell: (r) => (
+        <Badge tone={r.status === 'ACTIVE' ? 'success' : 'cancelled'}>
+          {r.status === 'ACTIVE' ? 'Active' : r.status.charAt(0) + r.status.slice(1).toLowerCase()}
+        </Badge>
+      ),
+    },
+    {
+      id: 'recipient',
+      header: 'Recipient',
+      cell: (r) => r.recipientEmail ?? <span className="text-ink-muted">—</span>,
+    },
     { id: 'issued', header: 'Issued', cell: (r) => formatDate(r.createdAt) },
   ];
 
@@ -85,9 +111,9 @@ export default async function GiftCertificatesPage() {
       <CatalogTabs />
 
       <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <KpiCard label="Outstanding liability" value={formatUSD(liabilityCents)} />
-        <KpiCard label="Active certificates" value={String(activeCount)} />
-        <KpiCard label="Total issued" value={String(rows.length)} />
+        <StatCard label="Outstanding liability" value={formatUSD(liabilityCents)} tone="owed" />
+        <StatCard label="Active certificates" value={String(activeCount)} />
+        <StatCard label="Total issued" value={String(rows.length)} />
       </div>
 
       <div className="mb-6">

@@ -69,6 +69,12 @@ export interface PlaceOrderInput {
    * succeed on the server and still time out on the phone.
    */
   idempotencyKey?: string;
+  /**
+   * The cart hold placed when checkout opened, if any. Forwarded to the API so the
+   * booking consumes it (its seats become real booked capacity and stop being
+   * double-subtracted from availability). Optional — an expired hold still books.
+   */
+  holdId?: string;
   activityId: string;
   rateId: string;
   timeslotId: string;
@@ -87,6 +93,12 @@ export interface PlaceOrderInput {
   }>;
   promoCode?: string;
   tipCents?: number;
+  /**
+   * Checkout add-on selections: id + requested quantity ONLY (never a price). The
+   * API re-reads each add-on from the catalog and re-derives price + quantity, so a
+   * tampered client price is ignored and the amount charged is server-authored.
+   */
+  addOns?: Array<{ addOnId: string; quantity: number }>;
   /**
    * Inline liability-waiver acceptance from checkout (WaiverSection): the required
    * acceptance flag and the typed full legal name. Forwarded so the API records the
@@ -129,6 +141,7 @@ export async function placeOrder(
     participants: input.participants,
     promoCode: input.promoCode,
     tipCents: input.tipCents,
+    addOns: input.addOns,
     waiverAcceptance: input.waiverAcceptance,
   });
 
@@ -164,8 +177,10 @@ export async function placeOrder(
     participants: data.participants,
     promoCode: data.promoCode,
     tipCents: data.tipCents,
+    addOns: data.addOns,
     waiverAcceptance: data.waiverAcceptance,
     idempotencyKey: input.idempotencyKey,
+    holdId: input.holdId,
   };
 
   let order: OrderSummary;

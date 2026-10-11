@@ -800,7 +800,7 @@ export async function pushInventory(operatorId: string, channelId: string): Prom
     // discrepancy on every single imported booking.
     db.fee.findMany({
       where: { enabled: true, OR: [{ activity_id: { in: activityIds } }, { activity_id: null }] },
-      select: { name: true, type: true, value: true, activity_id: true },
+      select: { name: true, type: true, value: true, activity_id: true, is_tax: true },
     }),
   ]);
 
@@ -829,7 +829,7 @@ export async function pushInventory(operatorId: string, channelId: string): Prom
     }
     const fees: PricingFee[] = feeRows
       .filter((f) => f.activity_id === row.activity_id || f.activity_id === null)
-      .map((f) => ({ name: f.name, type: f.type, value: f.value }));
+      .map((f) => ({ name: f.name, type: f.type, value: f.value, isTax: f.is_tax }));
     payload.push({
       listingId: row.id,
       activityId: row.activity_id,
@@ -989,6 +989,9 @@ export async function importChannelBooking(
     if (order.status !== 'CANCELLED') {
       await cancelBooking(operatorId, order.id, {
         actor,
+        // OTA settlement is owned by the channel — the partner refunds the guest
+        // on their side. Don't also push a refund through our processor.
+        refund: false,
         reason: `Cancelled by ${channel.name} (ref ${payload.externalRef})`,
       });
     }
@@ -1149,6 +1152,8 @@ export async function importChannelBooking(
       // we just created so its capacity and resource holds go back.
       await cancelBooking(operatorId, order.id, {
         actor,
+        // Undoing a just-created duplicate import — nothing settled on our side.
+        refund: false,
         reason: `Duplicate import of ${channel.name} booking ${payload.externalRef}`,
       });
       const winner = await db.channelBooking.findFirst({
@@ -1296,6 +1301,8 @@ export async function cancelAtChannel(
   if (order && order.status !== 'CANCELLED') {
     await cancelBooking(operatorId, order.id, {
       actor: channelActor(channel.name),
+      // OTA settlement is owned by the channel — don't double-refund through us.
+      refund: false,
       reason,
     });
   }

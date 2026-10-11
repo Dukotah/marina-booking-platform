@@ -39,16 +39,36 @@ async function resolveAuthUserId(c: Context<Env>): Promise<string | null> {
   return c.req.header('x-dev-staff-id') ?? null;
 }
 
+/**
+ * Soft staff resolution for routes that are public-by-default but grant staff a
+ * fuller view (e.g. the order lookup, which gates guests on an email match but
+ * lets authenticated staff read any order). Returns the active StaffMember for
+ * this tenant, or null for anyone who isn't one — it NEVER writes a response, so
+ * the caller decides what an anonymous caller is allowed to see. Reuses the same
+ * identity resolution as requireStaff so the two can't drift.
+ */
+export async function resolveStaffMember(
+  c: Context<Env>,
+): Promise<Awaited<ReturnType<typeof loadStaffMember>>> {
+  const authUserId = await resolveAuthUserId(c);
+  if (!authUserId) return null;
+  return loadStaffMember(c, authUserId);
+}
+
+function loadStaffMember(c: Context<Env>, authUserId: string) {
+  return c.var.db.staffMember.findFirst({
+    where: { auth_user_id: authUserId, is_active: true },
+    include: { locations: { select: { location_id: true } } },
+  });
+}
+
 export const requireStaff = createMiddleware<Env>(async (c, next) => {
   const authUserId = await resolveAuthUserId(c);
   if (!authUserId) {
     return c.json({ error: 'Unauthenticated' }, 401);
   }
 
-  const staff = await c.var.db.staffMember.findFirst({
-    where: { auth_user_id: authUserId, is_active: true },
-    include: { locations: { select: { location_id: true } } },
-  });
+  const staff = await loadStaffMember(c, authUserId);
   if (!staff) {
     return c.json({ error: 'Not a staff member of this operator' }, 403);
   }

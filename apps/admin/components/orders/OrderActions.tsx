@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Ban, Mail, Undo2, Loader2, X, Wallet, Plus } from 'lucide-react';
 import { formatUSD } from '../../lib/format';
 import { cn } from '../../lib/cn';
+import { Button, Card, FieldLabel, Input, Select } from '../ui';
 import {
   cancelOrderAction,
   resendConfirmationAction,
@@ -154,7 +155,7 @@ export function OrderActions({
             'flex items-start justify-between gap-3 rounded-lg px-3 py-2 text-sm',
             banner.ok
               ? 'bg-emerald-50 text-emerald-800'
-              : 'bg-red-50 text-red-800',
+              : 'bg-rose-50 text-rose-800',
           )}
         >
           <span>{banner.message}</span>
@@ -169,46 +170,41 @@ export function OrderActions({
         </div>
       ) : null}
 
+      {/* Collect balance is the one obvious primary action when money is owed. */}
+      {canWrite && hasBalanceDue ? (
+        <Button
+          variant="primary"
+          disabled={pending}
+          onClick={() => run(() => collectBalanceAction({ orderId, method: 'CARD' }))}
+          title={`Charge the remaining ${formatUSD(balanceCents)} balance`}
+          className="w-full"
+        >
+          {pending ? (
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+          ) : (
+            <Wallet className="h-4 w-4" aria-hidden />
+          )}
+          Collect balance ({formatUSD(balanceCents)})
+        </Button>
+      ) : null}
+
+      {/* Everyday secondary actions. */}
       <div className="flex flex-wrap gap-2">
         {canWrite ? (
-          <button
-            type="button"
+          <Button
+            variant="secondary"
             disabled={pending || !hasEmail}
             onClick={() => run(() => resendConfirmationAction({ orderId }))}
             title={hasEmail ? undefined : 'Customer has no email on file'}
-            className={cn(
-              'inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm',
-              'hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50',
-            )}
           >
             {pending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Mail className="h-4 w-4" aria-hidden />}
             Resend confirmation
-          </button>
-        ) : null}
-
-        {canWrite && hasBalanceDue ? (
-          <button
-            type="button"
-            disabled={pending}
-            onClick={() => run(() => collectBalanceAction({ orderId, method: 'CARD' }))}
-            title={`Charge the remaining ${formatUSD(balanceCents)} balance`}
-            className={cn(
-              'inline-flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800 shadow-sm',
-              'hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50',
-            )}
-          >
-            {pending ? (
-              <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-            ) : (
-              <Wallet className="h-4 w-4" aria-hidden />
-            )}
-            Collect balance ({formatUSD(balanceCents)})
-          </button>
+          </Button>
         ) : null}
 
         {canWrite ? (
-          <button
-            type="button"
+          <Button
+            variant="secondary"
             ref={chargeTriggerRef}
             disabled={pending || isCancelled}
             aria-expanded={isCancelled ? undefined : showCharge}
@@ -219,61 +215,54 @@ export function OrderActions({
               setShowRefund(false);
             }}
             title={isCancelled ? 'Order is cancelled' : 'Add a fuel, cleaning, damage or late charge'}
-            className={cn(
-              'inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm',
-              'hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50',
-            )}
           >
             <Plus className="h-4 w-4" aria-hidden />
             Add fuel / charge
-          </button>
-        ) : null}
-
-        {canRefund && hasRefundable ? (
-          <button
-            type="button"
-            ref={refundTriggerRef}
-            disabled={pending}
-            aria-expanded={showRefund}
-            // Only referenced while the panel exists: aria-controls pointing at a
-            // missing id is an invalid attribute value.
-            aria-controls={showRefund ? refundPanelId : undefined}
-            onClick={() => {
-              setShowRefund((v) => !v);
-              setShowCancel(false);
-            }}
-            className={cn(
-              'inline-flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800 shadow-sm',
-              'hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50',
-            )}
-          >
-            <Undo2 className="h-4 w-4" aria-hidden />
-            Refund
-          </button>
-        ) : null}
-
-        {canWrite ? (
-          <button
-            type="button"
-            ref={cancelTriggerRef}
-            disabled={pending || isCancelled}
-            aria-expanded={isCancelled ? undefined : showCancel}
-            aria-controls={showCancel ? cancelPanelId : undefined}
-            onClick={() => {
-              setShowCancel((v) => !v);
-              setShowRefund(false);
-            }}
-            title={isCancelled ? 'Order is already cancelled' : undefined}
-            className={cn(
-              'inline-flex items-center gap-2 rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-700 shadow-sm',
-              'hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50',
-            )}
-          >
-            <Ban className="h-4 w-4" aria-hidden />
-            {isCancelled ? 'Cancelled' : 'Cancel order'}
-          </button>
+          </Button>
         ) : null}
       </div>
+
+      {/* Rare, money-reversing actions, demoted below the everyday set. */}
+      {canWrite || (canRefund && hasRefundable) ? (
+        <div className="flex flex-wrap gap-2 border-t border-line pt-3">
+          {canRefund && hasRefundable ? (
+            <Button
+              variant="secondary"
+              ref={refundTriggerRef}
+              disabled={pending}
+              aria-expanded={showRefund}
+              // Only referenced while the panel exists: aria-controls pointing at a
+              // missing id is an invalid attribute value.
+              aria-controls={showRefund ? refundPanelId : undefined}
+              onClick={() => {
+                setShowRefund((v) => !v);
+                setShowCancel(false);
+              }}
+            >
+              <Undo2 className="h-4 w-4" aria-hidden />
+              Refund
+            </Button>
+          ) : null}
+
+          {canWrite ? (
+            <Button
+              variant="danger"
+              ref={cancelTriggerRef}
+              disabled={pending || isCancelled}
+              aria-expanded={isCancelled ? undefined : showCancel}
+              aria-controls={showCancel ? cancelPanelId : undefined}
+              onClick={() => {
+                setShowCancel((v) => !v);
+                setShowRefund(false);
+              }}
+              title={isCancelled ? 'Order is already cancelled' : undefined}
+            >
+              <Ban className="h-4 w-4" aria-hidden />
+              {isCancelled ? 'Cancelled' : 'Cancel order'}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
 
       {showCancel ? (
         <CancelPanel
@@ -371,17 +360,17 @@ function CancelPanel({
       aria-labelledby={titleId}
       tabIndex={-1}
       onKeyDown={onKeyDown}
-      className="rounded-lg border border-red-200 bg-red-50/60 p-4"
+      className="rounded-lg border border-rose-200 bg-rose-50/60 p-4"
     >
-      <p id={titleId} className="text-sm font-medium text-red-900">
+      <p id={titleId} className="text-sm font-semibold text-rose-900">
         Cancel this order?
       </p>
-      <p className="mt-1 text-xs text-red-700">
+      <p className="mt-1 text-xs text-rose-700">
         This cancels all booked items and restores their timeslot capacity. This cannot be undone.
       </p>
-      <label htmlFor={fieldId} className="mt-3 block text-xs font-medium text-slate-600">
+      <FieldLabel htmlFor={fieldId} className="mt-3 text-ink-body">
         Reason (optional)
-      </label>
+      </FieldLabel>
       <textarea
         id={fieldId}
         value={reason}
@@ -389,27 +378,16 @@ function CancelPanel({
         rows={2}
         maxLength={500}
         placeholder="e.g. Customer requested cancellation"
-        // Placeholder text is text: slate-400 on white is 2.45:1. (1.4.3)
-        className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 placeholder:text-slate-500 focus:border-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-200"
+        className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink placeholder:text-ink-muted shadow-sm focus:border-accent focus:outline-none focus:ring-2 focus:ring-focus"
       />
       <div className="mt-3 flex gap-2">
-        <button
-          type="button"
-          disabled={pending}
-          onClick={onConfirm}
-          className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
-        >
+        <Button variant="danger" disabled={pending} onClick={onConfirm}>
           {pending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
           Confirm cancellation
-        </button>
-        <button
-          type="button"
-          disabled={pending}
-          onClick={onClose}
-          className="rounded-lg px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100"
-        >
+        </Button>
+        <Button variant="ghost" disabled={pending} onClick={onClose}>
           Keep order
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -464,7 +442,7 @@ function RefundPanel({
       onKeyDown={onKeyDown}
       className="rounded-lg border border-amber-200 bg-amber-50/60 p-4"
     >
-      <p id={titleId} className="text-sm font-medium text-amber-900">
+      <p id={titleId} className="text-sm font-semibold text-amber-900">
         Issue a refund
       </p>
 
@@ -473,10 +451,10 @@ function RefundPanel({
           {/* The label was decorative markup: no htmlFor, and the select had no id,
               so the control that picks which card gets refunded announced as a bare
               "combo box". (4.1.2 — axe select-name) */}
-          <label htmlFor={paymentFieldId} className="block text-xs font-medium text-slate-600">
+          <FieldLabel htmlFor={paymentFieldId} className="text-ink-body">
             Payment
-          </label>
-          <select
+          </FieldLabel>
+          <Select
             id={paymentFieldId}
             value={paymentId}
             onChange={(e) => {
@@ -484,20 +462,19 @@ function RefundPanel({
               setMode('full');
               setAmountInput('');
             }}
-            className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-200"
           >
             {payments.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.label} — {formatUSD(p.amountCents - p.refundedCents)} refundable
               </option>
             ))}
-          </select>
+          </Select>
         </div>
       ) : null}
 
-      <p className="mt-3 text-xs text-slate-600">
+      <p className="mt-3 text-xs text-ink-body">
         Refundable on this payment:{' '}
-        <span className="font-medium text-slate-800">{formatUSD(refundableCents)}</span>
+        <span className="font-medium text-ink tabular-nums">{formatUSD(refundableCents)}</span>
       </p>
 
       {/* Two radios with no grouping announce as "Full, radio 1 of 2" with nothing
@@ -505,20 +482,22 @@ function RefundPanel({
           native border and padding, so this is markup-only. (1.3.1) */}
       <fieldset className="mt-3">
         <legend className="sr-only">Refund amount</legend>
-        <div className="flex gap-4 text-sm">
-          <label className="inline-flex items-center gap-1.5">
+        <div className="flex gap-4 text-sm text-ink-body">
+          <label className="inline-flex min-h-11 items-center gap-1.5">
             <input
               type="radio"
               name="refund-mode"
+              className="accent-accent"
               checked={mode === 'full'}
               onChange={() => setMode('full')}
             />
             Full
           </label>
-          <label className="inline-flex items-center gap-1.5">
+          <label className="inline-flex min-h-11 items-center gap-1.5">
             <input
               type="radio"
               name="refund-mode"
+              className="accent-accent"
               checked={mode === 'partial'}
               onChange={() => setMode('partial')}
             />
@@ -529,10 +508,10 @@ function RefundPanel({
 
       {mode === 'partial' ? (
         <div className="mt-3">
-          <label htmlFor={amountFieldId} className="block text-xs font-medium text-slate-600">
+          <FieldLabel htmlFor={amountFieldId} className="text-ink-body">
             Amount (USD)
-          </label>
-          <input
+          </FieldLabel>
+          <Input
             id={amountFieldId}
             inputMode="decimal"
             value={amountInput}
@@ -542,19 +521,19 @@ function RefundPanel({
             // description announces what, when the reader tabs back to ask. (3.3.1)
             aria-invalid={showAmountError || undefined}
             aria-describedby={showAmountError ? amountErrorId : undefined}
-            className="mt-1 w-40 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 placeholder:text-slate-500 focus:border-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            className="w-40 tabular-nums"
           />
           {showAmountError ? (
-            <p id={amountErrorId} className="mt-1 text-xs text-red-700">
+            <p id={amountErrorId} className="mt-1 text-xs text-rose-700">
               Enter an amount between $0.01 and {formatUSD(refundableCents)}.
             </p>
           ) : null}
         </div>
       ) : null}
 
-      <label htmlFor={reasonFieldId} className="mt-3 block text-xs font-medium text-slate-600">
+      <FieldLabel htmlFor={reasonFieldId} className="mt-3 text-ink-body">
         Reason (optional)
-      </label>
+      </FieldLabel>
       <textarea
         id={reasonFieldId}
         value={reason}
@@ -562,10 +541,12 @@ function RefundPanel({
         rows={2}
         maxLength={500}
         placeholder="e.g. Weather cancellation"
-        className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 placeholder:text-slate-500 focus:border-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-200"
+        className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink placeholder:text-ink-muted shadow-sm focus:border-accent focus:outline-none focus:ring-2 focus:ring-focus"
       />
 
       <div className="mt-3 flex gap-2">
+        {/* Money-moving confirm keeps its amber semantic tone (waiting/refund) with
+            amber-700 for white-text contrast; not a standard Button variant. */}
         <button
           type="button"
           disabled={pending || !amountValid || !selected}
@@ -573,21 +554,14 @@ function RefundPanel({
             selected &&
             onSubmit(selected.id, mode === 'full' ? undefined : parsedAmountCents, reason)
           }
-          // amber-700, not amber-600: white on amber-600 is 3.19:1, one of the worst
-          // ratios on this page, and it is the button that moves money. (1.4.3)
-          className="inline-flex items-center gap-2 rounded-lg bg-amber-700 px-3 py-2 text-sm font-medium text-white hover:bg-amber-800 disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-lg bg-amber-700 px-4 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-amber-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300 focus-visible:ring-offset-1 disabled:pointer-events-none disabled:opacity-50"
         >
           {pending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
           Refund {amountValid ? formatUSD(parsedAmountCents) : ''}
         </button>
-        <button
-          type="button"
-          disabled={pending}
-          onClick={onClose}
-          className="rounded-lg px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100"
-        >
+        <Button variant="ghost" disabled={pending} onClick={onClose}>
           Cancel
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -645,82 +619,78 @@ function ChargePanel({
       aria-labelledby={titleId}
       tabIndex={-1}
       onKeyDown={onKeyDown}
-      className="rounded-lg border border-slate-200 bg-slate-50/60 p-4"
+      className="rounded-lg border border-line bg-surface-muted p-4"
     >
-      <p id={titleId} className="text-sm font-medium text-slate-900">
+      <p id={titleId} className="text-sm font-semibold text-ink">
         Add a charge
       </p>
-      <p className="mt-1 text-xs text-slate-600">
+      <p className="mt-1 text-xs text-ink-body">
         Adds to this order&rsquo;s balance. Settle it with &ldquo;Collect balance&rdquo; above.
       </p>
 
       <div className="mt-3 flex flex-wrap items-end gap-3">
         <div>
-          <label htmlFor={amountFieldId} className="block text-xs font-medium text-slate-600">
+          <FieldLabel htmlFor={amountFieldId} className="text-ink-body">
             Amount (USD)
-          </label>
-          <div className="mt-1 flex w-32 items-center rounded-lg border border-slate-200 bg-white px-3 focus-within:border-slate-300 focus-within:ring-2 focus-within:ring-slate-200">
-            <span className="text-slate-500">$</span>
+          </FieldLabel>
+          <div className="flex w-32 items-center rounded-lg border border-line bg-surface px-3 shadow-sm focus-within:border-accent focus-within:ring-2 focus-within:ring-focus">
+            <span className="text-ink-muted">$</span>
             <input
               id={amountFieldId}
               inputMode="decimal"
               value={amountInput}
               onChange={(e) => setAmountInput(e.target.value)}
               placeholder="0.00"
-              className="w-full border-0 bg-transparent py-2 pl-1 text-sm text-slate-700 placeholder:text-slate-500 focus:outline-none focus:ring-0"
+              className="h-11 w-full border-0 bg-transparent pl-1 text-sm text-ink tabular-nums placeholder:text-ink-muted focus:outline-none focus:ring-0"
             />
           </div>
         </div>
 
         <div>
-          <label htmlFor={categoryFieldId} className="block text-xs font-medium text-slate-600">
+          <FieldLabel htmlFor={categoryFieldId} className="text-ink-body">
             For
-          </label>
-          <select
+          </FieldLabel>
+          <Select
             id={categoryFieldId}
             value={category}
             onChange={(e) => setCategory(e.target.value)}
-            className="mt-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            className="w-auto"
           >
             {CHARGE_CATEGORIES.map((c) => (
               <option key={c.value} value={c.value}>
                 {c.label}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
       </div>
 
-      <label htmlFor={noteFieldId} className="mt-3 block text-xs font-medium text-slate-600">
+      <FieldLabel htmlFor={noteFieldId} className="mt-3 text-ink-body">
         Note (optional)
-      </label>
-      <input
+      </FieldLabel>
+      <Input
         id={noteFieldId}
         value={note}
         onChange={(e) => setNote(e.target.value)}
         maxLength={200}
         placeholder="e.g. half tank"
-        className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 placeholder:text-slate-500 focus:border-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-200"
       />
 
       <div className="mt-3 flex gap-2">
+        {/* Money-adding confirm keeps its emerald semantic tone (success); emerald-700
+            for white-text contrast. Not a standard Button variant. */}
         <button
           type="button"
           disabled={pending || !amountValid}
           onClick={() => onSubmit(category, parsedAmountCents, note.trim() || undefined)}
-          className="inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-lg bg-emerald-700 px-4 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-emerald-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 focus-visible:ring-offset-1 disabled:pointer-events-none disabled:opacity-50"
         >
           {pending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
           Add charge {amountValid ? formatUSD(parsedAmountCents) : ''}
         </button>
-        <button
-          type="button"
-          disabled={pending}
-          onClick={onClose}
-          className="rounded-lg px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100"
-        >
+        <Button variant="ghost" disabled={pending} onClick={onClose}>
           Cancel
-        </button>
+        </Button>
       </div>
     </div>
   );

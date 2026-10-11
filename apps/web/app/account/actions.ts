@@ -11,7 +11,13 @@
  * followup (see slice notes).
  */
 
-import { getOrder, rescheduleBooking } from '@/lib/orders';
+import {
+  getOrder,
+  rescheduleBooking,
+  cancelBooking,
+  getCancellationPreview,
+  type CancellationPreview,
+} from '@/lib/orders';
 import { isApiError, type OrderSummary } from '@/lib/api';
 
 /** Normalize an email for comparison (trim + lowercase). */
@@ -72,7 +78,11 @@ export async function lookupBooking(
 
   let order: OrderSummary;
   try {
-    order = await getOrder(orderNumber);
+    // The API now enforces the email match itself (a wrong/missing email 404s
+    // identically to a missing order), so this is the real identity gate — not the
+    // post-fetch comparison that used to run after the API had already handed back
+    // the guest's PII.
+    order = await getOrder(orderNumber, email);
   } catch (err) {
     if (isApiError(err) && err.status === 404) return notFound;
     if (isApiError(err) && err.status === 0) {
@@ -81,10 +91,6 @@ export async function lookupBooking(
         error: 'We could not reach the booking system. Please try again in a moment.',
       };
     }
-    return notFound;
-  }
-
-  if (normalizeEmail(order.customerEmail) !== email) {
     return notFound;
   }
 
@@ -181,5 +187,100 @@ export async function rescheduleBookingAction(
       return { ok: false, error: rescheduleErrorMessage(err.code) };
     }
     return { ok: false, error: 'Something went wrong. Please try again.' };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Self-service cancel
+// ---------------------------------------------------------------------------
+
+export type CancelPreviewResult =
+  | { ok: true; preview: CancellationPreview }
+  | { ok: false; error: string };
+
+export type CancelResult =
+  | { ok: true; order: OrderSummary }
+  | { ok: false; error: string; /** true when the window has closed → show "call us". */ windowClosed?: boolean };
+
+/**
+ * Fetch the refund preview for a self-cancel. Returns a result object (never throws)
+ * so the dialog can render the number — or a friendly message — inline. The API
+ * email-gates this identically to the cancel itself.
+ */
+export async function getCancelPreviewAction(input: {
+  orderNumber: string;
+  email: string;
+}): Promise<CancelPreviewResult> {
+  const orderNumber = input.orderNumber.trim().toUpperCase();
+  const email = normalizeEmail(input.email);
+  if (!orderNumber || !looksLikeEmail(email)) {
+    return { ok: false, error: 'Missing booking details. Please look up your booking again.' };
+  }
+
+  try {
+    const preview = await getCancellationPreview(orderNumber, email);
+    return { ok: true, preview };
+  } catch (err) {
+    if (isApiError(err)) {
+      if (err.status === 404) {
+        return { ok: false, error: 'We could not find a booking matching those details.' };
+      }
+      if (err.status === 0) {
+        return {
+          ok: false,
+          error: 'We could not reach the booking system. Please try again in a moment.',
+        };
+      }
+    }
+    return { ok: false, error: 'We could not load your refund details. Please try again.' };
+  }
+}
+
+/**
+ * Cancel an upcoming booking. The API re-verifies the email against the order and
+ * enforces the activity's self-cancel window; a cancel too close to start comes back
+ * as SELF_CANCEL_WINDOW_CLOSED, which we surface with `windowClosed` so the dialog
+ * can route the guest to call. Never throws — returns a result object.
+ */
+export async function cancelBookingAction(input: {
+  orderNumber: string;
+  email: string;
+  reason?: string;
+}): Promise<CancelResult> {
+  const orderNumber = input.orderNumber.trim().toUpperCase();
+  const email = normalizeEmail(input.email);
+  const reason = input.reason?.trim() || undefined;
+
+  if (!orderNumber || !looksLikeEmail(email)) {
+    return { ok: false, error: 'Missing booking details for the cancellation. Please try again.' };
+  }
+
+  try {
+    const order = await cancelBooking(orderNumber, { email, reason });
+    return { ok: true, order };
+  } catch (err) {
+    if (isApiError(err)) {
+      if (err.code === 'SELF_CANCEL_WINDOW_CLOSED') {
+        return {
+          ok: false,
+          windowClosed: true,
+          error:
+            'It is too close to your reservation to cancel online. Please call us and we will help.',
+        };
+      }
+      if (err.status === 404) {
+        return { ok: false, error: 'We could not find a booking matching those details.' };
+      }
+      if (err.code === 'ALREADY_CANCELLED') {
+        return { ok: false, error: 'This booking has already been cancelled.' };
+      }
+      if (err.status === 0) {
+        return {
+          ok: false,
+          error: 'We could not reach the booking system. Please try again in a moment.',
+        };
+      }
+    }
+    return { ok: false, error: 'We could not cancel that booking. Please try again or contact us.' };
   }
 }

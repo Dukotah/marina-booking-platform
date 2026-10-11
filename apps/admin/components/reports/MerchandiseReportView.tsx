@@ -69,7 +69,7 @@ export function MerchandiseReportView({ report }: MerchandiseReportViewProps) {
         <CardContent className="overflow-x-auto">
           <table className="w-full min-w-[720px] border-collapse text-sm">
             <thead>
-              <tr className="border-b border-slate-200 text-xs font-medium uppercase tracking-wide text-slate-500">
+              <tr className="border-b border-line text-xs font-medium uppercase tracking-wide text-ink-muted">
                 <th className={CELL_LEFT}>Product</th>
                 <th className={CELL_LEFT}>Variant</th>
                 <th className={CELL}>Cost/Unit</th>
@@ -83,7 +83,7 @@ export function MerchandiseReportView({ report }: MerchandiseReportViewProps) {
               {data.categories.map((cat) => (
                 <CategoryRows key={cat.category} category={cat} />
               ))}
-              <tr className="border-t-2 border-slate-200 font-semibold text-slate-900">
+              <tr className="border-t-2 border-line font-semibold text-ink">
                 <td className={CELL_LEFT} colSpan={3}>
                   Grand total
                 </td>
@@ -96,7 +96,7 @@ export function MerchandiseReportView({ report }: MerchandiseReportViewProps) {
               </tr>
             </tbody>
           </table>
-          <p className="mt-2 text-xs text-slate-400">
+          <p className="mt-2 text-xs text-ink-muted">
             Total sales are net of allocated order discounts, pre-tax. Includes register
             merchandise, gift/misc lines, checkout add-ons, and post-trip charges.
           </p>
@@ -116,7 +116,7 @@ function CategoryRows({
       <tr>
         <td
           colSpan={7}
-          className="px-3 pb-1 pt-4 text-xs font-semibold uppercase tracking-wide text-slate-400"
+          className="px-3 pb-1 pt-4 text-xs font-semibold uppercase tracking-wide text-ink-muted"
         >
           {category.category}
         </td>
@@ -124,7 +124,7 @@ function CategoryRows({
       {category.products.map((p) => (
         <ProductRows key={p.name} product={p} />
       ))}
-      <tr className="border-t border-slate-100 bg-slate-50/60 font-medium text-slate-800">
+      <tr className="border-t border-line bg-surface-muted font-medium text-ink">
         <td className={CELL_LEFT} colSpan={3}>
           {category.category} subtotal
         </td>
@@ -149,52 +149,52 @@ function ProductRows({
   if (!product.hasVariants) {
     const v = product.variants[0];
     return (
-      <tr className="border-t border-slate-50">
-        <td className={`${CELL_LEFT} font-medium text-slate-800`}>{product.name}</td>
-        <td className={`${CELL_LEFT} text-slate-400`}>—</td>
-        <td className={`${CELL} text-slate-500`}>
+      <tr className="border-t border-line">
+        <td className={`${CELL_LEFT} font-medium text-ink`}>{product.name}</td>
+        <td className={`${CELL_LEFT} text-ink-muted`}>—</td>
+        <td className={`${CELL} text-ink-muted`}>
           {v?.unitPriceCents == null ? '—' : formatUSD(v.unitPriceCents)}
         </td>
-        <td className={`${CELL} text-slate-700`}>{formatNumber(product.quantity)}</td>
-        <td className={`${CELL} text-slate-700`}>{formatUSD(product.grossCents)}</td>
-        <td className={`${CELL} text-slate-500`}>
+        <td className={`${CELL} text-ink-body`}>{formatNumber(product.quantity)}</td>
+        <td className={`${CELL} text-ink-body`}>{formatUSD(product.grossCents)}</td>
+        <td className={`${CELL} text-ink-muted`}>
           {product.discountCents ? `−${formatUSD(product.discountCents)}` : '—'}
         </td>
-        <td className={`${CELL} font-medium text-slate-900`}>{formatUSD(product.totalCents)}</td>
+        <td className={`${CELL} font-medium text-ink`}>{formatUSD(product.totalCents)}</td>
       </tr>
     );
   }
 
   return (
     <>
-      <tr className="border-t border-slate-50">
-        <td className={`${CELL_LEFT} font-medium text-slate-800`}>{product.name}</td>
-        <td className={`${CELL_LEFT} text-xs text-slate-400`}>
+      <tr className="border-t border-line">
+        <td className={`${CELL_LEFT} font-medium text-ink`}>{product.name}</td>
+        <td className={`${CELL_LEFT} text-xs text-ink-muted`}>
           {product.variants.length} variant{product.variants.length === 1 ? '' : 's'}
         </td>
-        <td className={`${CELL} text-slate-500`}>
+        <td className={`${CELL} text-ink-muted`}>
           {product.unitPriceCents == null ? '—' : formatUSD(product.unitPriceCents)}
         </td>
-        <td className={`${CELL} font-medium text-slate-800`}>{formatNumber(product.quantity)}</td>
-        <td className={`${CELL} font-medium text-slate-800`}>{formatUSD(product.grossCents)}</td>
-        <td className={`${CELL} text-slate-500`}>
+        <td className={`${CELL} font-medium text-ink`}>{formatNumber(product.quantity)}</td>
+        <td className={`${CELL} font-medium text-ink`}>{formatUSD(product.grossCents)}</td>
+        <td className={`${CELL} text-ink-muted`}>
           {product.discountCents ? `−${formatUSD(product.discountCents)}` : '—'}
         </td>
-        <td className={`${CELL} font-semibold text-slate-900`}>{formatUSD(product.totalCents)}</td>
+        <td className={`${CELL} font-semibold text-ink`}>{formatUSD(product.totalCents)}</td>
       </tr>
       {product.variants.map((v) => (
-        <tr key={v.variant ?? '__base__'} className="border-t border-slate-50">
-          <td className={`${CELL_LEFT} pl-7 text-slate-500`}>{product.name}</td>
-          <td className={`${CELL_LEFT} text-slate-600`}>{v.variant ?? 'Base'}</td>
-          <td className={`${CELL} text-slate-500`}>
+        <tr key={v.variant ?? '__base__'} className="border-t border-line">
+          <td className={`${CELL_LEFT} pl-7 text-ink-muted`}>{product.name}</td>
+          <td className={`${CELL_LEFT} text-ink-body`}>{v.variant ?? 'Base'}</td>
+          <td className={`${CELL} text-ink-muted`}>
             {v.unitPriceCents == null ? '—' : formatUSD(v.unitPriceCents)}
           </td>
-          <td className={`${CELL} text-slate-600`}>{formatNumber(v.quantity)}</td>
-          <td className={`${CELL} text-slate-600`}>{formatUSD(v.grossCents)}</td>
-          <td className={`${CELL} text-slate-500`}>
+          <td className={`${CELL} text-ink-body`}>{formatNumber(v.quantity)}</td>
+          <td className={`${CELL} text-ink-body`}>{formatUSD(v.grossCents)}</td>
+          <td className={`${CELL} text-ink-muted`}>
             {v.discountCents ? `−${formatUSD(v.discountCents)}` : '—'}
           </td>
-          <td className={`${CELL} text-slate-700`}>{formatUSD(v.totalCents)}</td>
+          <td className={`${CELL} text-ink-body`}>{formatUSD(v.totalCents)}</td>
         </tr>
       ))}
     </>

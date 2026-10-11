@@ -70,7 +70,7 @@ export function StageControl({
       {/* Never disabled while saving: taking focus off a radio mid-arrow-key would
           strand a keyboard user. aria-busy says "working" without moving anything. */}
       <fieldset aria-busy={pending || undefined} className="space-y-3">
-        <legend className="text-xs font-medium uppercase tracking-wide text-slate-400">
+        <legend className="text-xs font-medium uppercase tracking-wide text-ink-muted">
           Stage
         </legend>
 
@@ -84,7 +84,7 @@ export function StageControl({
               onChoose={choose}
             />
           ))}
-          <span aria-hidden className="mx-1 hidden self-center text-slate-700 sm:inline">
+          <span aria-hidden className="mx-1 hidden self-center text-line-strong sm:inline">
             |
           </span>
           {TERMINAL_STAGES.map((value) => (
@@ -100,7 +100,7 @@ export function StageControl({
         </div>
       </fieldset>
 
-      <p className="text-sm text-slate-400">{STAGE_MEANING[selected]}</p>
+      <p className="text-sm text-ink-body">{STAGE_MEANING[selected]}</p>
 
       {/* Success is polite; a failure interrupts, because the stage on screen would
           otherwise disagree with the stage in the database. */}
@@ -110,7 +110,7 @@ export function StageControl({
       {error && (
         <p
           role="alert"
-          className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-200"
+          className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700"
         >
           {error}
         </p>
@@ -133,14 +133,14 @@ function StageChip({
   tone?: 'pipeline' | 'terminal';
 }) {
   const base =
-    'inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium transition';
+    'inline-flex min-h-11 items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium transition-colors';
   const state = checked
     ? tone === 'terminal'
-      ? 'border-rose-400 bg-rose-500/20 text-rose-100'
-      : 'border-emerald-400 bg-emerald-500 text-slate-950'
+      ? 'border-rose-300 bg-rose-100 text-rose-700'
+      : 'border-accent bg-accent text-white'
     : done
-      ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20'
-      : 'border-slate-700 bg-slate-900 text-slate-300 hover:bg-slate-800';
+      ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+      : 'border-line bg-surface text-ink-body hover:bg-surface-muted';
 
   return (
     <label className="cursor-pointer">
@@ -153,7 +153,7 @@ function StageChip({
         className="peer sr-only"
       />
       <span
-        className={`${base} ${state} peer-focus-visible:ring-2 peer-focus-visible:ring-emerald-400 peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-slate-950`}
+        className={`${base} ${state} peer-focus-visible:ring-2 peer-focus-visible:ring-focus peer-focus-visible:ring-offset-1`}
       >
         {done && <Check className="h-3.5 w-3.5" aria-hidden />}
         {STAGE_LABEL[value]}

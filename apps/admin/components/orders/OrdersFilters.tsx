@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState, useTransition } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Search, X } from 'lucide-react';
-import { cn } from '../../lib/cn';
+import { Button, Input, Select } from '../ui';
 import type { OrderStatusValue } from './OrderStatusBadge';
 
 const STATUS_OPTIONS: Array<{ value: '' | OrderStatusValue; label: string }> = [
@@ -72,20 +72,20 @@ export function OrdersFilters({
     <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
       <div className="relative min-w-0 flex-1 sm:max-w-xs">
         <Search
-          className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+          className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-muted"
           aria-hidden
         />
-        <input
+        <Input
           type="search"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search order #, name, email…"
           aria-label="Search orders"
-          className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm text-slate-700 placeholder:text-slate-500 focus:border-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-200"
+          className="pl-9"
         />
       </div>
 
-      <select
+      <Select
         value={initialStatus}
         aria-label="Filter by status"
         onChange={(e) =>
@@ -94,16 +94,16 @@ export function OrdersFilters({
             else params.delete('status');
           })
         }
-        className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-200"
+        className="sm:w-auto"
       >
         {STATUS_OPTIONS.map((opt) => (
           <option key={opt.value || 'all'} value={opt.value}>
             {opt.label}
           </option>
         ))}
-      </select>
+      </Select>
 
-      <input
+      <Input
         type="date"
         value={initialDate}
         aria-label="Filter by booking date"
@@ -113,12 +113,12 @@ export function OrdersFilters({
             else params.delete('date');
           })
         }
-        className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-200"
+        className="sm:w-auto"
       />
 
       {hasFilters ? (
-        <button
-          type="button"
+        <Button
+          variant="ghost"
           onClick={() =>
             pushParams((params) => {
               params.delete('search');
@@ -126,16 +126,10 @@ export function OrdersFilters({
               params.delete('date');
             })
           }
-          className={cn(
-            // slate-600: this button has no fill of its own, so it sits on the
-            // page background (bg-slate-100) where slate-500 is 4.34:1. (1.4.3)
-            'inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-slate-600',
-            'hover:bg-slate-100 hover:text-slate-700',
-          )}
         >
           <X className="h-4 w-4" aria-hidden />
           Clear
-        </button>
+        </Button>
       ) : null}
     </div>
   );

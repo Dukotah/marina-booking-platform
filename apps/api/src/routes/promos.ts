@@ -24,6 +24,10 @@ const promoInputSchema = z.object({
   valid_from: z.string().datetime().nullable().optional(),
   valid_until: z.string().datetime().nullable().optional(),
   max_redemptions: z.number().int().positive().nullable().optional(),
+  /** When true, checkout auto-applies this promo without a code entry. */
+  auto_apply: z.boolean().default(false),
+  /** Max redemptions per single customer (by email). Null = unlimited per customer. */
+  per_customer_limit: z.number().int().positive().nullable().optional(),
   /** Empty array = applies to all activities. */
   activity_ids: z.array(z.string().min(1)).default([]),
 });
@@ -129,6 +133,8 @@ promos.post('/', requireStaff, async (c) => {
       valid_from: data.valid_from ? new Date(data.valid_from) : null,
       valid_until: data.valid_until ? new Date(data.valid_until) : null,
       max_redemptions: data.max_redemptions ?? null,
+      auto_apply: data.auto_apply,
+      per_customer_limit: data.per_customer_limit ?? null,
       activity_ids: data.activity_ids,
     },
   });
@@ -172,6 +178,8 @@ promos.patch('/:id', requireStaff, async (c) => {
         ? { valid_until: data.valid_until ? new Date(data.valid_until) : null }
         : {}),
       ...(data.max_redemptions !== undefined ? { max_redemptions: data.max_redemptions } : {}),
+      ...(data.auto_apply !== undefined ? { auto_apply: data.auto_apply } : {}),
+      ...(data.per_customer_limit !== undefined ? { per_customer_limit: data.per_customer_limit } : {}),
       ...(data.activity_ids !== undefined ? { activity_ids: data.activity_ids } : {}),
     },
   });

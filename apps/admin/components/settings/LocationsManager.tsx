@@ -148,11 +148,11 @@ export function LocationsManager({ locations }: { locations: LocationRow[] }) {
       ) : null}
 
       {locations.length === 0 && !creating ? (
-        <div className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">
+        <div className="rounded-lg border border-dashed border-line-strong bg-surface p-8 text-center text-sm text-ink-muted">
           No locations yet. Add your first site to start scheduling activities.
         </div>
       ) : (
-        <ul className="divide-y divide-slate-100">
+        <ul className="divide-y divide-line">
           {locations.map((row) =>
             editingId === row.id ? (
               <li key={row.id} className="py-4">
@@ -167,24 +167,24 @@ export function LocationsManager({ locations }: { locations: LocationRow[] }) {
             ) : (
               <li key={row.id} className="flex items-center justify-between gap-4 py-3">
                 <div className="flex min-w-0 items-start gap-3">
-                  <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-600">
+                  <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-surface-muted text-ink-body">
                     <MapPin className="h-4 w-4" aria-hidden />
                   </span>
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="truncate text-sm font-medium text-slate-900">{row.name}</span>
+                      <span className="truncate text-sm font-medium text-ink">{row.name}</span>
                       {row.isDefault ? (
                         <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
                           Default
                         </span>
                       ) : null}
                       {!row.isActive ? (
-                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500">
+                        <span className="rounded-full bg-surface-muted px-2 py-0.5 text-[11px] font-medium text-ink-muted">
                           Inactive
                         </span>
                       ) : null}
                     </div>
-                    <p className="mt-0.5 truncate text-xs text-slate-500">{oneLineAddress(row)}</p>
+                    <p className="mt-0.5 truncate text-xs text-ink-muted">{oneLineAddress(row)}</p>
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
@@ -193,7 +193,7 @@ export function LocationsManager({ locations }: { locations: LocationRow[] }) {
                     onClick={() => beginEdit(row)}
                     disabled={isPending}
                     aria-label={`Edit ${row.name}`}
-                    className="rounded-md p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                    className="rounded-md p-1.5 text-ink-muted hover:bg-surface-muted hover:text-ink-body"
                   >
                     <Pencil className="h-4 w-4" aria-hidden />
                   </button>
@@ -230,7 +230,7 @@ function LocationEditor({
   isPending: boolean;
 }) {
   return (
-    <div className="mb-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
+    <div className="mb-4 rounded-lg border border-line bg-surface-muted p-4">
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Location name" required className="sm:col-span-2">
           <TextInput

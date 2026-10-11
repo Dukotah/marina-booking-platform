@@ -104,6 +104,41 @@ export async function issueGiftCard(
 }
 
 // ---------------------------------------------------------------------------
+// Online purchase — price authority
+// ---------------------------------------------------------------------------
+
+/**
+ * The denominations a card may be bought for online, in integer cents. The server
+ * is the price authority: a public purchase may only name an amount from THIS set,
+ * so a tampered client can never buy a $500 card for $1. The one amount it names is
+ * BOTH the amount charged and the value loaded onto the card — quote == charge ==
+ * balance, by construction, because they are the same number re-derived here.
+ */
+export const GIFT_CARD_DENOMINATIONS_CENTS: readonly number[] = [
+  2_500, 5_000, 10_000, 15_000, 20_000, 25_000, 50_000,
+];
+
+/**
+ * Re-derive the server-authoritative purchase amount from a client-requested
+ * amount. Returns the amount ONLY if it exactly matches an allowed denomination;
+ * throws otherwise. This is the single choke point that makes "amount charged ==
+ * card value" impossible to subvert from the client.
+ */
+export function resolvePurchaseAmountCents(requestedCents: unknown): number {
+  if (!Number.isInteger(requestedCents) || (requestedCents as number) <= 0) {
+    throw new GiftCardError('INVALID_AMOUNT', 'Choose a valid gift card amount.');
+  }
+  const amount = requestedCents as number;
+  if (!GIFT_CARD_DENOMINATIONS_CENTS.includes(amount)) {
+    throw new GiftCardError(
+      'INVALID_AMOUNT',
+      'That gift card amount is not available. Pick one of the listed amounts.',
+    );
+  }
+  return amount;
+}
+
+// ---------------------------------------------------------------------------
 // Lookup / validate (public balance check + checkout preview)
 // ---------------------------------------------------------------------------
 
@@ -195,7 +230,20 @@ export async function redeemGiftCard(
       throw new GiftCardError('INSUFFICIENT_BALANCE', 'This gift card has no remaining balance.');
     }
 
-    const order = await tx.order.findUnique({ where: { id: input.orderId } });
+    // Lock the Order row FOR UPDATE before reading its ledger. Without it, a
+    // concurrent collectBalance (booking.ts) reads the same balance_due and both
+    // writers zero it last-writer-wins, double-paying the customer. The lock
+    // serialises the two writers: the loser blocks until the winner commits, then
+    // reads the freshly-reduced balance_due and applies against what's truly left.
+    // Held to end-of-tx. We lock only the Order row, scoping contention to this order.
+    const lockedOrder = await tx.$queryRaw<
+      Array<{ id: string; status: string; total_cents: number; amount_paid_cents: number; balance_due_cents: number }>
+    >`
+      SELECT id, status, total_cents, amount_paid_cents, balance_due_cents
+      FROM "Order"
+      WHERE id = ${input.orderId}
+      FOR UPDATE`;
+    const order = lockedOrder[0];
     if (!order) throw new GiftCardError('ORDER_NOT_FOUND', 'Order not found.', 404);
     // Same payable-state bar as collectBalance: a cancelled order must never take
     // money. Without this, a public redeem drains a card into a dead booking — and
@@ -235,6 +283,11 @@ export async function redeemGiftCard(
         status: 'PAID',
         amount_cents: applied,
         gift_card_id: card.id,
+        // Real idempotency key so a retry hits the @@unique([operator_id,
+        // idempotency_key]) index instead of writing a duplicate GIFT_CARD
+        // Payment (a NULL key is treated as distinct by Postgres, so it guards
+        // nothing). Keyed on the pre-apply amount_paid so distinct top-ups differ.
+        idempotency_key: `giftcard-${card.id}-${order.id}-${order.amount_paid_cents}`,
       },
     });
 

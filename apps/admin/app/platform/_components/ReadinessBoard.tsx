@@ -48,7 +48,7 @@ export function ReadinessBoard({
     return (
       <p
         role="alert"
-        className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100"
+        className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700"
       >
         The readiness checks could not be run just now, so this list is not a statement
         that anything is finished. Everything else on this page is live.
@@ -58,13 +58,13 @@ export function ReadinessBoard({
 
   return (
     <div className="space-y-5">
-      <p className="text-sm text-slate-400">
+      <p className="text-sm text-ink-body">
         {open.length === 0 ? (
           <>Nothing outstanding. Every check has cleared.</>
         ) : (
           <>
-            <strong className="font-semibold text-slate-100">{ours.length}</strong> waiting on us ·{' '}
-            <strong className="font-semibold text-slate-100">{theirs.length}</strong> waiting on
+            <strong className="font-semibold text-ink">{ours.length}</strong> waiting on us ·{' '}
+            <strong className="font-semibold text-ink">{theirs.length}</strong> waiting on
             them · {done.length} done
           </>
         )}
@@ -90,11 +90,11 @@ export function ReadinessBoard({
       </div>
 
       {(done.length > 0 || na.length > 0) && (
-        <details className="rounded-xl border border-slate-800 bg-slate-900/40">
-          <summary className="cursor-pointer rounded-xl px-4 py-3 text-sm font-medium text-slate-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950">
+        <details className="rounded-lg border border-line bg-surface shadow-sm">
+          <summary className="min-h-11 cursor-pointer rounded-lg px-4 py-3 text-sm font-medium text-ink-body focus:outline-none focus-visible:ring-2 focus-visible:ring-focus">
             Cleared and not needed ({done.length + na.length})
           </summary>
-          <ul className="space-y-2 border-t border-slate-800 p-4">
+          <ul className="space-y-2 border-t border-line p-4">
             {[...done, ...na].map((check) => (
               <CheckRow
                 key={check.id}
@@ -127,16 +127,16 @@ function Pile({
 }) {
   const headingId = `pile-${title.replace(/\s+/g, '-').toLowerCase()}`;
   return (
-    <section aria-labelledby={headingId} className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
-      <h3 id={headingId} className="text-sm font-semibold text-slate-100">
+    <section aria-labelledby={headingId} className="rounded-lg border border-line bg-surface p-4 shadow-sm">
+      <h3 id={headingId} className="text-sm font-semibold text-ink">
         {title}{' '}
-        <span className="ml-1 rounded-full bg-slate-800 px-2 py-0.5 text-xs font-medium text-slate-300">
+        <span className="ml-1 rounded-full bg-surface-muted px-2 py-0.5 text-xs font-medium text-ink-body">
           {checks.length}
         </span>
       </h3>
-      <p className="mt-1 text-xs text-slate-400">{hint}</p>
+      <p className="mt-1 text-xs text-ink-muted">{hint}</p>
       {checks.length === 0 ? (
-        <p className="mt-3 rounded-lg border border-dashed border-slate-700 px-3 py-4 text-center text-sm text-slate-400">
+        <p className="mt-3 rounded-lg border border-dashed border-line-strong px-3 py-4 text-center text-sm text-ink-muted">
           {emptyText}
         </p>
       ) : (
@@ -168,11 +168,11 @@ function CheckRow({
   const Icon = ICON[check.status];
 
   return (
-    <li className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+    <li className="rounded-lg border border-line bg-surface-muted p-3">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <p className="text-sm font-medium text-slate-100">{check.label}</p>
+            <p className="text-sm font-medium text-ink">{check.label}</p>
             {/* Icon + word together: the status never depends on colour alone. */}
             <span
               className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${meta.pill}`}
@@ -181,7 +181,7 @@ function CheckRow({
               {meta.word}
             </span>
           </div>
-          <p className="mt-1 text-sm text-slate-400">{check.detail}</p>
+          <p className="mt-1 text-sm text-ink-body">{check.detail}</p>
         </div>
         {check.href && (
           <ClientDeepLink

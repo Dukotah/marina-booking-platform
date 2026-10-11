@@ -39,8 +39,8 @@ function locationNames(ids: string[], locations: LocationOption[]): string {
 
 const roleBadgeClass: Record<BuiltinRole, string> = {
   OWNER: 'bg-violet-100 text-violet-700',
-  ADMIN: 'bg-indigo-100 text-indigo-700',
-  MANAGER: 'bg-sky-100 text-sky-700',
+  ADMIN: 'bg-slate-200 text-slate-800',
+  MANAGER: 'bg-slate-100 text-slate-700',
   STAFF: 'bg-slate-100 text-slate-700',
   GUIDE: 'bg-emerald-100 text-emerald-700',
 };
@@ -128,7 +128,7 @@ export function StaffTable({ rows, locations, canManage }: StaffTableProps) {
                         {ROLE_LABELS[row.role]}
                       </span>
                       {row.extraPermissions.length > 0 ? (
-                        <span className="ml-2 text-xs text-sky-600">
+                        <span className="ml-2 text-xs text-accent">
                           +{row.extraPermissions.length} extra
                         </span>
                       ) : null}

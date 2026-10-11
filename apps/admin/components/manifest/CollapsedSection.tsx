@@ -36,7 +36,7 @@ export function CollapsedSection({
   return (
     <section
       aria-labelledby={headingId}
-      className="rounded-xl border border-slate-200 bg-white shadow-sm"
+      className="rounded-lg border border-line bg-surface shadow-sm"
     >
       <h2 id={headingId} className="m-0">
         <button
@@ -44,22 +44,22 @@ export function CollapsedSection({
           aria-expanded={open}
           aria-controls={panelId}
           onClick={() => setOpen((v) => !v)}
-          className="flex min-h-11 w-full flex-wrap items-center gap-x-3 gap-y-1 rounded-xl px-4 py-3 text-left hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-slate-500"
+          className="flex min-h-11 w-full flex-wrap items-center gap-x-3 gap-y-1 rounded-lg px-4 py-3 text-left hover:bg-surface-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
         >
           <ChevronRight
-            className={`h-4 w-4 shrink-0 text-slate-500 transition-transform ${open ? 'rotate-90' : ''}`}
+            className={`h-4 w-4 shrink-0 text-ink-muted transition-transform ${open ? 'rotate-90' : ''}`}
             aria-hidden
           />
-          <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+          <span className="text-xs font-semibold uppercase tracking-wide text-ink-body">
             {title}
           </span>
-          <span className="text-sm text-slate-600">{summary}</span>
+          <span className="text-sm text-ink-body">{summary}</span>
         </button>
       </h2>
 
       {/* Mounted-but-empty when closed so aria-controls always resolves. */}
       <div id={panelId}>
-        {open ? <div className="border-t border-slate-100 px-4 pb-4 pt-3">{children}</div> : null}
+        {open ? <div className="border-t border-line px-4 pb-4 pt-3">{children}</div> : null}
       </div>
     </section>
   );

@@ -38,6 +38,12 @@ import {
   type RememberedGuest,
 } from '@/lib/guest';
 import { OrderSummary } from './OrderSummary';
+import {
+  AddOns,
+  selectedAddOnItems,
+  selectedAddOnPayload,
+  type AddOnSelections,
+} from './AddOns';
 import { CustomerFields } from './CustomerFields';
 import { GuestPrefillBanner } from './GuestPrefillBanner';
 import { ParticipantFields } from './ParticipantFields';
@@ -48,6 +54,7 @@ import { PriceBreakdown } from './PriceBreakdown';
 import { WalletExpress } from './WalletExpress';
 import { PaymentSection, type PaymentSectionHandle } from './PaymentSection';
 import { ChallengeDialog, type ChallengeHandoff } from './ChallengeDialog';
+import { CartHoldTimer } from './CartHoldTimer';
 import type {
   AppliedPromo,
   CheckoutFormValues,
@@ -215,6 +222,11 @@ export function CheckoutClient({
   const [quantity, setQuantity] = useState(selection.quantity);
   const [promo, setPromo] = useState<AppliedPromo | null>(null);
   const [tipCents, setTipCents] = useState(0);
+  // Chosen add-on quantities, keyed by add-on id (the AddOns component owns the
+  // controls; this is the single source of truth the price breakdown, the tip base
+  // and the submitted payload all read from). PER_GUEST lines re-resolve against the
+  // live quantity, so this map survives a party-size change untouched.
+  const [addOnSelections, setAddOnSelections] = useState<AddOnSelections>({});
   // Nonce-carrying so a repeated identical failure still re-announces.
   const [submitError, setSubmitError] = useState<{ message: string; nonce: number } | null>(
     null,
@@ -246,6 +258,10 @@ export function CheckoutClient({
   const paymentRef = useRef<PaymentSectionHandle>(null);
   // See the submit handler: the de-duplication key for this checkout attempt.
   const attemptKey = useRef<string | null>(null);
+  // The live cart hold placed by CartHoldTimer. Sent with the booking so the API
+  // consumes it; a ref (not state) because it only needs to be read at submit time
+  // and must not retrigger the pricing memos on every countdown tick.
+  const holdIdRef = useRef<string | null>(null);
 
   /*
    * Move focus to the error summary the instant it exists.
@@ -303,7 +319,11 @@ export function CheckoutClient({
     if (!challenge) return;
     saveRememberedGuest(challenge.guest);
     setChallenge(null);
-    router.push(`/confirmation?order=${encodeURIComponent(challenge.orderNumber)}`);
+    // Carry the guest's email as the identity proof the confirmation lookup needs
+    // (the API gates /orders/:orderNumber on it — order numbers are enumerable).
+    router.push(
+      `/confirmation?order=${encodeURIComponent(challenge.orderNumber)}&email=${encodeURIComponent(challenge.guest.email)}`,
+    );
   };
 
   /** Backed out. The API released the order, so the guest can retry cleanly. */
@@ -357,17 +377,27 @@ export function CheckoutClient({
     setRememberedGuest(null);
   };
 
-  // Base the tip presets on the post-discount subtotal (integer cents).
+  // The selected add-ons as pricing line items (the SAME numbers the AddOns rows
+  // display), appended to the seat line everywhere pricing is computed so the tip
+  // base, the breakdown and the submit total all include them. Display only — the
+  // server re-prices from the catalog at booking.
+  const addOnItems = useMemo(
+    () => selectedAddOnItems(selection.addOns, addOnSelections, quantity),
+    [selection.addOns, addOnSelections, quantity],
+  );
+
+  // Base the tip presets on the post-discount subtotal (integer cents), add-ons
+  // included — a tip is a percentage of everything bought, not just the seats.
   const tipBaseCents = useMemo(() => {
     const { subtotalCents, discountCents } = calculatePricing({
-      items: [{ unitPriceCents: selection.rate.priceCents, quantity }],
+      items: [{ unitPriceCents: selection.rate.priceCents, quantity }, ...addOnItems],
       fees: [],
       promo: promo
         ? { discountType: promo.discountType, discountValue: promo.discountValue }
         : null,
     });
     return subtotalCents - discountCents;
-  }, [selection.rate.priceCents, quantity, promo]);
+  }, [selection.rate.priceCents, quantity, addOnItems, promo]);
 
   // The amount the guest will owe at the marina in reserve mode. The API supplies
   // the operator's fees (tax + processing + surcharges) with the selection, so this
@@ -375,7 +405,7 @@ export function CheckoutClient({
   // total to the cent — this figure is what the submit button commits the guest to.
   const reserveDueCents = useMemo(() => {
     const { totalCents } = calculatePricing({
-      items: [{ unitPriceCents: selection.rate.priceCents, quantity }],
+      items: [{ unitPriceCents: selection.rate.priceCents, quantity }, ...addOnItems],
       fees: selection.fees,
       promo: promo
         ? { discountType: promo.discountType, discountValue: promo.discountValue }
@@ -383,7 +413,7 @@ export function CheckoutClient({
       tipCents,
     });
     return totalCents;
-  }, [selection.rate.priceCents, selection.fees, quantity, promo, tipCents]);
+  }, [selection.rate.priceCents, selection.fees, quantity, addOnItems, promo, tipCents]);
 
   // A failed validation pass is silent to a screen reader unless something moves
   // focus — the guest would otherwise press "Complete booking" and hear nothing.
@@ -433,6 +463,10 @@ export function CheckoutClient({
 
       const result = await placeOrder({
         idempotencyKey: attemptKey.current,
+        // The cart hold this checkout reserved under (null if it lapsed / failed to
+        // place). The API consumes it so its seats aren't double-counted; a missing
+        // hold still books because the server capacity check is the authority.
+        holdId: holdIdRef.current ?? undefined,
         activityId: selection.activityId,
         rateId: selection.rate.id,
         timeslotId: selection.timeslotId,
@@ -461,6 +495,10 @@ export function CheckoutClient({
             : undefined,
         promoCode: promo?.code,
         tipCents: tipCents > 0 ? tipCents : undefined,
+        // Add-on selections: id + resolved quantity ONLY (never a price). The API
+        // re-reads each from the catalog and re-derives price + quantity, so a
+        // tampered client price is ignored and the amount charged is server-authored.
+        addOns: selectedAddOnPayload(selection.addOns, addOnSelections, quantity),
         // Reserve mode leaves paymentSourceId undefined; the action then skips the
         // charge and the order keeps its full balance due for on-arrival payment.
         paymentSourceId,
@@ -516,7 +554,11 @@ export function CheckoutClient({
       // Remember this guest (this device only) so their next booking is one-tap.
       saveRememberedGuest(guest);
 
-      router.push(`/confirmation?order=${encodeURIComponent(result.order.orderNumber)}`);
+      // Carry the guest's email as the identity proof the confirmation lookup needs
+      // (the API gates /orders/:orderNumber on it — order numbers are enumerable).
+      router.push(
+        `/confirmation?order=${encodeURIComponent(result.order.orderNumber)}&email=${encodeURIComponent(result.order.customerEmail)}`,
+      );
     } catch {
       fail('Something went wrong completing your booking. Please try again.');
     } finally {
@@ -550,6 +592,21 @@ export function CheckoutClient({
         noValidate
         className="pb-24 lg:pb-0"
       >
+        {/*
+          Cart-hold countdown. On mount it reserves this slot's seats for the
+          operator's hold window so no one else can reach "pay" for them, and ticks
+          down to the hold's expiry. Keyed on timeslot+quantity so a party-size
+          change re-sizes the hold. Fails soft (hidden) if the hold can't be placed.
+        */}
+        <div className="mb-6">
+          <CartHoldTimer
+            timeslotId={selection.timeslotId}
+            seats={quantity}
+            onHold={(id) => {
+              holdIdRef.current = id;
+            }}
+          />
+        </div>
         {/*
           Error summary — the only thing that tells a non-sighted guest the submit
           was rejected at all. Two mechanisms, deliberately, because neither
@@ -700,6 +757,21 @@ export function CheckoutClient({
                       onQuantityChange={setQty}
                     />
 
+                    {/* Add-ons / upsells. Renders nothing when the activity offers
+                        none, so the divider stays out of the way in that case. The
+                        page's ESTATE_VARS remap --brand-color to the sage accent, so
+                        the component's brand-tinted selected state matches checkout. */}
+                    {selection.addOns.length > 0 && (
+                      <div className="border-t border-hairline pt-4">
+                        <AddOns
+                          addOns={selection.addOns}
+                          guestCount={quantity}
+                          selections={addOnSelections}
+                          onChange={setAddOnSelections}
+                        />
+                      </div>
+                    )}
+
                     <div className="border-t border-hairline pt-4">
                       <PromoField
                         activityId={selection.activityId}
@@ -737,6 +809,7 @@ export function CheckoutClient({
                         promo={promo}
                         tipCents={tipCents}
                         fees={selection.fees}
+                        addOnItems={addOnItems}
                       />
                     </div>
                   </CardContent>

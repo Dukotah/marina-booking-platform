@@ -26,7 +26,13 @@ export {
   BookingReminder,
   type BookingReminderProps,
 } from './BookingReminder.js';
+export {
+  BookingCancelled,
+  type BookingCancelledProps,
+} from './BookingCancelled.js';
 export { RefundReceipt, type RefundReceiptProps } from './RefundReceipt.js';
+export { GiftCardIssued, type GiftCardIssuedProps } from './GiftCardIssued.js';
+export { ReviewRequest, type ReviewRequestProps } from './ReviewRequest.js';
 export { WaiverRequest, type WaiverRequestProps } from './WaiverRequest.js';
 export {
   StaffNewBooking,

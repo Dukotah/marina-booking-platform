@@ -4,6 +4,7 @@ import { useMemo, useState, useTransition } from 'react';
 import { Sailboat, Package, Gift } from 'lucide-react';
 import { calculatePricing, createId, type PricingFee } from '@marina/core';
 import { cn } from '../../lib/cn';
+import { Card } from '../ui';
 import { PageHeader } from '../shell/PageHeader';
 import { submitSale } from '../../app/pos/actions';
 import { ActivityCatalog } from './ActivityCatalog';
@@ -59,7 +60,7 @@ export function PosTerminal({ activities, merchandise, config }: PosTerminalProp
 
   // Authoritative-shape preview using the shared pricing engine + operator fees.
   const fees: PricingFee[] = useMemo(
-    () => config.fees.map((f) => ({ name: f.name, type: f.type, value: f.value })),
+    () => config.fees.map((f) => ({ name: f.name, type: f.type, value: f.value, isTax: f.isTax })),
     [config.fees],
   );
 
@@ -171,8 +172,8 @@ export function PosTerminal({ activities, merchandise, config }: PosTerminalProp
 
       <div className="grid gap-4 lg:grid-cols-[1fr_22rem]">
         {/* Entry tabs + content */}
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="mb-4 flex flex-wrap gap-1 border-b border-slate-100 pb-3">
+        <Card className="p-4">
+          <div className="mb-4 flex flex-wrap gap-1 border-b border-line pb-3">
             {TABS.map((t) => {
               const Icon = t.icon;
               return (
@@ -181,10 +182,10 @@ export function PosTerminal({ activities, merchandise, config }: PosTerminalProp
                   type="button"
                   onClick={() => setTab(t.id)}
                   className={cn(
-                    'flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+                    'inline-flex min-h-11 items-center gap-2 rounded-lg px-4 text-sm font-semibold transition-colors',
                     tab === t.id
-                      ? 'bg-slate-900 text-white'
-                      : 'text-slate-600 hover:bg-slate-100',
+                      ? 'bg-accent-tint text-accent-ink'
+                      : 'text-ink-body hover:bg-surface-muted',
                   )}
                 >
                   <Icon className="h-4 w-4" aria-hidden />
@@ -201,11 +202,11 @@ export function PosTerminal({ activities, merchandise, config }: PosTerminalProp
             <MerchandiseCatalog items={merchandise} onAdd={addLine} />
           ) : null}
           {tab === 'MISC' ? <MiscTab onAdd={addLine} /> : null}
-        </div>
+        </Card>
 
         {/* Cart + payment */}
         <div className="space-y-4">
-          <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
+          <Card>
             <Cart
               lines={lines}
               pricing={pricing}
@@ -213,7 +214,7 @@ export function PosTerminal({ activities, merchandise, config }: PosTerminalProp
               onRemove={removeLine}
               onClear={resetSale}
             />
-          </div>
+          </Card>
 
           <PaymentPanel
             totalCents={pricing.totalCents}

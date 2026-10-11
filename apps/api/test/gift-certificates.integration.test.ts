@@ -13,7 +13,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { adminPrisma } from '@marina/database';
-import { createBooking } from '../src/services/booking.js';
+import { createBooking, cancelBooking } from '../src/services/booking.js';
 import {
   issueGiftCertificate,
   checkGiftCertificate,
@@ -181,6 +181,27 @@ describe.skipIf(!HAS_DB)('gift certificates (live, LSRA seed)', () => {
     await expect(
       redeemGiftCertificate(OP, { code: cert.code, orderId: order.id }),
     ).rejects.toThrow(GiftCertificateError);
+  });
+
+  it('refuses to redeem onto a CANCELLED order (single-use cert must not burn into a dead booking)', async () => {
+    // Red-team regression: cancel keeps balance_due as retained liability, so without
+    // a status guard a public redeem flips the single-use cert to REDEEMED onto a dead
+    // trip — and a GIFT_CARD Payment has no processor transaction to refund.
+    const cert = await issueGiftCertificate(OP, { valueCents: 5000 });
+    createdCertIds.push(cert.id);
+    const order = await bookOne();
+    await cancelBooking(OP, order.id, { actor: 'test', reason: 'regression' });
+
+    await expect(
+      redeemGiftCertificate(OP, { code: cert.code, orderId: order.id }),
+    ).rejects.toMatchObject({ code: 'ORDER_CANCELLED' });
+
+    // The certificate is untouched and still fully valid.
+    const check = await checkGiftCertificate(OP, cert.code);
+    expect(check.valid).toBe(true);
+    const reloaded = await getGiftCertificateByCode(OP, cert.code);
+    expect(reloaded!.status).toBe('ACTIVE');
+    expect(reloaded!.redeemed_order_id).toBeNull();
   });
 
   it('reports outstanding certificate liability from ACTIVE values', async () => {

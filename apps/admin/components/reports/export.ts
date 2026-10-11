@@ -19,6 +19,7 @@ import type {
   HeadCountReport,
   MerchandiseReport,
   OccupancyReport,
+  RefundsTabReport,
   RevenueReport,
   SalesReport,
   TaxesFeesReport,
@@ -421,6 +422,22 @@ function giftCardsCsv(report: GiftCardReport): string {
   return toCsv(header, rows);
 }
 
+function refundsCsv(report: RefundsTabReport): string {
+  const header = ['Reason', 'Refunds', 'Amount (USD)'] as const;
+  const rows: CsvRow[] = report.byReason.map((r) => [r.reason, r.count, dollars(r.amountCents)]);
+
+  rows.push([]);
+  rows.push(['Totals', report.totals.count, dollars(report.totals.amountCents)]);
+
+  rows.push([]);
+  rows.push(['Activity', 'Refunds', 'Amount (USD)']);
+  for (const a of report.byActivity) {
+    rows.push([a.activityName, a.count, dollars(a.amountCents)]);
+  }
+
+  return toCsv(header, rows);
+}
+
 /** Bundle slice needed to serialize any report kind. */
 export interface ExportableReports {
   revenue: RevenueReport;
@@ -431,6 +448,7 @@ export interface ExportableReports {
   giftCards: GiftCardReport;
   endOfDay: EndOfDayReport;
   headCount: HeadCountReport;
+  refunds: RefundsTabReport;
 }
 
 /** Serialize the requested report kind to a CSV string (no BOM; add at output). */
@@ -450,6 +468,8 @@ export function buildReportCsv(kind: ReportKind, reports: ExportableReports): st
       return endOfDayCsv(reports.endOfDay);
     case 'head-count':
       return headCountCsv(reports.headCount);
+    case 'refunds':
+      return refundsCsv(reports.refunds);
     case 'revenue':
     default:
       return revenueCsv(reports.revenue);

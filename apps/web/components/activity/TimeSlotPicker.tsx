@@ -30,6 +30,7 @@ import { formatTime, formatISODate } from '@/lib/format';
 import { loadDay, readCachedDay } from '@/lib/dayAvailability';
 import { futureSlots, operatorDayISO } from '@/lib/operatorDay';
 import type { AvailabilitySlot } from '@/lib/api';
+import { WaitlistForm } from './WaitlistForm';
 
 interface TimeSlotPickerProps {
   activityId: string;
@@ -57,7 +58,7 @@ interface TimeSlotPickerProps {
 }
 
 function spotsLabel(remaining: number): string {
-  if (remaining <= 0) return 'Full';
+  if (remaining <= 0) return 'Sold out · Waitlist';
   return `${remaining} ${remaining === 1 ? 'spot' : 'spots'} left`;
 }
 
@@ -91,7 +92,9 @@ function chipClasses(selected: boolean, full: boolean): string {
   const base =
     'flex min-h-[52px] flex-col items-center justify-center gap-0.5 rounded-lg border-2 px-3 py-2.5 text-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-ink focus-visible:ring-offset-1';
   if (full) {
-    return `${base} cursor-not-allowed border-hairline bg-surface text-muted opacity-60`;
+    // Full is no longer a dead end — it opens the waitlist form — so it keeps a
+    // pointer cursor and a dashed border that reads "different kind of action".
+    return `${base} cursor-pointer border-dashed border-hairline bg-surface text-muted hover:border-accent`;
   }
   if (selected) {
     return `${base} cursor-pointer border-accent bg-surface text-accent-ink`;
@@ -119,6 +122,14 @@ export function TimeSlotPicker({
 
   const requestSeq = useRef(0);
   const chipRefs = useRef<Array<HTMLButtonElement | null>>([]);
+
+  // The sold-out slot whose inline waitlist form is open (null = closed). Keyed
+  // state only — the form component owns its own fields and submit lifecycle.
+  const [waitlistSlot, setWaitlistSlot] = useState<AvailabilitySlot | null>(null);
+  // Changing the day closes any open waitlist form — it belonged to that day.
+  useEffect(() => {
+    setWaitlistSlot(null);
+  }, [iso]);
 
   /*
    * The operator's current calendar day. For that day (or, defensively, an
@@ -363,6 +374,34 @@ export function TimeSlotPicker({
           const full = !selectable[index];
           const selected = slot.timeslotId === selectedTimeslotId;
           const fillingUp = !full && slot.status === 'FILLING_UP';
+          /*
+           * A FULL chip is no longer a disabled radio: tapping it opens the
+           * inline waitlist form instead. It renders as a plain button (no
+           * radio role — activating it does not change the time selection) with
+           * its own tab stop, while the arrow-key roving among the pickable
+           * radios continues to skip it, exactly as before.
+           */
+          if (full) {
+            const open = waitlistSlot?.timeslotId === slot.timeslotId;
+            return (
+              <button
+                key={slot.timeslotId}
+                ref={(node) => {
+                  chipRefs.current[index] = node;
+                }}
+                type="button"
+                aria-expanded={open}
+                aria-label={`Sold out — join the waitlist for ${formatTime(slot.datetime)}`}
+                onClick={() => setWaitlistSlot(open ? null : slot)}
+                className={chipClasses(false, true)}
+              >
+                <span className="tnum text-sm font-semibold">{formatTime(slot.datetime)}</span>
+                <span className="tnum text-[11px] font-medium text-muted">
+                  {spotsLabel(slot.capacityRemaining)}
+                </span>
+              </button>
+            );
+          }
           return (
             <button
               key={slot.timeslotId}
@@ -372,7 +411,6 @@ export function TimeSlotPicker({
               type="button"
               role="radio"
               aria-checked={selected}
-              disabled={full}
               tabIndex={index === tabStop ? 0 : -1}
               onClick={() => onSelect(slot)}
               onKeyDown={(event) => onKeyDown(event, index)}
@@ -381,7 +419,7 @@ export function TimeSlotPicker({
               <span className="tnum text-sm font-semibold">{formatTime(slot.datetime)}</span>
               <span
                 className={`tnum text-[11px] font-medium ${
-                  full ? 'text-muted' : fillingUp ? 'text-warn' : selected ? 'text-accent-ink' : 'text-muted'
+                  fillingUp ? 'text-warn' : selected ? 'text-accent-ink' : 'text-muted'
                 }`}
               >
                 {spotsLabel(slot.capacityRemaining)}
@@ -390,6 +428,17 @@ export function TimeSlotPicker({
           );
         })}
       </div>
+
+      {/* Inline waitlist signup for the tapped sold-out time. Keyed by slot so
+          switching between two full times starts a fresh form. */}
+      {waitlistSlot && (
+        <WaitlistForm
+          key={waitlistSlot.timeslotId}
+          timeslotId={waitlistSlot.timeslotId}
+          datetime={waitlistSlot.datetime}
+          onDismiss={() => setWaitlistSlot(null)}
+        />
+      )}
     </>
   );
 }

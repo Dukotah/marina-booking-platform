@@ -43,8 +43,17 @@ const updateSchema = z.object({
   extraPermissions: z.array(permissionEnum).default([]),
 });
 
+const notificationPrefSchema = z.object({
+  staffId: z.string().min(1),
+  emailEnabled: z.boolean(),
+  smsEnabled: z.boolean(),
+  smsPhone: z.string().trim().max(40).optional(),
+  activityIds: z.array(z.string().min(1)).default([]),
+});
+
 export type InviteStaffInput = z.infer<typeof inviteSchema>;
 export type UpdateStaffInput = z.infer<typeof updateSchema>;
+export type NotificationPrefInput = z.infer<typeof notificationPrefSchema>;
 
 export interface ActionResult {
   ok: boolean;
@@ -260,6 +269,75 @@ export async function toggleStaffActive(staffId: string): Promise<ActionResult> 
     });
 
     revalidatePath('/staff');
+    return { ok: true, staffId };
+  } catch (err) {
+    return { ok: false, message: errorMessage(err) };
+  }
+}
+
+/**
+ * Upsert a staff member's booking-notification preferences (channels + activity
+ * filter). Tenant-scoped (RLS) with an explicit operator_id backstop. Activity
+ * ids are validated against this operator's activities; unknown ids are dropped.
+ * SMS is only meaningful with a phone, so an sms_enabled with no phone is saved
+ * as off at the phone level (the dispatch skips a member with no sms_phone).
+ */
+export async function saveNotificationPref(
+  input: NotificationPrefInput,
+): Promise<ActionResult> {
+  try {
+    const { operatorId } = await requirePermission('staff:manage');
+
+    const parsed = notificationPrefSchema.safeParse(input);
+    if (!parsed.success) {
+      return { ok: false, errors: zodErrors(parsed.error) };
+    }
+    const { staffId, emailEnabled, smsEnabled, smsPhone, activityIds } = parsed.data;
+
+    const db = await getTenantDb();
+
+    const existing = await db.staffMember.findFirst({
+      where: { id: staffId, operator_id: operatorId },
+      select: { id: true },
+    });
+    if (!existing) return { ok: false, message: 'Staff member not found.' };
+
+    if (smsEnabled && !(smsPhone && smsPhone.length)) {
+      return { ok: false, errors: { smsPhone: 'Add a mobile number to receive texts.' } };
+    }
+
+    // Keep only activity ids that belong to this operator.
+    const unique = [...new Set(activityIds)];
+    let validActivityIds: string[] = [];
+    if (unique.length) {
+      const found = await db.activity.findMany({
+        where: { id: { in: unique }, operator_id: operatorId },
+        select: { id: true },
+      });
+      validActivityIds = found.map((a) => a.id);
+    }
+
+    const phone = smsPhone && smsPhone.length ? smsPhone : null;
+
+    await db.staffNotificationPref.upsert({
+      where: { staff_id: staffId },
+      create: {
+        operator_id: operatorId,
+        staff_id: staffId,
+        email_enabled: emailEnabled,
+        sms_enabled: smsEnabled,
+        sms_phone: phone,
+        activity_ids: validActivityIds,
+      },
+      update: {
+        email_enabled: emailEnabled,
+        sms_enabled: smsEnabled,
+        sms_phone: phone,
+        activity_ids: validActivityIds,
+      },
+    });
+
+    revalidatePath('/settings/staff');
     return { ok: true, staffId };
   } catch (err) {
     return { ok: false, message: errorMessage(err) };

@@ -158,7 +158,7 @@ export function WebhookPanel({ webhooks, canDeliver }: WebhookPanelProps) {
                   onClick={() => setSelectedId(w.id)}
                   className={cn(
                     'w-full px-4 py-3 text-left transition',
-                    active ? 'bg-sky-50' : 'hover:bg-slate-50',
+                    active ? 'bg-accent-tint' : 'hover:bg-slate-50',
                   )}
                 >
                   <div className="flex items-center gap-2">

@@ -865,24 +865,24 @@ export default async function ReconciliationPage({ searchParams }: PageProps) {
 function RangeFilter({ from, to }: { from: string; to: string }) {
   return (
     <form method="get" className="flex flex-wrap items-end gap-3">
-      <label className="flex flex-col gap-1 text-xs font-medium text-slate-500">
+      <label className="flex flex-col gap-1 text-xs font-medium text-ink-body">
         From
         <input
           type="date"
           name="from"
           defaultValue={from}
           max={to}
-          className="h-9 rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-[var(--brand-color,#0ea5e9)]"
+          className="h-11 rounded-lg border border-line bg-surface px-3 text-sm text-ink focus:border-accent focus:outline-none focus:ring-2 focus:ring-focus"
         />
       </label>
-      <label className="flex flex-col gap-1 text-xs font-medium text-slate-500">
+      <label className="flex flex-col gap-1 text-xs font-medium text-ink-body">
         To
         <input
           type="date"
           name="to"
           defaultValue={to}
           min={from}
-          className="h-9 rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-[var(--brand-color,#0ea5e9)]"
+          className="h-11 rounded-lg border border-line bg-surface px-3 text-sm text-ink focus:border-accent focus:outline-none focus:ring-2 focus:ring-focus"
         />
       </label>
       <Button type="submit" size="sm" variant="outline">

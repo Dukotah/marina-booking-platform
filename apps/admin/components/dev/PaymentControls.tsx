@@ -152,7 +152,7 @@ const DISPUTE_REASONS = [
 
 const TONE_ACTIVE: Record<string, string> = {
   emerald: 'border-emerald-400 bg-emerald-50 ring-1 ring-emerald-200',
-  indigo: 'border-indigo-400 bg-indigo-50 ring-1 ring-indigo-200',
+  indigo: 'border-accent bg-accent-tint ring-1 ring-accent',
   red: 'border-red-400 bg-red-50 ring-1 ring-red-200',
   amber: 'border-amber-400 bg-amber-50 ring-1 ring-amber-200',
   fuchsia: 'border-fuchsia-400 bg-fuchsia-50 ring-1 ring-fuchsia-200',
@@ -160,7 +160,7 @@ const TONE_ACTIVE: Record<string, string> = {
 
 const TONE_ICON: Record<string, string> = {
   emerald: 'text-emerald-600',
-  indigo: 'text-indigo-600',
+  indigo: 'text-accent',
   red: 'text-red-600',
   amber: 'text-amber-600',
   fuchsia: 'text-fuchsia-600',
@@ -168,7 +168,7 @@ const TONE_ICON: Record<string, string> = {
 
 const STATUS_BADGE: Record<SandboxAttemptStatus, string> = {
   QUEUED: 'bg-slate-100 text-slate-700',
-  REQUIRES_ACTION: 'bg-indigo-100 text-indigo-700',
+  REQUIRES_ACTION: 'bg-amber-100 text-amber-700',
   SUCCEEDED: 'bg-emerald-100 text-emerald-700',
   FAILED: 'bg-red-100 text-red-700',
   DISPUTED: 'bg-fuchsia-100 text-fuchsia-700',
@@ -388,7 +388,7 @@ export function PaymentControls({ queued, attempts }: PaymentControlsProps) {
             No charges yet. Queue an outcome above, then book something at{' '}
             <a
               href="http://localhost:3000"
-              className="font-medium text-sky-600 underline-offset-2 hover:underline"
+              className="font-medium text-accent underline-offset-2 hover:underline"
             >
               localhost:3000
             </a>

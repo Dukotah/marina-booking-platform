@@ -98,7 +98,7 @@ export function ClockControl({ offsetSeconds, upcoming }: ClockControlProps) {
       <div
         className={cn(
           'rounded-xl border p-5',
-          shifted ? 'border-sky-300 bg-sky-50/70' : 'border-slate-200 bg-white',
+          shifted ? 'border-accent bg-accent-tint' : 'border-slate-200 bg-white',
         )}
       >
         <div className="flex flex-wrap items-start justify-between gap-4">
@@ -158,7 +158,7 @@ export function ClockControl({ offsetSeconds, upcoming }: ClockControlProps) {
               onClick={() => run(() => advanceClockAction({ seconds: j.seconds }))}
               className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              <FastForward className="h-4 w-4 text-sky-600" aria-hidden />
+              <FastForward className="h-4 w-4 text-accent" aria-hidden />
               {j.label}
             </button>
           ))}
@@ -216,7 +216,7 @@ export function ClockControl({ offsetSeconds, upcoming }: ClockControlProps) {
                 <span className="whitespace-nowrap text-xs text-slate-500">
                   {slot.booked}/{slot.capacity} booked
                 </span>
-                <span className="w-28 whitespace-nowrap text-right text-xs font-medium text-sky-700">
+                <span className="w-28 whitespace-nowrap text-right text-xs font-medium text-accent">
                   {effective ? countdown(slot.startsAt, effective) : '—'}
                 </span>
               </li>

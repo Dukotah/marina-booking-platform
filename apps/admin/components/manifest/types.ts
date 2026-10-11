@@ -1,4 +1,5 @@
 import type { OrderItemStatus } from '@marina/database';
+import type { MinuteRange } from '@marina/core';
 
 /**
  * View-model types shared between the manifest page (server) and its client
@@ -54,6 +55,40 @@ export interface ManifestGuide {
   roleLabel: string | null;
 }
 
+/**
+ * The front desk's glanceable stats, each also a one-tap filter on the day list:
+ * who's still coming, who's in, who owes money, who hasn't signed, who's in line.
+ */
+export type ManifestStatFilter = 'arriving' | 'checkedIn' | 'due' | 'unsigned' | 'waiting';
+
+/** True when a booking matches a booking-level stat filter (not 'waiting', which is
+ *  per-slot). Mirrors the counts the stat row shows so glance total and list agree. */
+export function bookingMatchesFilter(b: ManifestBooking, filter: ManifestStatFilter): boolean {
+  switch (filter) {
+    case 'arriving':
+      return b.status === 'UPCOMING';
+    case 'checkedIn':
+      return b.status === 'CHECKED_IN';
+    case 'due':
+      return b.balanceDueCents > 0 && b.status !== 'NO_SHOW';
+    case 'unsigned':
+      return !b.waiverSigned && (b.status === 'UPCOMING' || b.status === 'CHECKED_IN');
+    case 'waiting':
+      // 'waiting' is a slot-level concept (the waitlist), not a booking predicate;
+      // DaySchedule handles it by keeping full slots with a waitlist.
+      return true;
+  }
+}
+
+/** One guest waiting on a sold-out slot, as the departure card lists them. */
+export interface ManifestWaitlistEntry {
+  id: string;
+  name: string;
+  email: string;
+  /** PENDING = still waiting; NOTIFIED = already emailed a booking link. */
+  status: 'PENDING' | 'NOTIFIED';
+}
+
 /** Per-timeslot fill for the "1/3" utilization badges + conflict highlight. */
 export interface ManifestSlot {
   timeslotId: string;
@@ -61,10 +96,31 @@ export interface ManifestSlot {
   startISO: string;
   /** Minutes since midnight for the slot start. */
   startMin: number;
+  /** Minutes since midnight for the slot end (start + representative rate
+   *  duration), clamped to 24:00 — mirrors how a booking's endMin is derived so
+   *  an OPEN block spans the same width a booking on this slot would. */
+  endMin: number;
   capacityTotal: number;
   capacityBooked: number;
   /** Guides scheduled on this slot. */
   guides: ManifestGuide[];
+  /** Guests waiting for a spot on this slot (oldest first). */
+  waitlist: ManifestWaitlistEntry[];
+}
+
+/**
+ * A closed / out-of-service window on an activity row, for the Timeline board.
+ *
+ * Marina closures are modeled as whole-day BlackoutDate rows (an activity-scoped
+ * blackout closes just that boat; an operator/location-wide one closes every
+ * boat that day) — there is no partial-span closure in the data, so every closed
+ * region a row carries is a full-day one. See app/manifest/data.ts.
+ */
+export interface ManifestClosure {
+  /** Why the boat is down, when known ("Engine service", "Holiday"). */
+  reason: string | null;
+  /** True = operator/location-wide blackout (not scoped to this one boat). */
+  wide: boolean;
 }
 
 export interface ManifestRow {
@@ -81,6 +137,23 @@ export interface ManifestRow {
   /** Distinct guides scheduled across this activity's slots for the day. */
   guides: ManifestGuide[];
   bookings: ManifestBooking[];
+  /**
+   * Full-day closures in effect for this boat on this day (BlackoutDate rows).
+   * Empty = open for business. The Timeline shades the whole row when present.
+   */
+  closures: ManifestClosure[];
+  /**
+   * OPEN-DURATION RENTAL AVAILABILITY for this boat on this day, as a set of
+   * half-open [open, close) minute spans still FREE to rent — the day's rentable
+   * window(s) from the boat's active rental-window ScheduleRules (open_minute/
+   * close_minute, matching this weekday + season), with any whole-day blackout
+   * removed and existing bookings carved out. Drawn as a continuous teal "available
+   * to rent" band behind the blocks.
+   *
+   * Empty on fixed-departure tour boats (no rental-window rule) — those keep the
+   * discrete "+N open slot" behavior instead. See app/manifest/data.ts.
+   */
+  rentableBands: MinuteRange[];
 }
 
 /** True when a status still allows a one-click check-in action. */

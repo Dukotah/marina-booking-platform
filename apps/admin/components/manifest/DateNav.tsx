@@ -58,24 +58,24 @@ export function DateNav({ date, stepDays = 1, label, className }: DateNavProps) 
 
   return (
     <div className={cn('flex items-center gap-2', className)}>
-      <div className="flex items-center rounded-lg border border-slate-200 bg-white shadow-sm">
+      <div className="flex items-center rounded-lg border border-line bg-surface shadow-sm">
         <button
           type="button"
           aria-label={stepDays === 7 ? 'Previous week' : 'Previous day'}
           onClick={() => go(shiftIsoDate(date, -stepDays))}
-          className="flex h-9 w-9 items-center justify-center rounded-l-lg text-slate-600 hover:bg-slate-100"
+          className="flex h-11 w-11 items-center justify-center rounded-l-lg text-ink-body hover:bg-surface-muted"
         >
           <ChevronLeft className="h-4 w-4" aria-hidden />
         </button>
-        <div className="flex h-9 min-w-[9rem] items-center justify-center gap-2 border-x border-slate-200 px-3 text-sm font-medium text-slate-800">
-          <CalendarDays className="h-4 w-4 text-slate-400" aria-hidden />
+        <div className="flex h-11 min-w-[9rem] items-center justify-center gap-2 border-x border-line px-3 text-sm font-medium text-ink">
+          <CalendarDays className="h-4 w-4 text-ink-muted" aria-hidden />
           <span className="truncate">{label}</span>
         </div>
         <button
           type="button"
           aria-label={stepDays === 7 ? 'Next week' : 'Next day'}
           onClick={() => go(shiftIsoDate(date, stepDays))}
-          className="flex h-9 w-9 items-center justify-center rounded-r-lg text-slate-600 hover:bg-slate-100"
+          className="flex h-11 w-11 items-center justify-center rounded-r-lg text-ink-body hover:bg-surface-muted"
         >
           <ChevronRight className="h-4 w-4" aria-hidden />
         </button>
@@ -86,10 +86,10 @@ export function DateNav({ date, stepDays = 1, label, className }: DateNavProps) 
         onClick={() => go(today)}
         disabled={isToday}
         className={cn(
-          'h-9 rounded-lg border px-3 text-sm font-medium shadow-sm transition-colors',
+          'h-11 rounded-lg border px-3 text-sm font-medium shadow-sm transition-colors',
           isToday
-            ? 'cursor-default border-slate-200 bg-slate-100 text-slate-400'
-            : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-100',
+            ? 'cursor-default border-line bg-surface-muted text-ink-muted'
+            : 'border-line bg-surface text-ink-body hover:bg-surface-muted',
         )}
       >
         Today
@@ -102,7 +102,7 @@ export function DateNav({ date, stepDays = 1, label, className }: DateNavProps) 
         onChange={(e) => {
           if (e.target.value) go(e.target.value);
         }}
-        className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-sm text-slate-700 shadow-sm focus:border-slate-400 focus:outline-none"
+        className="h-11 rounded-lg border border-line bg-surface px-2 text-sm text-ink shadow-sm focus:border-accent focus:outline-none focus:ring-2 focus:ring-focus"
       />
     </div>
   );

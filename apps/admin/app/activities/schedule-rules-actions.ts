@@ -14,6 +14,7 @@
  * Every mutation requires `activity:write` and runs tenant-scoped (RLS).
  */
 import { revalidatePath } from 'next/cache';
+import { toRuleView } from './rule-view';
 import {
   Prisma,
   withTenant,
@@ -36,26 +37,65 @@ const MAX_BLACKOUT_RANGE_DAYS = 62;
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
+const MIN_OF_DAY = 24 * 60 - 1;
+
 const ruleInputSchema = z
   .object({
     id: z.string().trim().min(1).optional(),
+    /**
+     * Which kind of rule this is:
+     *  - 'rental'     open-duration rental window (open_minute..close_minute, no
+     *                 fixed departures). The default for a rental marina.
+     *  - 'departures' fixed scheduled departure times (tour boats). The legacy shape.
+     */
+    kind: z.enum(['rental', 'departures']).default('rental'),
     name: z.string().trim().min(1, 'Give this schedule a name.').max(80),
     startDate: z.string().regex(ISO_DATE_RE, 'Pick a first date.'),
     endDate: z.string().regex(ISO_DATE_RE, 'Pick a last date.'),
     weekdays: z
       .array(z.number().int().min(0).max(6))
       .min(1, 'Pick at least one day of the week.'),
-    startMinutes: z
-      .array(z.number().int().min(0).max(24 * 60 - 1))
-      .min(1, 'Add at least one departure time.')
-      .max(24, 'That is more departure times than hours in the day.'),
+    /** Fixed departure times (minutes since midnight). Used only by 'departures'. */
+    startMinutes: z.array(z.number().int().min(0).max(MIN_OF_DAY)).max(24),
+    /** Open edge of the rental window (minutes since midnight). Used only by 'rental'. */
+    openMinute: z.number().int().min(0).max(MIN_OF_DAY).nullable(),
+    /** Close edge of the rental window (minutes since midnight). Used only by 'rental'. */
+    closeMinute: z.number().int().min(1).max(24 * 60).nullable(),
     /** null = follow the boat's capacity (activity.max_participants). */
     capacity: z.number().int().min(1).max(999).nullable(),
     isActive: z.boolean().default(true),
   })
-  .refine((v) => v.endDate >= v.startDate, {
-    message: 'The last date has to be on or after the first date.',
-    path: ['endDate'],
+  .superRefine((v, ctx) => {
+    if (v.endDate < v.startDate) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'The last date has to be on or after the first date.',
+        path: ['endDate'],
+      });
+    }
+    if (v.kind === 'rental') {
+      if (v.openMinute === null || v.closeMinute === null) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Set both an open and a close time.',
+          path: ['closeMinute'],
+        });
+      } else if (v.closeMinute <= v.openMinute) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'The close time has to be after the open time.',
+          path: ['closeMinute'],
+        });
+      }
+    } else {
+      if (v.startMinutes.length < 1) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Add at least one departure time.',
+          path: ['startMinutes'],
+        });
+      }
+    }
   });
 
 export type RuleInput = z.infer<typeof ruleInputSchema>;
@@ -63,11 +103,14 @@ export type RuleInput = z.infer<typeof ruleInputSchema>;
 /** One saved rule, shaped for the component. */
 export interface RuleView {
   id: string;
+  kind: 'rental' | 'departures';
   name: string;
   startDate: string;
   endDate: string;
   weekdays: number[];
   startMinutes: number[];
+  openMinute: number | null;
+  closeMinute: number | null;
   capacity: number | null;
   isActive: boolean;
 }
@@ -122,6 +165,27 @@ function zodErrors(error: z.ZodError): Record<string, string> {
 
 function plural(count: number, singular: string, pluralForm = `${singular}s`): string {
   return `${count.toLocaleString('en-US')} ${count === 1 ? singular : pluralForm}`;
+}
+
+/** "8:00 AM" from minutes since midnight — for the rental-window save confirmation. */
+function timeLabel(minutes: number): string {
+  const h24 = Math.floor(minutes / 60);
+  const mm = minutes % 60;
+  const suffix = h24 < 12 ? 'AM' : 'PM';
+  const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
+  return `${h12}:${String(mm).padStart(2, '0')} ${suffix}`;
+}
+
+/** Plain words for a weekday set: "every day", "Mon–Fri", "weekends", or a list. */
+function weekdayPhraseWords(days: number[]): string {
+  const names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const set = new Set(days);
+  if (set.size === 7) return 'every day';
+  if (set.size === 5 && [1, 2, 3, 4, 5].every((d) => set.has(d))) return 'Mon–Fri';
+  if (set.size === 2 && set.has(0) && set.has(6)) return 'weekends';
+  const order = [1, 2, 3, 4, 5, 6, 0].filter((d) => set.has(d)).map((d) => names[d]);
+  if (order.length <= 1) return order[0] ?? '';
+  return `${order.slice(0, -1).join(', ')} & ${order[order.length - 1]}`;
 }
 
 /** Turn an engine plan into the component's two-week preview grid. */
@@ -211,16 +275,7 @@ async function loadRuleViews(activityId: string): Promise<RuleView[]> {
     where: { activity_id: activityId },
     orderBy: { created_at: 'asc' },
   });
-  return rows.map((r) => ({
-    id: r.id,
-    name: r.name,
-    startDate: r.start_date,
-    endDate: r.end_date,
-    weekdays: r.weekdays,
-    startMinutes: r.start_minutes,
-    capacity: r.capacity,
-    isActive: r.is_active,
-  }));
+  return rows.map(toRuleView);
 }
 
 /**
@@ -287,7 +342,15 @@ export async function saveScheduleRule(
     return { ok: false, message: 'Check the highlighted fields.', errors: zodErrors(parsed.error) };
   }
   const rule = parsed.data;
-  const startMinutes = [...new Set(rule.startMinutes)].sort((a, b) => a - b);
+  // Rental-window rules carry open/close and NO fixed departures; departure rules
+  // carry fixed times and NO window. Normalize both shapes so a saved row is never
+  // half of each (which would read ambiguously back through toRuleView).
+  const isRental = rule.kind === 'rental';
+  const startMinutes = isRental
+    ? []
+    : [...new Set(rule.startMinutes)].sort((a, b) => a - b);
+  const openMinute = isRental ? rule.openMinute : null;
+  const closeMinute = isRental ? rule.closeMinute : null;
 
   try {
     const result = await withTenant(operatorId, async (tx) => {
@@ -297,6 +360,8 @@ export async function saveScheduleRule(
         end_date: rule.endDate,
         weekdays: [...new Set(rule.weekdays)].sort((a, b) => a - b),
         start_minutes: startMinutes,
+        open_minute: openMinute,
+        close_minute: closeMinute,
         capacity: rule.capacity,
         is_active: rule.isActive,
       };
@@ -317,6 +382,15 @@ export async function saveScheduleRule(
 
     revalidatePath(`/activities/${activityId}`);
     revalidatePath('/calendar');
+    // A rental window is a plain availability recipe: it generates no fixed
+    // departures, so the departure-count sentence would always read "already
+    // matched". Confirm the window itself instead.
+    if (isRental && openMinute !== null && closeMinute !== null) {
+      return {
+        ok: true,
+        message: `Saved. Rentable ${weekdayPhraseWords([...new Set(rule.weekdays)].sort((a, b) => a - b))} ${timeLabel(openMinute)}–${timeLabel(closeMinute)}.`,
+      };
+    }
     const bits = [
       result.created > 0 ? `added ${plural(result.created, 'departure')}` : null,
       result.removed + result.closed > 0

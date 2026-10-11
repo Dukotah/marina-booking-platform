@@ -146,7 +146,7 @@ function signedUSD(cents: number): string {
 }
 
 function varianceClass(cents: number): string {
-  if (cents === 0) return 'tabular-nums text-slate-400';
+  if (cents === 0) return 'tabular-nums text-ink-muted';
   return cents > 0 ? 'tabular-nums font-medium text-amber-700' : 'tabular-nums font-medium text-red-700';
 }
 
@@ -173,7 +173,7 @@ export function ReconciliationView({ report }: ReconciliationViewProps) {
       id: 'date',
       header: 'Day',
       cell: (d) => (
-        <span className={d.balanced ? 'font-medium text-slate-900' : 'font-medium text-red-700'}>
+        <span className={d.balanced ? 'font-medium text-ink' : 'font-medium text-red-700'}>
           {d.date}
         </span>
       ),
@@ -182,14 +182,14 @@ export function ReconciliationView({ report }: ReconciliationViewProps) {
       id: 'charged',
       header: 'Charged',
       align: 'right',
-      cell: (d) => <span className="tabular-nums text-slate-700">{formatUSD(d.ledgerChargedCents)}</span>,
+      cell: (d) => <span className="tabular-nums text-ink-body">{formatUSD(d.ledgerChargedCents)}</span>,
     },
     {
       id: 'refunded',
       header: 'Refunded',
       align: 'right',
       cell: (d) => (
-        <span className={d.ledgerRefundedCents ? 'tabular-nums text-slate-700' : 'tabular-nums text-slate-300'}>
+        <span className={d.ledgerRefundedCents ? 'tabular-nums text-ink-body' : 'tabular-nums text-ink-muted'}>
           {d.ledgerRefundedCents ? `−${formatUSD(d.ledgerRefundedCents)}` : formatUSD(0)}
         </span>
       ),
@@ -199,7 +199,7 @@ export function ReconciliationView({ report }: ReconciliationViewProps) {
       header: 'Chargebacks',
       align: 'right',
       cell: (d) => (
-        <span className={d.ledgerChargebackCents ? 'tabular-nums text-red-700' : 'tabular-nums text-slate-300'}>
+        <span className={d.ledgerChargebackCents ? 'tabular-nums text-red-700' : 'tabular-nums text-ink-muted'}>
           {d.ledgerChargebackCents ? `−${formatUSD(d.ledgerChargebackCents)}` : formatUSD(0)}
         </span>
       ),
@@ -208,13 +208,13 @@ export function ReconciliationView({ report }: ReconciliationViewProps) {
       id: 'ours',
       header: 'Our net',
       align: 'right',
-      cell: (d) => <span className="tabular-nums font-medium text-slate-900">{formatUSD(d.ledgerNetCents)}</span>,
+      cell: (d) => <span className="tabular-nums font-medium text-ink">{formatUSD(d.ledgerNetCents)}</span>,
     },
     {
       id: 'theirs',
       header: 'Processor net',
       align: 'right',
-      cell: (d) => <span className="tabular-nums font-medium text-slate-900">{formatUSD(d.processorNetCents)}</span>,
+      cell: (d) => <span className="tabular-nums font-medium text-ink">{formatUSD(d.processorNetCents)}</span>,
     },
     {
       id: 'variance',
@@ -304,20 +304,20 @@ export function ReconciliationView({ report }: ReconciliationViewProps) {
             <CardTitle>Not settled by card</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="mb-4 text-sm text-slate-500">
+            <p className="mb-4 text-sm text-ink-muted">
               These payments never reach the card processor, so they are excluded from the
               comparison above. Add them back to compare this report against the revenue report.
             </p>
-            <dl className="divide-y divide-slate-100 text-sm">
+            <dl className="divide-y divide-line text-sm">
               {report.nonCard.map((row) => (
                 <div key={row.method} className="flex items-center justify-between py-2.5 first:pt-0 last:pb-0">
-                  <dt className="text-slate-500">
+                  <dt className="text-ink-muted">
                     {row.label}
-                    <span className="ml-2 text-xs text-slate-400">
+                    <span className="ml-2 text-xs text-ink-muted">
                       {formatNumber(row.count)} payment{row.count === 1 ? '' : 's'}
                     </span>
                   </dt>
-                  <dd className="tabular-nums font-medium text-slate-900">{formatUSD(row.netCents)}</dd>
+                  <dd className="tabular-nums font-medium text-ink">{formatUSD(row.netCents)}</dd>
                 </div>
               ))}
             </dl>
@@ -338,11 +338,11 @@ function VerdictBanner({
 }) {
   if (report.source === 'none') {
     return (
-      <div className="flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
-        <CircleSlash className="mt-0.5 h-5 w-5 shrink-0 text-slate-400" aria-hidden />
+      <div className="flex items-start gap-3 rounded-xl border border-line bg-surface-muted p-4">
+        <CircleSlash className="mt-0.5 h-5 w-5 shrink-0 text-ink-muted" aria-hidden />
         <div className="text-sm">
-          <p className="font-medium text-slate-900">No processor statement for this range</p>
-          <p className="mt-0.5 text-slate-600">
+          <p className="font-medium text-ink">No processor statement for this range</p>
+          <p className="mt-0.5 text-ink-body">
             {report.sourceNote ??
               'Nothing to compare against yet. Our own figures are shown below unreconciled.'}
           </p>
@@ -405,7 +405,7 @@ function VarianceCard({
   tone: 'action' | 'explained';
 }) {
   const columns: Array<Column<ReconciliationVariance>> = [
-    { id: 'date', header: 'Day', cell: (v) => <span className="tabular-nums text-slate-600">{v.date}</span> },
+    { id: 'date', header: 'Day', cell: (v) => <span className="tabular-nums text-ink-body">{v.date}</span> },
     {
       id: 'kind',
       header: 'Reason',
@@ -418,9 +418,9 @@ function VarianceCard({
       header: 'Order',
       cell: (v) =>
         v.orderNumber ? (
-          <span className="font-medium text-slate-900">{v.orderNumber}</span>
+          <span className="font-medium text-ink">{v.orderNumber}</span>
         ) : (
-          <span className="text-slate-400">—</span>
+          <span className="text-ink-muted">—</span>
         ),
     },
     {
@@ -428,10 +428,10 @@ function VarianceCard({
       header: 'What happened',
       cell: (v) => (
         <div className="max-w-md">
-          <p className="text-slate-700">{v.detail}</p>
-          <p className="mt-0.5 text-xs text-slate-500">{v.action}</p>
+          <p className="text-ink-body">{v.detail}</p>
+          <p className="mt-0.5 text-xs text-ink-muted">{v.action}</p>
           {v.intentId ? (
-            <p className="mt-0.5 font-mono text-[11px] text-slate-400">{v.intentId}</p>
+            <p className="mt-0.5 font-mono text-[11px] text-ink-muted">{v.intentId}</p>
           ) : null}
         </div>
       ),
@@ -441,7 +441,7 @@ function VarianceCard({
       header: 'Ours',
       align: 'right',
       cell: (v) => (
-        <span className="tabular-nums text-slate-700">
+        <span className="tabular-nums text-ink-body">
           {v.ledgerCents === null ? '—' : formatUSD(v.ledgerCents)}
         </span>
       ),
@@ -451,7 +451,7 @@ function VarianceCard({
       header: 'Processor',
       align: 'right',
       cell: (v) => (
-        <span className="tabular-nums text-slate-700">
+        <span className="tabular-nums text-ink-body">
           {v.processorCents === null ? '—' : formatUSD(v.processorCents)}
         </span>
       ),
@@ -470,7 +470,7 @@ function VarianceCard({
         <CardTitle>{title}</CardTitle>
       </CardHeader>
       <CardContent>
-        <p className="mb-4 text-sm text-slate-500">{description}</p>
+        <p className="mb-4 text-sm text-ink-muted">{description}</p>
         <DataTable
           columns={columns}
           rows={rows}

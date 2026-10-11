@@ -118,6 +118,27 @@ export interface ActivityUpsell {
   priceCents: number;
 }
 
+/** How an add-on's quantity is decided (mirrors the API's `basis`). */
+export type AddOnBasis = 'PER_GUEST' | 'PER_BOOKING';
+
+/**
+ * One add-on offered to a guest at checkout, as `GET /api/addons` returns it: the
+ * operator's definition plus the resolved stock ceiling. Money is integer cents.
+ * `maxSelectable` is authoritative for the stepper but NEVER for the money — the
+ * booking path re-reads and re-prices every selection server-side.
+ */
+export interface OfferedAddOn {
+  id: string;
+  name: string;
+  description: string | null;
+  priceCents: number;
+  basis: AddOnBasis;
+  /** Units left, or null when the operator does not track stock. */
+  remainingStock: number | null;
+  /** The largest quantity this guest may take right now (0 = sold out). */
+  maxSelectable: number;
+}
+
 /**
  * An operator fee applied at booking time (tax, processing, or a surcharge).
  * Mirrors @marina/core's `PricingFee` so checkout can compute the SAME
@@ -369,6 +390,13 @@ export interface CreateBookingPayload {
    * succeed on the server and still time out on the phone.
    */
   idempotencyKey?: string;
+  /**
+   * The cart hold this checkout reserved its seats under, if any. The API consumes
+   * it when the booking lands so its seats stop subtracting from availability.
+   * Optional — a missing/expired hold still books (the server capacity check is the
+   * authority), so an expired-but-recoverable slot isn't blocked.
+   */
+  holdId?: string;
   activityId: string;
   rateId: string;
   timeslotId: string;
@@ -391,6 +419,13 @@ export interface CreateBookingPayload {
     accepted: boolean;
     signatureName: string;
   };
+  /**
+   * Checkout add-on selections (id + requested quantity ONLY — never a price). The
+   * API re-reads each add-on from the catalog and re-derives both its price and its
+   * resolved quantity, so a tampered client price is ignored. Zero-quantity lines
+   * are dropped before sending.
+   */
+  addOns?: Array<{ addOnId: string; quantity: number }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -537,6 +572,30 @@ export async function getActivity(id: string): Promise<ActivityDetail> {
 }
 
 /**
+ * The add-ons offered for one activity and party size, priced and with the stock
+ * arithmetic resolved — what the checkout page renders (PUBLIC `GET /api/addons`).
+ *
+ * The server is the price authority: this is only what to SHOW. The booking path
+ * re-reads and re-prices every selection, so a stale price/stock here can never
+ * become money. Add-ons are out of scope for DEMO_MODE (no catalog), so that path
+ * returns an empty list rather than throwing.
+ */
+export async function getOfferedAddOns(
+  activityId: string,
+  guests: number,
+): Promise<OfferedAddOn[]> {
+  if (DEMO_MODE) return [];
+  const qs = new URLSearchParams({
+    activityId,
+    guests: String(Math.max(1, Math.trunc(guests))),
+  });
+  const data = await request<{ addOns: OfferedAddOn[] }>(
+    `/api/addons?${qs.toString()}`,
+  );
+  return data.addOns;
+}
+
+/**
  * Availability for one activity on one day.
  * @param isoDate YYYY-MM-DD in the operator's local calendar.
  */
@@ -638,6 +697,75 @@ export async function validatePromo(
   return request<PromoValidation>('/api/promos/validate', {
     method: 'POST',
     body: { code, activityId },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Waitlist (public: join a sold-out timeslot's list)
+// ---------------------------------------------------------------------------
+
+/** What a guest submits to join the waitlist for a sold-out time. */
+export interface JoinWaitlistPayload {
+  timeslotId: string;
+  name: string;
+  email: string;
+  phone?: string;
+}
+
+/**
+ * Join the waitlist for a sold-out timeslot. The API emails the guest a booking
+ * link if a spot opens (first to book wins — no hold is placed). Resolves on
+ * success; throws ApiError (409 SLOT_HAS_ROOM when the slot isn't actually full).
+ */
+export async function joinWaitlist(payload: JoinWaitlistPayload): Promise<void> {
+  if (DEMO_MODE) return; // demo portal has no live waitlist — pretend success
+  await request<{ ok: boolean }>('/api/waitlist', { method: 'POST', body: payload });
+}
+
+// ---------------------------------------------------------------------------
+// Cart holds (public: reserve seats for the checkout window)
+// ---------------------------------------------------------------------------
+
+/** A placed cart hold: the id to send with the booking + its expiry deadline. */
+export interface CartHold {
+  holdId: string;
+  /** ISO-8601 UTC instant the hold lapses — the checkout countdown's deadline. */
+  expiresAt: string;
+  /** Minutes the hold was granted for. */
+  holdMinutes: number;
+  seats: number;
+}
+
+/**
+ * Reserve `seats` on a timeslot while the guest is in checkout. The API subtracts
+ * un-expired holds from availability so two guests can't both reach "pay" for the
+ * last seat. Returns the hold id (sent back with the booking so it's consumed) and
+ * the expiry the countdown ticks down to. Throws ApiError (409 INSUFFICIENT_CAPACITY
+ * when the slot was taken between selection and checkout).
+ */
+export async function createCartHold(payload: {
+  timeslotId: string;
+  seats: number;
+}): Promise<CartHold> {
+  if (DEMO_MODE) {
+    // The showcase funnel has no API; synthesize a hold so the countdown still runs
+    // (the demo store doesn't enforce capacity, so this is display-only there).
+    const holdMinutes = 10;
+    return {
+      holdId: `demo-hold-${payload.timeslotId}`,
+      expiresAt: new Date(Date.now() + holdMinutes * 60_000).toISOString(),
+      holdMinutes,
+      seats: payload.seats,
+    };
+  }
+  return request<CartHold>('/api/holds', { method: 'POST', body: payload });
+}
+
+/** Release a still-active hold early (guest left checkout / changed seats). Best-effort. */
+export async function releaseCartHold(holdId: string): Promise<void> {
+  if (DEMO_MODE) return; // no live hold to release in the showcase funnel
+  await request<{ ok: boolean }>(`/api/holds/${encodeURIComponent(holdId)}`, {
+    method: 'DELETE',
   });
 }
 

@@ -86,7 +86,7 @@ export function EndOfDayReportView({ report }: EndOfDayReportViewProps) {
           <CardContent className="overflow-x-auto">
             <table className="w-full border-collapse text-sm">
               <thead>
-                <tr className="border-b border-slate-200 text-xs font-medium uppercase tracking-wide text-slate-500">
+                <tr className="border-b border-line text-xs font-medium uppercase tracking-wide text-ink-muted">
                   <th className={CELL_LEFT}>Method</th>
                   <th className={CELL}>Count</th>
                   <th className={CELL}>Collected</th>
@@ -98,23 +98,23 @@ export function EndOfDayReportView({ report }: EndOfDayReportViewProps) {
                 {report.payments.byMethod.map((m) => {
                   const Icon = METHOD_ICON[m.method];
                   return (
-                    <tr key={m.method} className="border-t border-slate-50">
+                    <tr key={m.method} className="border-t border-line">
                       <td className={`${CELL_LEFT}`}>
-                        <span className="flex items-center gap-2 font-medium text-slate-700">
-                          <Icon className="h-4 w-4 text-slate-400" aria-hidden />
+                        <span className="flex items-center gap-2 font-medium text-ink-body">
+                          <Icon className="h-4 w-4 text-ink-muted" aria-hidden />
                           {PAYMENT_METHOD_LABEL[m.method]}
                         </span>
                       </td>
-                      <td className={`${CELL} text-slate-700`}>{formatNumber(m.count)}</td>
-                      <td className={`${CELL} text-slate-700`}>{formatUSD(m.collectedCents)}</td>
-                      <td className={`${CELL} text-slate-500`}>
+                      <td className={`${CELL} text-ink-body`}>{formatNumber(m.count)}</td>
+                      <td className={`${CELL} text-ink-body`}>{formatUSD(m.collectedCents)}</td>
+                      <td className={`${CELL} text-ink-muted`}>
                         {m.refundedCents ? `−${formatUSD(m.refundedCents)}` : '—'}
                       </td>
-                      <td className={`${CELL} font-medium text-slate-900`}>{formatUSD(m.netCents)}</td>
+                      <td className={`${CELL} font-medium text-ink`}>{formatUSD(m.netCents)}</td>
                     </tr>
                   );
                 })}
-                <tr className="border-t-2 border-slate-200 font-semibold text-slate-900">
+                <tr className="border-t-2 border-line font-semibold text-ink">
                   <td className={CELL_LEFT}>All methods</td>
                   <td className={CELL}>{formatNumber(report.payments.totals.count)}</td>
                   <td className={CELL}>{formatUSD(report.payments.totals.collectedCents)}</td>
@@ -136,11 +136,11 @@ export function EndOfDayReportView({ report }: EndOfDayReportViewProps) {
           </CardHeader>
           <CardContent>
             {report.refunds.length === 0 ? (
-              <p className="py-6 text-center text-sm text-slate-400">No refunds in this range.</p>
+              <p className="py-6 text-center text-sm text-ink-muted">No refunds in this range.</p>
             ) : (
               <table className="w-full border-collapse text-sm">
                 <thead>
-                  <tr className="border-b border-slate-200 text-xs font-medium uppercase tracking-wide text-slate-500">
+                  <tr className="border-b border-line text-xs font-medium uppercase tracking-wide text-ink-muted">
                     <th className={CELL_LEFT}>When</th>
                     <th className={CELL_LEFT}>Order</th>
                     <th className={CELL_LEFT}>Method</th>
@@ -150,15 +150,15 @@ export function EndOfDayReportView({ report }: EndOfDayReportViewProps) {
                 </thead>
                 <tbody>
                   {report.refunds.map((r, i) => (
-                    <tr key={`${r.orderNumber}-${i}`} className="border-t border-slate-50">
-                      <td className={`${CELL_LEFT} tabular-nums text-slate-500`}>
+                    <tr key={`${r.orderNumber}-${i}`} className="border-t border-line">
+                      <td className={`${CELL_LEFT} tabular-nums text-ink-muted`}>
                         {fmtWhen(r.processedAt)}
                       </td>
-                      <td className={`${CELL_LEFT} tabular-nums text-slate-700`}>{r.orderNumber}</td>
-                      <td className={`${CELL_LEFT} text-slate-600`}>
+                      <td className={`${CELL_LEFT} tabular-nums text-ink-body`}>{r.orderNumber}</td>
+                      <td className={`${CELL_LEFT} text-ink-body`}>
                         {PAYMENT_METHOD_LABEL[r.method as PaymentMethodKey] ?? r.method}
                       </td>
-                      <td className={`${CELL} text-slate-700`}>{formatUSD(r.amountCents)}</td>
+                      <td className={`${CELL} text-ink-body`}>{formatUSD(r.amountCents)}</td>
                       <td className={`${CELL} font-medium text-red-600`}>
                         −{formatUSD(r.refundedCents)}
                       </td>
@@ -178,7 +178,7 @@ export function EndOfDayReportView({ report }: EndOfDayReportViewProps) {
         <CardContent className="overflow-x-auto">
           <table className="w-full min-w-[640px] border-collapse text-sm">
             <thead>
-              <tr className="border-b border-slate-200 text-xs font-medium uppercase tracking-wide text-slate-500">
+              <tr className="border-b border-line text-xs font-medium uppercase tracking-wide text-ink-muted">
                 <th className={CELL_LEFT}>When</th>
                 <th className={CELL_LEFT}>Order</th>
                 <th className={CELL_LEFT}>Method</th>
@@ -189,26 +189,26 @@ export function EndOfDayReportView({ report }: EndOfDayReportViewProps) {
             </thead>
             <tbody>
               {report.transactions.slice(0, TAPE_LIMIT).map((t, i) => (
-                <tr key={`${t.orderNumber}-${i}`} className="border-t border-slate-50">
-                  <td className={`${CELL_LEFT} tabular-nums text-slate-500`}>{fmtWhen(t.processedAt)}</td>
-                  <td className={`${CELL_LEFT} tabular-nums text-slate-700`}>{t.orderNumber}</td>
-                  <td className={`${CELL_LEFT} text-slate-600`}>
+                <tr key={`${t.orderNumber}-${i}`} className="border-t border-line">
+                  <td className={`${CELL_LEFT} tabular-nums text-ink-muted`}>{fmtWhen(t.processedAt)}</td>
+                  <td className={`${CELL_LEFT} tabular-nums text-ink-body`}>{t.orderNumber}</td>
+                  <td className={`${CELL_LEFT} text-ink-body`}>
                     {PAYMENT_METHOD_LABEL[t.method as PaymentMethodKey] ?? t.method}
                     {t.manuallyKeyed ? (
-                      <span className="ml-1.5 text-xs text-slate-400">(keyed)</span>
+                      <span className="ml-1.5 text-xs text-ink-muted">(keyed)</span>
                     ) : null}
                   </td>
-                  <td className={`${CELL} text-slate-700`}>{formatUSD(t.amountCents)}</td>
-                  <td className={`${CELL} text-slate-500`}>
+                  <td className={`${CELL} text-ink-body`}>{formatUSD(t.amountCents)}</td>
+                  <td className={`${CELL} text-ink-muted`}>
                     {t.refundedCents ? `−${formatUSD(t.refundedCents)}` : '—'}
                   </td>
-                  <td className={`${CELL} font-medium text-slate-900`}>{formatUSD(t.netCents)}</td>
+                  <td className={`${CELL} font-medium text-ink`}>{formatUSD(t.netCents)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
           {report.transactions.length > TAPE_LIMIT ? (
-            <p className="mt-2 text-xs text-slate-400">
+            <p className="mt-2 text-xs text-ink-muted">
               Showing the latest {TAPE_LIMIT} of {formatNumber(report.transactions.length)} tenders —
               Export CSV includes every one.
             </p>

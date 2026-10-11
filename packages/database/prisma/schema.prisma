@@ -69,11 +69,33 @@ enum OrderItemStatus {
   NO_SHOW
 }
 
+/// Per-head rate-class categories. OTHER is the catch-all + the kind the booking
+/// path uses for the synthesized default "Guest" class when a rate defines none.
+enum RateClassKind {
+  ADULT
+  CHILD
+  INFANT
+  YOUTH
+  SENIOR
+  OTHER
+}
+
 enum PaymentMethod {
   CARD
   CASH
   GIFT_CARD
   COMP
+}
+
+enum WaitlistStatus {
+  /// Waiting for a spot to open.
+  PENDING
+  /// Emailed a booking link when capacity freed — first to book wins.
+  NOTIFIED
+  /// The guest went on to book the slot (set opportunistically, not required).
+  BOOKED
+  /// The slot departed / was cancelled before a spot opened.
+  EXPIRED
 }
 
 enum GiftCardStatus {
@@ -190,6 +212,9 @@ model Operator {
   location_code   String   @unique // legacy code e.g. "LSRA"
   website         String?
   phone           String?
+  // Public URL where guests leave a review (Google/Yelp/etc). When set, the
+  // post-trip review-request email/SMS links here. null = review requests off.
+  review_url      String?
   timezone        String   @default("America/Los_Angeles")
   country         String   @default("US")
   // White-label branding
@@ -207,6 +232,27 @@ model Operator {
   approval_threshold_cents Int?
   // When true, EVERY refund requires manager approval regardless of amount.
   refund_requires_approval Boolean @default(false)
+  // Cart-hold timer (minutes). When a guest begins checkout a CartHold reserves
+  // their seats for this many minutes; day availability subtracts un-expired holds
+  // so two guests can't both reach "pay" for the last seat. The hold is consumed
+  // (cleared) when the booking lands, or freed by the sweeper once it expires.
+  cart_hold_minutes Int @default(10)
+  // Tenant-DEFAULT tiered cancellation policy (an Activity may override; see
+  // Activity.cancellation_policy). null = no policy configured (treat as
+  // non-refundable / 0% at any time). Shape (see computeCancellationRefund in
+  // @marina/core):
+  //   {
+  //     tiers: [{ min_hours_before: number, refund_percent: number }]
+  //       // ordered most-generous first, e.g. 168->100, 24->50, 0->0. The tier
+  //       // applied is the one with the LARGEST min_hours_before that is still
+  //       // <= hoursUntilStart.
+  //     cancellation_fee_cents: number        // flat fee withheld from the refund
+  //     fee_scope: 'order' | 'guest'          // fee charged once per order, or per guest
+  //     self_cancel_hours: number             // cutoff (hours before start) a CUSTOMER
+  //                                           // may self-cancel; staff have no cutoff
+  //     refund_method: 'card' | 'gift_card' | 'card_then_gift'
+  //   }
+  cancellation_policy      Json?
   // Billing (platform subscription)
   plan            String   @default("trial")
   is_active       Boolean  @default(true)
@@ -220,8 +266,10 @@ model Operator {
   customers    Customer[]
   orders       Order[]
   fees         Fee[]
+  charge_presets ChargePreset[]
   merchandise  MerchandiseItem[]
   promo_codes  PromoCode[]
+  promo_redemptions PromoRedemption[]
   waivers      Waiver[]
   integrations Integration[]
   sandbox_messages SandboxMessage[]
@@ -246,6 +294,8 @@ model Operator {
   audit_logs   AuditLog[]
   channels     Channel[]
   accounting_exports AccountingExport[]
+  cart_holds   CartHold[]
+  staff_notification_prefs StaffNotificationPref[]
 }
 
 // ===========================================================================
@@ -295,10 +345,35 @@ model StaffMember {
 
   locations StaffLocation[]
   guide_assignments GuideAssignment[]
+  notification_pref StaffNotificationPref?
 
   // Target of a tenant-composite FK from GuideAssignment.
   @@unique([operator_id, auth_user_id])
   @@unique([operator_id, id])
+  @@index([operator_id])
+}
+
+// Per-staff booking-notification preferences, so new-booking alerts aren't an
+// all-or-nothing blast. One row per staff member (created lazily). Controls
+// whether that member is emailed and/or SMS'd on a new booking, and optionally
+// narrows alerts to a chosen set of activities. An empty activity_ids means
+// "all activities". Tenant-scoped (operator_id) under RLS.
+model StaffNotificationPref {
+  id            String      @id @default(cuid())
+  operator_id   String
+  operator      Operator    @relation(fields: [operator_id], references: [id], onDelete: Cascade)
+  staff_id      String      @unique
+  staff         StaffMember @relation(fields: [staff_id], references: [id], onDelete: Cascade)
+  // New-booking alert channels.
+  email_enabled Boolean     @default(true)
+  sms_enabled   Boolean     @default(false)
+  // Destination phone for SMS alerts (StaffMember has no phone column). Null = no SMS.
+  sms_phone     String?
+  // Activity filter. Empty = every activity. Non-empty = only these Activity ids.
+  activity_ids  String[]    @default([])
+  created_at    DateTime    @default(now())
+  updated_at    DateTime    @updatedAt
+
   @@index([operator_id])
 }
 
@@ -345,6 +420,10 @@ model Activity {
   color                 String           @default("#0ea5e9")
   waiver_required       Boolean          @default(true)
   self_reschedule_hours Int              @default(48)
+  // Per-activity override for the tiered cancellation policy. null = inherit the
+  // operator default (Operator.cancellation_policy). Same JSON shape as the
+  // operator field — see that comment / computeCancellationRefund in @marina/core.
+  cancellation_policy   Json?
   // Deposits: when set (1-99), only this % of the total is charged at booking and
   // the remainder is collected at check-in. null = fall back to the operator
   // default; 0 or unset on both = pay-in-full.
@@ -355,6 +434,13 @@ model Activity {
   transportation        Boolean          @default(false)
   transportation_note   String?
   sort_index            Int              @default(0)
+  // Open-duration rental window (operator-local minutes-since-midnight). When BOTH
+  // rental_open_minute and rental_close_minute are set, this boat is an open-duration
+  // RENTAL available for any sub-window within [open, close] that day (vs. discrete
+  // timeslot departures). NULL on either = not a rental window; the activity keeps its
+  // current discrete-departure behavior. Additive + nullable so existing rows stay valid.
+  rental_open_minute    Int?
+  rental_close_minute   Int?
   // Vertical-specific fields (lodging nights, tour meeting point, etc.) live here
   // so the core booking engine stays category-agnostic.
   config                Json?
@@ -400,10 +486,39 @@ model Rate {
   order_items      OrderItem[]
   package_items    PackageItem[]
   pricing_rules    PricingRule[]
+  rate_classes     RateClass[]
+  customer_questions CustomerQuestion[]
 
   @@unique([operator_id, id])
   @@index([operator_id])
   @@index([activity_id])
+}
+
+/// Per-head rate classes (adult / child / infant / youth / senior / other). Each
+/// class carries a label and an OPTIONAL per-head price modifier in integer cents
+/// applied on top of the Rate's base price_cents (e.g. a child is base -1500c, an
+/// adult is base +0). A Rate with no classes keeps its single-quantity behaviour —
+/// the booking path synthesizes a default "Guest" class at the base price. Additive
+/// + tenant-scoped (RLS). price_modifier_cents may be negative but the booking path
+/// clamps the resulting per-head price at >= 0, so a class can never go negative.
+model RateClass {
+  id                   String   @id @default(cuid())
+  operator_id          String
+  rate_id              String
+  // Tenant-composite FK: (operator_id, rate_id) -> Rate(operator_id, id).
+  rate                 Rate     @relation(fields: [operator_id, rate_id], references: [operator_id, id], onDelete: Cascade)
+  kind                 RateClassKind @default(OTHER)
+  label                String
+  price_modifier_cents Int      @default(0)
+  is_active            Boolean  @default(true)
+  sort_index           Int      @default(0)
+  order_items          OrderItem[]
+  created_at           DateTime @default(now())
+  updated_at           DateTime @updatedAt
+
+  @@unique([operator_id, id])
+  @@index([operator_id])
+  @@index([rate_id])
 }
 
 model Timeslot {
@@ -428,11 +543,65 @@ model Timeslot {
   created_at      DateTime       @default(now())
   order_items     OrderItem[]
   guide_assignments GuideAssignment[]
+  waitlist_entries WaitlistEntry[]
+  cart_holds      CartHold[]
 
   @@unique([operator_id, id])
   @@index([operator_id])
   @@index([activity_id, datetime])
   @@index([schedule_rule_id])
+}
+
+/// A short-lived reservation of `seats` on a Timeslot held while a guest is in
+/// checkout. Day availability SUBTRACTS the seats of every un-expired hold, so two
+/// guests can't both reach the pay step for the last seat. A hold is created when
+/// checkout starts (POST /api/holds), freed when it expires (sweeper or lazy
+/// on-read), and consumed/cleared when the booking that owns it lands. Un-expired
+/// holds behave exactly like booked capacity for the purpose of what's sellable.
+model CartHold {
+  id          String   @id @default(cuid())
+  operator_id String
+  operator    Operator @relation(fields: [operator_id], references: [id], onDelete: Cascade)
+  timeslot_id String
+  // Tenant-composite FK: (operator_id, timeslot_id) -> Timeslot(operator_id, id).
+  timeslot    Timeslot @relation(fields: [operator_id, timeslot_id], references: [operator_id, id], onDelete: Cascade)
+  seats       Int
+  /// When this hold stops counting against availability. A hold with
+  /// expires_at <= now() is dead weight the sweeper (or a lazy on-read) frees.
+  expires_at  DateTime
+  /// Set once the hold is consumed by the booking it backed, so a consumed hold is
+  /// never double-counted and the sweeper leaves it alone. null = still active.
+  consumed_at DateTime?
+  created_at  DateTime @default(now())
+
+  @@unique([operator_id, id])
+  @@index([operator_id])
+  // The availability subtraction query filters by (timeslot, not-consumed, not-expired);
+  // this index keeps that a cheap range scan instead of a per-slot table scan.
+  @@index([operator_id, timeslot_id, expires_at])
+}
+
+/// A guest waiting on a sold-out timeslot. When capacity frees (cancel /
+/// reschedule-away), the oldest PENDING entries are emailed a booking deep link —
+/// no hold, no expiry timer: the email says plainly that the first to book wins.
+model WaitlistEntry {
+  id          String         @id @default(cuid())
+  operator_id String
+  timeslot_id String
+  // Tenant-composite FK: (operator_id, timeslot_id) -> Timeslot(operator_id, id).
+  timeslot    Timeslot       @relation(fields: [operator_id, timeslot_id], references: [operator_id, id], onDelete: Cascade)
+  name        String
+  email       String
+  phone       String?
+  status      WaitlistStatus @default(PENDING)
+  notified_at DateTime?
+  created_at  DateTime       @default(now())
+
+  @@unique([operator_id, id])
+  // One entry per guest per slot — a double-tap upserts instead of double-queuing.
+  @@unique([operator_id, timeslot_id, email])
+  @@index([operator_id])
+  @@index([operator_id, timeslot_id, status])
 }
 
 // ===========================================================================
@@ -463,7 +632,19 @@ model ScheduleRule {
   /// Days of week the rule fires on: 0 = Sunday … 6 = Saturday.
   weekdays      Int[]
   /// Departure times as minutes since local midnight, ascending (e.g. 480 = 8:00 AM).
+  /// Populated for FIXED-DEPARTURE rules (scheduled tour slots). Empty for
+  /// open-duration rental-window rules (see open_minute/close_minute below).
   start_minutes Int[]
+  /// Open-duration RENTAL WINDOW (minutes since local midnight). When both
+  /// open_minute and close_minute are set AND start_minutes is empty, this rule
+  /// means: "this boat is rentable on <weekdays> from open_minute to close_minute
+  /// during the <start_date..end_date> season" — a continuous rentable window the
+  /// customer books an arbitrary duration within, NOT a fixed departure time.
+  /// Null on legacy/fixed-departure rules so all existing rules stay valid.
+  open_minute   Int?
+  /// Closing edge of the open-duration rental window (minutes since local
+  /// midnight, e.g. 1200 = 8:00 PM). See open_minute. Null on fixed-departure rules.
+  close_minute  Int?
   /// Per-slot capacity. Null = follow the activity's max_participants.
   capacity      Int?
   /// Paused rules stop generating; their future unbooked slots are withdrawn.
@@ -576,6 +757,7 @@ model Customer {
   total_bookings    Int      @default(0)
   last_booking_at   DateTime?
   waiver_on_file    Boolean  @default(false)
+  tax_exempt        Boolean  @default(false)
   created_at        DateTime @default(now())
   updated_at        DateTime @updatedAt
   orders            Order[]
@@ -658,6 +840,14 @@ model OrderItem {
   activity         Activity        @relation(fields: [operator_id, activity_id], references: [operator_id, id])
   rate_id          String
   rate             Rate            @relation(fields: [operator_id, rate_id], references: [operator_id, id])
+  // Per-head rate class this seat line was sold under (adult/child/…). Nullable +
+  // tenant-composite FK; null = a single-quantity booking with no per-class split.
+  // rate_class_label snapshots the label so renaming/deleting a class never rewrites
+  // a historical receipt or breaks the manifest. unit_price_cents already holds the
+  // per-head effective price for this class, so totals/reports need no class lookup.
+  rate_class_id    String?
+  rate_class       RateClass?      @relation(fields: [operator_id, rate_class_id], references: [operator_id, id])
+  rate_class_label String?
   timeslot_id      String
   timeslot         Timeslot        @relation(fields: [operator_id, timeslot_id], references: [operator_id, id])
   quantity         Int             @default(1)
@@ -698,6 +888,7 @@ model OrderItem {
   @@index([timeslot_id])
   @@index([operator_id, add_on_id])
   @@index([operator_id, package_id])
+  @@index([operator_id, rate_class_id])
 }
 
 model Payment {
@@ -926,6 +1117,22 @@ model OrderCharge {
 // Fees / merchandise / promos
 // ===========================================================================
 
+/// Reusable one-click charge preset (e.g. "Fuel — half tank" $40) staff pick from
+/// when adding a post-trip charge. Pre-fills category/label/amount; still editable.
+model ChargePreset {
+  id           String   @id @default(cuid())
+  operator_id  String
+  operator     Operator @relation(fields: [operator_id], references: [id], onDelete: Cascade)
+  /// FUEL | CLEANING | DAMAGE | LATE | OTHER — same free-string set as OrderCharge.category.
+  category     String
+  label        String
+  amount_cents Int
+  active       Boolean  @default(true)
+  created_at   DateTime @default(now())
+
+  @@index([operator_id])
+}
+
 model Fee {
   id                String    @id @default(cuid())
   operator_id       String
@@ -937,6 +1144,7 @@ model Fee {
   value             Float
   enabled           Boolean   @default(true)
   ignore_tax_exempt Boolean   @default(false)
+  is_tax            Boolean   @default(false)
 
   @@index([operator_id])
 }
@@ -952,6 +1160,10 @@ model MerchandiseItem {
   /// under a product-level total row (the fuel-by-fractional-gallon pattern).
   variant           String?
   cost_cents        Int      @default(0)
+  /// Retail/sale price in integer cents. POS merch lines default to this (still
+  /// overridable at the register). Nullable: items predating this column, or
+  /// cost-only internal inventory, have no retail price set yet.
+  price_cents       Int?
   on_hand_qty       Int?
   reorder_alert_qty Int?
   is_active         Boolean  @default(true)
@@ -1008,9 +1220,38 @@ model PromoCode {
   max_redemptions Int?
   times_redeemed  Int          @default(0)
   activity_ids    String[]
+  // When true, checkout auto-applies this promo (no code entry needed); the best
+  // active AUTO promo wins. Independent of `type` so an existing code can also be
+  // flagged auto-applicable.
+  auto_apply      Boolean      @default(false)
+  // Cap on how many times a single customer may redeem this promo (by customer id /
+  // email). Null = unlimited per customer (still bounded by max_redemptions overall).
+  per_customer_limit Int?
+  redemptions     PromoRedemption[]
 
   @@unique([operator_id, code])
   @@index([operator_id])
+}
+
+// Per-redemption ledger. One row per time a promo is actually applied to an order,
+// keyed to the customer so per-customer limits can be enforced atomically (count
+// rows under a FOR-the-order lock, same pattern as the guarded times_redeemed bump).
+model PromoRedemption {
+  id            String    @id @default(cuid())
+  operator_id   String
+  operator      Operator  @relation(fields: [operator_id], references: [id], onDelete: Cascade)
+  promo_code_id String
+  promo_code    PromoCode @relation(fields: [promo_code_id], references: [id], onDelete: Cascade)
+  customer_id   String?
+  // Snapshot of the redeeming customer's email (lower-cased) so the per-customer
+  // cap holds even if the Customer row is later merged/removed.
+  customer_email String
+  order_id      String
+  created_at    DateTime  @default(now())
+
+  @@index([operator_id])
+  @@index([promo_code_id, customer_email])
+  @@index([order_id])
 }
 
 // ===========================================================================
@@ -1591,6 +1832,8 @@ enum QuestionType {
   SELECT
   CHECKBOX
   NUMBER
+  DATE
+  PHONE
 }
 
 /**
@@ -1612,6 +1855,14 @@ model CustomerQuestion {
   /// null means the question applies to every activity.
   applies_to  String?
   activity    Activity?    @relation(fields: [operator_id, applies_to], references: [operator_id, id])
+  /// Optional rate scope. Tenant-composite FK to Rate([operator_id, id]); null means
+  /// the question is not narrowed to a single rate. When set, the question only shows
+  /// for carts containing that rate (in addition to any activity scope).
+  applies_to_rate String?
+  rate            Rate?    @relation(fields: [operator_id, applies_to_rate], references: [operator_id, id])
+  /// When true, the answer is echoed back to the customer in the booking
+  /// confirmation email (and order detail). Defaults off to keep emails lean.
+  show_in_confirmation Boolean @default(false)
   is_active   Boolean      @default(true)
   sort_index  Int          @default(0)
   created_at  DateTime     @default(now())
@@ -1620,6 +1871,7 @@ model CustomerQuestion {
   @@unique([operator_id, id])
   @@index([operator_id])
   @@index([operator_id, applies_to])
+  @@index([operator_id, applies_to_rate])
 }
 
 /**
@@ -1653,6 +1905,8 @@ enum MessageTemplateKind {
   BOOKING_CONFIRMATION
   BOOKING_REMINDER
   REFUND_RECEIPT
+  BOOKING_CANCELLED
+  REVIEW_REQUEST
 }
 
 /**
@@ -1669,6 +1923,9 @@ model MessageTemplate {
   subject_override String?
   /// Plain-text/lightly-formatted body override with {{placeholders}}.
   body_override    String?
+  /// SMS-channel body override with {{placeholders}}. SMS has no subject; when
+  /// blank/missing the sender falls back to the built-in compact SMS copy.
+  sms_body_override String?
   created_at       DateTime            @default(now())
   updated_at       DateTime            @updatedAt
 

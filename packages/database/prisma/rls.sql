@@ -22,18 +22,19 @@ DO $$
 DECLARE
   t text;
   tenant_tables text[] := ARRAY[
-    'Location', 'StaffMember', 'Activity', 'Rate', 'Timeslot', 'ScheduleRule',
+    'Location', 'StaffMember', 'Activity', 'Rate', 'RateClass', 'Timeslot', 'ScheduleRule',
     'Resource',
     'ResourceBooking', 'Customer', 'Order', 'OrderItem', 'OrderMerchandiseLine',
     'Payment', 'Note',
-    'OrderEvent', 'OrderCharge', 'Fee', 'MerchandiseItem', 'PromoCode', 'Waiver',
+    'OrderEvent', 'OrderCharge', 'ChargePreset', 'Fee', 'MerchandiseItem', 'PromoCode', 'Waiver',
     'WaiverClause', 'WaiverSignature', 'Integration', 'GiftCard',
     'GuideAssignment', 'GiftCertificate', 'Package', 'PackageItem',
     'PackageUpsell', 'Membership', 'CustomerMembership', 'PricingRule',
     'CustomerQuestion', 'Affiliate', 'MessageTemplate', 'HeardAboutOption',
     'BlackoutDate', 'GLAccount', 'SandboxMessage', 'SandboxPaymentAttempt',
     'SandboxWebhook', 'SandboxClock', 'SandboxError', 'AuditLog', 'Channel',
-    'ChannelListing', 'ChannelBooking', 'AccountingExport'
+    'ChannelListing', 'ChannelBooking', 'AccountingExport', 'WaitlistEntry',
+    'CartHold', 'PromoRedemption', 'StaffNotificationPref'
   ];
 BEGIN
   FOREACH t IN ARRAY tenant_tables LOOP

@@ -135,7 +135,7 @@ export default async function OrdersPage({
       cell: (row) => (
         <Link
           href={`/orders/${row.id}`}
-          className="font-medium text-sky-700 hover:text-sky-900 hover:underline"
+          className="font-medium text-accent hover:text-accent-hover hover:underline"
         >
           {row.orderNumber}
         </Link>
@@ -146,8 +146,8 @@ export default async function OrdersPage({
       header: 'Customer',
       cell: (row) => (
         <div className="min-w-0">
-          <div className="truncate font-medium text-slate-800">{row.customerName}</div>
-          <div className="truncate text-xs text-slate-500">{row.customerEmail}</div>
+          <div className="truncate font-medium text-ink">{row.customerName}</div>
+          <div className="truncate text-xs text-ink-muted">{row.customerEmail}</div>
         </div>
       ),
     },
@@ -156,8 +156,8 @@ export default async function OrdersPage({
       header: 'Booking',
       cell: (row) => (
         <div className="min-w-0">
-          <div className="truncate text-slate-700">{row.itemSummary}</div>
-          <div className="text-xs text-slate-500">
+          <div className="truncate text-ink-body">{row.itemSummary}</div>
+          <div className="text-xs text-ink-muted">
             {row.bookingDate ? formatDate(row.bookingDate) : 'Date TBD'}
           </div>
         </div>
@@ -172,7 +172,7 @@ export default async function OrdersPage({
       id: 'total',
       header: 'Total',
       align: 'right',
-      cell: (row) => <span className="font-medium text-slate-800">{formatUSD(row.totalCents)}</span>,
+      cell: (row) => <span className="font-medium text-ink">{formatUSD(row.totalCents)}</span>,
     },
     {
       id: 'balance',
@@ -180,15 +180,15 @@ export default async function OrdersPage({
       align: 'right',
       cell: (row) =>
         row.balanceDueCents > 0 ? (
-          <span className="font-medium text-amber-700">{formatUSD(row.balanceDueCents)}</span>
+          <span className="font-medium text-rose-700">{formatUSD(row.balanceDueCents)}</span>
         ) : (
-          <span className="text-slate-400">Paid</span>
+          <span className="text-ink-muted">Paid</span>
         ),
     },
     {
       id: 'created',
       header: 'Placed',
-      cell: (row) => <span className="text-slate-500">{formatDateTime(row.createdAt)}</span>,
+      cell: (row) => <span className="text-ink-muted">{formatDateTime(row.createdAt)}</span>,
     },
   ];
 

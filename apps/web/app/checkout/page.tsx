@@ -11,7 +11,7 @@
  */
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { getActivity, getAvailability, isApiError } from '@/lib/api';
+import { getActivity, getAvailability, getOfferedAddOns, isApiError } from '@/lib/api';
 import { getBrandAsync } from '@/lib/brand';
 import { getPaymentConfig } from './payment-config';
 import { getWalletConfig } from './wallet-config';
@@ -153,6 +153,17 @@ export default async function CheckoutPage({ searchParams }: CheckoutPageProps) 
   );
   const quantity = Math.min(Math.max(safeRequested, 1), maxQuantity);
 
+  // Offered add-ons for this activity + party size (life jackets, coolers, fuel…).
+  // Priced + stock-resolved server-side; the selections re-price at booking, so
+  // these are display only. A failure to load them must never break checkout — the
+  // seats are what matter — so this degrades to "no add-ons offered".
+  let addOns: CheckoutSelection['addOns'] = [];
+  try {
+    addOns = await getOfferedAddOns(activity.id, quantity);
+  } catch {
+    addOns = [];
+  }
+
   const selection: CheckoutSelection = {
     activityId: activity.id,
     activityName: activity.name,
@@ -165,6 +176,7 @@ export default async function CheckoutPage({ searchParams }: CheckoutPageProps) 
     // total the guest commits to equals the confirmation total. Absent on older
     // API responses => no fees passed => breakdown labels the figure an estimate.
     fees: activity.fees ?? [],
+    addOns,
     rate: {
       id: rate.id,
       name: rate.name,

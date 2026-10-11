@@ -56,18 +56,18 @@ export function IntegrationCard({
   }
 
   return (
-    <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
-      <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-5 py-4">
+    <section className="rounded-lg border border-line bg-surface shadow-sm">
+      <div className="flex items-start justify-between gap-4 border-b border-line px-5 py-4">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <h3 className="text-base font-semibold text-slate-900">{def.name}</h3>
+            <h3 className="text-base font-semibold text-ink">{def.name}</h3>
             {enabled ? (
               <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
                 <Check className="h-3 w-3" aria-hidden /> Enabled
               </span>
             ) : null}
           </div>
-          <p className="mt-0.5 text-sm text-slate-500">{def.description}</p>
+          <p className="mt-0.5 text-sm text-ink-muted">{def.description}</p>
         </div>
         <label className="flex shrink-0 cursor-pointer items-center gap-2">
           <span className="sr-only">Enable {def.name}</span>
@@ -75,7 +75,7 @@ export function IntegrationCard({
             type="checkbox"
             checked={enabled}
             onChange={(e) => setEnabled(e.target.checked)}
-            className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-400"
+            className="h-4 w-4 rounded border-line-strong text-accent accent-accent focus:ring-focus"
           />
         </label>
       </div>

@@ -33,6 +33,7 @@ import {
 } from '../../lib/readiness';
 import { OpenClientButton } from './_components/PlatformActions';
 import { openClientAction } from './actions';
+import { Badge, buttonClasses } from '../../components/ui';
 
 export const metadata: Metadata = { title: 'Platform · Clients' };
 export const dynamic = 'force-dynamic';
@@ -74,13 +75,6 @@ async function openClientAtAction(formData: FormData): Promise<void> {
 // Readiness presentation
 // ---------------------------------------------------------------------------
 
-const STATUS_STYLE: Record<CheckStatus, string> = {
-  OK: 'bg-emerald-500/15 text-emerald-300',
-  WARN: 'bg-amber-500/15 text-amber-300',
-  BLOCKED: 'bg-rose-500/15 text-rose-300',
-  NOT_APPLICABLE: 'bg-slate-800 text-slate-400',
-};
-
 const STATUS_WORD: Record<CheckStatus, string> = {
   OK: 'Done',
   WARN: 'Watch',
@@ -88,25 +82,33 @@ const STATUS_WORD: Record<CheckStatus, string> = {
   NOT_APPLICABLE: 'N/A',
 };
 
+/** Map a check status onto a shared Badge tone (meaning, not decoration). */
+const STATUS_TONE: Record<CheckStatus, 'success' | 'waiting' | 'owed' | 'cancelled'> = {
+  OK: 'success',
+  WARN: 'waiting',
+  BLOCKED: 'owed',
+  NOT_APPLICABLE: 'cancelled',
+};
+
 function StatusIcon({ status }: { status: CheckStatus }) {
   const className = 'h-4 w-4 shrink-0';
-  if (status === 'OK') return <CheckCircle2 className={`${className} text-emerald-400`} aria-hidden />;
-  if (status === 'WARN') return <AlertTriangle className={`${className} text-amber-300`} aria-hidden />;
-  if (status === 'BLOCKED') return <CircleDashed className={`${className} text-rose-300`} aria-hidden />;
-  return <Minus className={`${className} text-slate-400`} aria-hidden />;
+  if (status === 'OK') return <CheckCircle2 className={`${className} text-emerald-600`} aria-hidden />;
+  if (status === 'WARN') return <AlertTriangle className={`${className} text-amber-600`} aria-hidden />;
+  if (status === 'BLOCKED') return <CircleDashed className={`${className} text-rose-600`} aria-hidden />;
+  return <Minus className={`${className} text-ink-muted`} aria-hidden />;
 }
 
 /** Green only when there is genuinely nothing outstanding. */
 function readinessTone(row: OperatorListRow): string {
-  if (row.readiness.blockedCount > 0) return 'text-rose-300';
-  if (row.readiness.warnCount > 0) return 'text-amber-300';
-  return 'text-emerald-300';
+  if (row.readiness.blockedCount > 0) return 'text-rose-700';
+  if (row.readiness.warnCount > 0) return 'text-amber-700';
+  return 'text-emerald-700';
 }
 
 function barTone(row: OperatorListRow): string {
-  if (row.readiness.blockedCount > 0) return 'bg-rose-400';
-  if (row.readiness.warnCount > 0) return 'bg-amber-300';
-  return 'bg-emerald-400';
+  if (row.readiness.blockedCount > 0) return 'bg-rose-500';
+  if (row.readiness.warnCount > 0) return 'bg-amber-500';
+  return 'bg-emerald-500';
 }
 
 /** The "go fix it" button. A form, because opening a client is a state change. */
@@ -136,8 +138,8 @@ function FixButton({
         }
         className={
           variant === 'link'
-            ? 'rounded font-medium text-sky-300 underline underline-offset-2 transition hover:text-sky-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-400'
-            : 'rounded-lg border border-slate-700 px-2.5 py-1 text-xs font-medium text-slate-200 transition hover:bg-slate-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-400'
+            ? 'rounded font-medium text-accent underline underline-offset-2 transition hover:text-accent-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus'
+            : buttonClasses('secondary', 'sm')
         }
       >
         {variant === 'link' ? 'Fix' : `Open ${check.label.toLowerCase()}`}
@@ -149,16 +151,14 @@ function FixButton({
 /** One line of the expanded checklist. */
 function CheckRow({ row, check }: { row: OperatorListRow; check: ReadinessCheck }) {
   return (
-    <li className="flex flex-wrap items-start gap-x-3 gap-y-1.5 border-t border-slate-800 py-2.5 first:border-t-0">
+    <li className="flex flex-wrap items-start gap-x-3 gap-y-1.5 border-t border-line py-2.5 first:border-t-0">
       <StatusIcon status={check.status} />
-      <span className="w-28 shrink-0 text-sm font-medium text-slate-100">{check.label}</span>
-      <span className="min-w-[16rem] flex-1 text-sm text-slate-300">{check.detail}</span>
+      <span className="w-28 shrink-0 text-sm font-medium text-ink">{check.label}</span>
+      <span className="min-w-[16rem] flex-1 text-sm text-ink-body">{check.detail}</span>
       <span className="flex shrink-0 items-center gap-2">
-        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLE[check.status]}`}>
-          {STATUS_WORD[check.status]}
-        </span>
+        <Badge tone={STATUS_TONE[check.status]}>{STATUS_WORD[check.status]}</Badge>
         {check.status === 'NOT_APPLICABLE' ? null : (
-          <span className="text-xs text-slate-400">
+          <span className="text-xs text-ink-muted">
             Ball with {courtLabel(check.court).toLowerCase()}
           </span>
         )}
@@ -237,8 +237,8 @@ function SortHeader({
       <Link
         href={sortHref(sortKey, current, direction)}
         title={hint}
-        className={`inline-flex items-center gap-1 rounded transition hover:text-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-400 ${
-          active ? 'text-slate-100' : ''
+        className={`inline-flex items-center gap-1 rounded transition hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus ${
+          active ? 'text-ink' : ''
         }`}
       >
         {label}
@@ -286,14 +286,14 @@ export default async function PlatformHome({
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold">Clients</h1>
-          <p className="mt-1 text-sm text-slate-400">
+          <h1 className="text-2xl font-bold text-ink">Clients</h1>
+          <p className="mt-1 text-sm text-ink-body">
             {clients.length} {clients.length === 1 ? 'client' : 'clients'} · {formatUSD(totalRevenue)} booked
             across the platform
             {blockedClients.length > 0 || watchClients.length > 0 ? (
               <>
                 {' · '}
-                <span className={blockedClients.length > 0 ? 'text-rose-300' : 'text-amber-300'}>
+                <span className={blockedClients.length > 0 ? 'text-rose-700' : 'text-amber-700'}>
                   {blockedClients.length > 0
                     ? `${blockedClients.length} blocked`
                     : `${watchClients.length} to watch`}
@@ -302,17 +302,14 @@ export default async function PlatformHome({
             ) : null}
           </p>
         </div>
-        <Link
-          href="/platform/new"
-          className="inline-flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400"
-        >
+        <Link href="/platform/new" className={buttonClasses('primary', 'md')}>
           <Plus className="h-4 w-4" aria-hidden /> New client
         </Link>
       </div>
 
       {scheduleTrouble.length > 0 ? (
-        <p className="flex items-start gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+        <p className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" aria-hidden />
           <span>
             {scheduleLede(scheduleTrouble, alreadyDark)} A schedule that ends takes the activity off sale
             without any error — nobody finds out until the phone stops ringing.
@@ -321,16 +318,16 @@ export default async function PlatformHome({
       ) : null}
 
       {clients.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-slate-700 p-12 text-center text-slate-400">
+        <div className="rounded-lg border border-dashed border-line-strong bg-surface p-12 text-center text-ink-muted">
           No clients yet. Create your first one to get started.
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-slate-800">
+        <div className="overflow-x-auto rounded-lg border border-line bg-surface shadow-sm">
           <table className="w-full min-w-[64rem] text-sm">
             <caption className="sr-only">
               Clients, most in need of attention first. Column headings sort the list.
             </caption>
-            <thead className="bg-slate-900 text-left text-xs uppercase tracking-wide text-slate-400">
+            <thead className="bg-surface-muted text-left text-xs uppercase tracking-wide text-ink-muted">
               <tr>
                 <SortHeader label="Client" sortKey="name" current={sortKey} direction={sortDir} />
                 <SortHeader
@@ -389,8 +386,8 @@ export default async function PlatformHome({
             {clients.map((c) => {
               const top = c.readiness.topBlocker;
               return (
-                <tbody key={c.id} className="border-t border-slate-800">
-                  <tr className="hover:bg-slate-900/50">
+                <tbody key={c.id} className="border-t border-line">
+                  <tr className="hover:bg-surface-muted">
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
                         <span
@@ -399,31 +396,31 @@ export default async function PlatformHome({
                           aria-hidden
                         />
                         <div>
-                          <div className="font-medium text-slate-100">{c.name}</div>
-                          <div className="text-xs text-slate-400">{c.slug}</div>
+                          <div className="font-medium text-ink">{c.name}</div>
+                          <div className="text-xs text-ink-muted">{c.slug}</div>
                         </div>
                       </div>
                     </td>
                     <td className="px-4 py-3">
-                      <span className="text-slate-200">{STAGE_LABEL[c.stage]}</span>
+                      <span className="text-ink-body">{STAGE_LABEL[c.stage]}</span>
                       {c.stageIsDerived ? (
                         // Say so rather than pretend: nobody has filed this client's
                         // onboarding record, so the stage is read off their data.
                         <span
-                          className="block text-xs text-slate-400"
+                          className="block text-xs text-ink-muted"
                           title="No onboarding record yet — read from the client's own data"
                         >
                           assumed
                         </span>
                       ) : c.onboardingOwner ? (
-                        <span className="block text-xs text-slate-400">{c.onboardingOwner}</span>
+                        <span className="block text-xs text-ink-muted">{c.onboardingOwner}</span>
                       ) : null}
                     </td>
                     <td className="px-4 py-3">
                       <div className={`font-semibold tabular-nums ${readinessTone(c)}`}>
                         {c.readiness.percent}%
                       </div>
-                      <span className="mt-1 block h-1 w-16 overflow-hidden rounded-full bg-slate-800" aria-hidden>
+                      <span className="mt-1 block h-1 w-16 overflow-hidden rounded-full bg-surface-muted" aria-hidden>
                         <span
                           className={`block h-full rounded-full ${barTone(c)}`}
                           style={{ width: `${c.readiness.percent}%` }}
@@ -435,35 +432,31 @@ export default async function PlatformHome({
                         <div className="flex items-start gap-2">
                           <StatusIcon status={top.status} />
                           <div className="min-w-0">
-                            <div className="font-medium text-slate-100">{top.label}</div>
-                            <div className="text-xs text-slate-400">
+                            <div className="font-medium text-ink">{top.label}</div>
+                            <div className="text-xs text-ink-muted">
                               {courtLabel(top.court)} · <FixButton row={c} check={top} variant="link" />
                             </div>
                           </div>
                         </div>
                       ) : (
-                        <span className="text-slate-400">Nothing — ready to sell</span>
+                        <span className="text-ink-muted">Nothing — ready to sell</span>
                       )}
                       {c.blockerNote ? (
-                        <div className="mt-1.5 flex items-start gap-1.5 text-xs text-amber-200">
+                        <div className="mt-1.5 flex items-start gap-1.5 text-xs text-amber-700">
                           <MessageSquareWarning className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
                           <span className="line-clamp-2">{c.blockerNote.body}</span>
                         </div>
                       ) : null}
                     </td>
-                    <td className="px-4 py-3 capitalize text-slate-300">{c.plan}</td>
+                    <td className="px-4 py-3 capitalize text-ink-body">{c.plan}</td>
                     <td className="px-4 py-3">
-                      <span
-                        className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                          c.isActive ? 'bg-emerald-500/15 text-emerald-300' : 'bg-rose-500/15 text-rose-300'
-                        }`}
-                      >
+                      <Badge tone={c.isActive ? 'success' : 'owed'}>
                         {c.isActive ? 'Active' : 'Suspended'}
-                      </span>
+                      </Badge>
                     </td>
-                    <td className="px-4 py-3 text-right tabular-nums text-slate-300">{c.activities}</td>
-                    <td className="px-4 py-3 text-right tabular-nums text-slate-300">{c.orders}</td>
-                    <td className="px-4 py-3 text-right tabular-nums text-slate-100">
+                    <td className="px-4 py-3 text-right tabular-nums text-ink-body">{c.activities}</td>
+                    <td className="px-4 py-3 text-right tabular-nums text-ink-body">{c.orders}</td>
+                    <td className="px-4 py-3 text-right tabular-nums text-ink">
                       {formatUSD(c.revenueCents)}
                     </td>
                     <td className="px-4 py-3">
@@ -474,7 +467,7 @@ export default async function PlatformHome({
                           rel="noreferrer"
                           title="View customer site"
                           aria-label={`View ${c.name} customer site`}
-                          className="rounded-lg border border-slate-700 p-2 text-slate-300 transition hover:bg-slate-800"
+                          className={buttonClasses('secondary', 'sm', 'px-2.5')}
                         >
                           <ExternalLink className="h-4 w-4" aria-hidden />
                         </a>
@@ -482,7 +475,7 @@ export default async function PlatformHome({
                           href={`/platform/${c.id}`}
                           title="Edit client"
                           aria-label={`Edit ${c.name}`}
-                          className="rounded-lg border border-slate-700 p-2 text-slate-300 transition hover:bg-slate-800"
+                          className={buttonClasses('secondary', 'sm', 'px-2.5')}
                         >
                           <Pencil className="h-4 w-4" aria-hidden />
                         </Link>
@@ -496,15 +489,15 @@ export default async function PlatformHome({
                           line of client JavaScript, which keeps this page a pure
                           server render. */}
                       <details className="group">
-                        <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 rounded text-xs [&::-webkit-details-marker]:hidden text-slate-400 transition hover:text-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-400">
+                        <summary className="inline-flex min-h-11 cursor-pointer list-none items-center gap-1.5 rounded text-xs [&::-webkit-details-marker]:hidden text-ink-muted transition hover:text-ink-body focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus">
                           <span aria-hidden className="transition group-open:rotate-90">
                             ▸
                           </span>
                           {readinessSummaryText(c)} · setup detail for {c.name}
                         </summary>
-                        <div className="mt-2 rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-1">
+                        <div className="mt-2 rounded-lg border border-line bg-surface-muted px-4 py-1">
                           {c.blockerNote ? (
-                            <p className="border-b border-slate-800 py-2.5 text-sm text-amber-200">
+                            <p className="border-b border-line py-2.5 text-sm text-amber-700">
                               <span className="font-medium">Blocker noted by {c.blockerNote.author}:</span>{' '}
                               {c.blockerNote.body}
                             </p>

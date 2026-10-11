@@ -34,6 +34,12 @@ export interface PricingFee {
   type: 'PERCENT' | 'FLAT';
   /** For PERCENT: a percentage (8.5 = 8.5%). For FLAT: integer cents. */
   value: number;
+  /**
+   * When true, this fee is tax and is skipped for tax-exempt customers. First-class
+   * flag; takes precedence over the legacy name-based detection. Undefined falls back
+   * to the "Tax" name heuristic for backward compatibility.
+   */
+  isTax?: boolean;
 }
 
 export interface PricingPromo {
@@ -261,8 +267,82 @@ export const resolveEffectivePrice = (
   return { priceCents: price, applied };
 };
 
+// ===========================================================================
+// Per-head rate classes (adult / child / infant / youth / senior / other)
+// ===========================================================================
+
+/**
+ * A rate class as the pricing engine sees it — decoupled from Prisma so it is
+ * unit-testable. `priceModifierCents` is a signed delta applied to the rate's base
+ * price for one head of this class (a child might be -1500, an adult +0, a premium
+ * tier +2000). Mirrors the RateClass model.
+ */
+export interface RateClassSpec {
+  id: string;
+  label: string;
+  priceModifierCents: number;
+}
+
+/** A requested count of heads in a given class, straight off the booking request. */
+export interface ParticipantCount {
+  classId: string;
+  count: number;
+}
+
+/** One priced per-class line after resolving counts against the class catalog. */
+export interface RateClassLine {
+  classId: string;
+  label: string;
+  /** Effective per-head price = base + modifier, clamped to >= 0 (integer cents). */
+  unitPriceCents: number;
+  count: number;
+}
+
+export interface RateClassPricing {
+  lines: RateClassLine[];
+  /** Sum of counts across all lines — the booking's effective quantity. */
+  totalQuantity: number;
+}
+
+/**
+ * Resolve a per-class participant breakdown into priced lines, SERVER-SIDE and
+ * pure. This is the authority for per-head pricing: the caller passes the rate's
+ * base price, the class catalog it re-read from the DB, and the client's requested
+ * counts; we compute each class's effective per-head price (base + modifier,
+ * clamped at >= 0) and the total quantity. A client-sent price is never consulted —
+ * only the class id + count are, exactly like the add-ons path.
+ *
+ * Throws (via the returned `error`) are avoided — instead an unknown class id is a
+ * caller-level validation concern; here we simply skip zero-count classes and only
+ * price classes present in the catalog. The caller is responsible for rejecting a
+ * participant whose classId is not in `classes` (so a tampered id cannot be priced
+ * at the base rate by omission).
+ */
+export const priceRateClasses = (
+  basePriceCents: number,
+  classes: readonly RateClassSpec[],
+  participants: readonly ParticipantCount[],
+): RateClassPricing => {
+  const base = Math.max(0, roundCents(basePriceCents));
+  const byId = new Map(classes.map((c) => [c.id, c]));
+  const lines: RateClassLine[] = [];
+  let totalQuantity = 0;
+
+  for (const p of participants) {
+    const count = Math.max(0, Math.trunc(p.count));
+    if (count === 0) continue;
+    const cls = byId.get(p.classId);
+    if (!cls) continue; // unknown class — caller validates separately.
+    const unitPriceCents = Math.max(0, base + roundCents(cls.priceModifierCents));
+    lines.push({ classId: cls.id, label: cls.label, unitPriceCents, count });
+    totalQuantity += count;
+  }
+
+  return { lines, totalQuantity };
+};
+
 const isTaxFee = (f: PricingFee): boolean =>
-  f.type === 'PERCENT' && /tax/i.test(f.name);
+  f.type === 'PERCENT' && (f.isTax ?? /tax/i.test(f.name));
 
 const isProcessingFee = (f: PricingFee): boolean =>
   f.type === 'PERCENT' && /processing/i.test(f.name);

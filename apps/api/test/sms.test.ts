@@ -43,4 +43,17 @@ describe('sendSms guards (never throw, no provider needed)', () => {
     expect(badPhone.sent).toBe(false);
     expect(badPhone.skippedReason).toBe('no valid phone number');
   });
+
+  // The booking-cancelled text is just another kind through the same choke point,
+  // so it inherits the never-throw / no-valid-phone guard verbatim: a cancel with a
+  // missing or junk phone must no-op, never block or fail the cancellation.
+  it('no-ops the booking_cancelled kind on a missing/invalid phone', async () => {
+    const missing = await sendSms('op_test', null, 'cancelled', 'booking_cancelled');
+    expect(missing.sent).toBe(false);
+    expect(missing.skippedReason).toBe('no valid phone number');
+
+    const junk = await sendSms('op_test', '12345', 'cancelled', 'booking_cancelled');
+    expect(junk.sent).toBe(false);
+    expect(junk.skippedReason).toBe('no valid phone number');
+  });
 });

@@ -57,8 +57,9 @@ export function EmbedActivity({ activity }: EmbedActivityProps) {
           </summary>
           <div
             className="mt-2 space-y-2 text-sm leading-relaxed text-slate-600 [&_a]:text-[color:var(--brand-color)] [&_a]:underline [&_li]:ml-5 [&_li]:list-disc [&_ul]:space-y-1"
-            // Operator-authored rich text, sanitized before storage — same trust
-            // model as the standalone activity page.
+            // Operator-authored rich text. Sanitized to a safe allowlist on write
+            // (activity schema) AND again server-side in GET /api/activities/:id
+            // before it reaches this embed — see @marina/core sanitizeHtml.
             dangerouslySetInnerHTML={{ __html: activity.descriptionHtml }}
           />
         </details>

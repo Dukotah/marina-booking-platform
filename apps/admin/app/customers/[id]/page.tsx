@@ -2,12 +2,14 @@ import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ArrowLeft, Mail, MapPin, Phone, ShieldCheck } from 'lucide-react';
+import { ArrowLeft, CalendarClock, DollarSign, Mail, MapPin, Phone, ShieldCheck, Ticket } from 'lucide-react';
 import { AdminShell, PageHeader } from '../../../components/shell';
+import { Card, StatCard } from '../../../components/ui';
 import { getTenantDb, requirePermission, currentPermissions } from '../../../lib/session';
 import { formatDate, formatNumber, formatUSD } from '../../../lib/format';
 import { TagInput } from '../../../components/customers/TagInput';
 import { NotesEditor } from '../../../components/customers/NotesEditor';
+import { TaxExemptToggle } from '../../../components/customers/TaxExemptToggle';
 import { BookingHistory, type BookingRow } from '../../../components/customers/BookingHistory';
 
 export const metadata: Metadata = {
@@ -23,20 +25,11 @@ interface CustomerProfileProps {
 /** A labeled contact line (icon + value), hidden when the value is absent. */
 function ContactLine({ icon, children }: { icon: ReactNode; children: ReactNode }) {
   return (
-    <div className="flex items-center gap-2.5 text-sm text-slate-700">
-      <span className="text-slate-400" aria-hidden>
+    <div className="flex items-center gap-2.5 text-sm text-ink-body">
+      <span className="text-ink-muted" aria-hidden>
         {icon}
       </span>
       <span className="min-w-0 break-words">{children}</span>
-    </div>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</div>
-      <div className="mt-1 text-2xl font-semibold text-slate-900 tabular-nums">{value}</div>
     </div>
   );
 }
@@ -72,6 +65,7 @@ export default async function CustomerProfilePage({ params }: CustomerProfilePro
       total_bookings: true,
       last_booking_at: true,
       waiver_on_file: true,
+      tax_exempt: true,
       created_at: true,
       orders: {
         orderBy: { created_at: 'desc' },
@@ -130,7 +124,7 @@ export default async function CustomerProfilePage({ params }: CustomerProfilePro
     <AdminShell>
       <Link
         href="/customers"
-        className="mb-3 inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 transition-colors hover:text-slate-800"
+        className="mb-3 inline-flex min-h-11 items-center gap-1.5 text-sm font-medium text-ink-muted transition-colors hover:text-ink"
       >
         <ArrowLeft className="h-4 w-4" aria-hidden />
         Back to customers
@@ -143,17 +137,17 @@ export default async function CustomerProfilePage({ params }: CustomerProfilePro
 
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-1">
-          <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h2 className="mb-3 text-sm font-semibold text-slate-900">Contact</h2>
+          <Card className="p-5">
+            <h2 className="mb-3 text-sm font-semibold text-ink">Contact</h2>
             <div className="space-y-2.5">
               <ContactLine icon={<Mail className="h-4 w-4" />}>
-                <a href={`mailto:${customer.email}`} className="hover:text-slate-900 hover:underline">
+                <a href={`mailto:${customer.email}`} className="hover:text-ink hover:underline">
                   {customer.email}
                 </a>
               </ContactLine>
               {customer.phone ? (
                 <ContactLine icon={<Phone className="h-4 w-4" />}>
-                  <a href={`tel:${customer.phone}`} className="hover:text-slate-900 hover:underline">
+                  <a href={`tel:${customer.phone}`} className="hover:text-ink hover:underline">
                     {customer.phone}
                   </a>
                 </ContactLine>
@@ -165,38 +159,56 @@ export default async function CustomerProfilePage({ params }: CustomerProfilePro
                 {customer.waiver_on_file ? 'Waiver on file' : 'No waiver on file'}
               </ContactLine>
             </div>
-          </section>
+          </Card>
 
-          <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h2 className="mb-3 text-sm font-semibold text-slate-900">Tags</h2>
+          <Card className="p-5">
+            <h2 className="mb-3 text-sm font-semibold text-ink">Tags</h2>
             <TagInput customerId={customer.id} initialTags={customer.tags} canEdit={canWrite} />
-          </section>
+          </Card>
 
-          <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h2 className="mb-3 text-sm font-semibold text-slate-900">Notes</h2>
+          <Card className="p-5">
+            <h2 className="mb-3 text-sm font-semibold text-ink">Tax status</h2>
+            <TaxExemptToggle
+              customerId={customer.id}
+              initialTaxExempt={customer.tax_exempt}
+              canEdit={canWrite}
+            />
+          </Card>
+
+          <Card className="p-5">
+            <h2 className="mb-3 text-sm font-semibold text-ink">Notes</h2>
             <NotesEditor
               customerId={customer.id}
               initialNotes={customer.notes ?? ''}
               canEdit={canWrite}
             />
-          </section>
+          </Card>
         </div>
 
         <div className="space-y-6 lg:col-span-2">
           <div className="grid gap-4 sm:grid-cols-3">
-            <Stat label="Lifetime value" value={formatUSD(customer.lifetime_value_cents)} />
-            <Stat label="Total bookings" value={formatNumber(customer.total_bookings)} />
-            <Stat
+            <StatCard
+              label="Lifetime value"
+              value={formatUSD(customer.lifetime_value_cents)}
+              icon={DollarSign}
+            />
+            <StatCard
+              label="Total bookings"
+              value={formatNumber(customer.total_bookings)}
+              icon={Ticket}
+            />
+            <StatCard
               label="Last booking"
               value={customer.last_booking_at ? formatDate(customer.last_booking_at) : 'Never'}
+              icon={CalendarClock}
             />
           </div>
 
           <section>
             <div className="mb-3 flex items-baseline justify-between">
-              <h2 className="text-sm font-semibold text-slate-900">Booking history</h2>
+              <h2 className="text-sm font-semibold text-ink">Booking history</h2>
               {customer.total_bookings > 0 ? (
-                <span className="text-xs text-slate-500">
+                <span className="text-xs text-ink-muted">
                   Avg. order {formatUSD(avgOrderCents)}
                 </span>
               ) : null}

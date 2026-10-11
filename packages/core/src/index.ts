@@ -16,6 +16,11 @@ export {
   resolveDepositPercent,
   computeDepositCents,
   applyMemberPrice,
+  priceRateClasses,
+  type RateClassSpec,
+  type ParticipantCount,
+  type RateClassLine,
+  type RateClassPricing,
   resolveEffectivePrice,
   isRuleActive,
   type PricingItem,
@@ -73,6 +78,26 @@ export {
   type GeneratedTimeslot,
 } from './availability.js';
 
+// Rental-window math: "is this boat rentable at minute M on local day D?" — the
+// one tested place the admin week grid derives shaded cells from rental rules.
+export {
+  isoWeekday,
+  mergeRanges,
+  rentableRangesForDay,
+  isRentableAt,
+  isHourRentable,
+  // Booking-engine consumers: free gaps + bookable start times for a rental.
+  freeRangesForDay,
+  bookableStartMinutes,
+  fitsInFreeRange,
+  type RentalWindowRule,
+  type MinuteRange,
+} from './rental-window.js';
+
+// Allowlist HTML sanitizer for operator-authored rich text (activity/package
+// descriptions) that is rendered unsanitized to public/embedded surfaces.
+export { sanitizeHtml, sanitizeDescriptionHtml } from './html-sanitize.js';
+
 export {
   ACTIVITY_CATEGORIES,
   DISCOUNT_TYPES,
@@ -100,6 +125,8 @@ export {
   PAYMENT_METHOD_KEYS,
   PAYMENT_METHOD_LABEL,
   rollUpByLocation,
+  aggregateRefunds,
+  REFUND_REASON_NONE,
   type DateBasis,
   type Delta,
   type PaymentMethodKey,
@@ -109,6 +136,10 @@ export {
   type LocationMetricRow,
   type LocationRollUpRow,
   type LocationRollUp,
+  type RefundRow,
+  type RefundReasonTotal,
+  type RefundActivityTotal,
+  type RefundsReport,
 } from './reports.js';
 
 // Itemized sales + merchandise report math (line-level views that reconcile
@@ -141,6 +172,18 @@ export {
   type MerchandiseVariantRow,
 } from './itemized.js';
 
+// Tiered cancellation policy model + pure refund calculator (tier-by-hours-until-start,
+// flat fee per order/guest, clamp to amount paid).
+export {
+  computeCancellationRefund,
+  type CancellationTier,
+  type CancellationPolicy,
+  type FeeScope,
+  type RefundMethod,
+  type ComputeCancellationRefundInput,
+  type CancellationRefundResult,
+} from './cancellation.js';
+
 // Dependency-free QR encoder (byte mode, EC level M) + SVG renderer, used for
 // the admin waiver sign-link QR the dock crew shows to guests.
 export {
@@ -152,3 +195,10 @@ export {
   type QrMatrix,
   type QrSvgOptions,
 } from './qr.js';
+
+// NOTE: the HMAC-signed check-in token module (checkin-token.ts) is deliberately
+// NOT re-exported here. It imports Node's `crypto`, and @marina/core is webpack-
+// transpiled (not external) in the Next apps — pulling it into this barrel would
+// drag `crypto` into every client bundle that imports any core symbol and 500 the
+// apps. Node-only call sites import it from the dedicated subpath instead:
+//   import { signCheckinToken } from '@marina/core/checkin-token';

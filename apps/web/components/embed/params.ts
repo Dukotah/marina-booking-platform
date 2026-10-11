@@ -45,6 +45,8 @@ export interface EmbedParams extends EmbedSessionParams {
   date: string;
   quantity: string;
   order: string;
+  /** Identity proof for the confirmation lookup (the order API gates on it). */
+  email: string;
 }
 
 /** A single query value regardless of whether Next handed us a string or array. */
@@ -99,6 +101,7 @@ export function parseEmbedParams(raw: RawParams): EmbedParams {
     date: firstParam(raw.date),
     quantity: firstParam(raw.quantity),
     order: firstParam(raw.order),
+    email: firstParam(raw.email),
   };
 }
 

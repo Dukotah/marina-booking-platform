@@ -14,7 +14,8 @@ export type ReportKind =
   | 'occupancy'
   | 'gift-cards'
   | 'end-of-day'
-  | 'head-count';
+  | 'head-count'
+  | 'refunds';
 
 export const REPORT_KINDS: ReportKind[] = [
   'revenue',
@@ -25,6 +26,7 @@ export const REPORT_KINDS: ReportKind[] = [
   'gift-cards',
   'end-of-day',
   'head-count',
+  'refunds',
 ];
 
 /** Human label for a report kind (tabs, filenames, headings). */
@@ -37,6 +39,7 @@ export const REPORT_LABEL: Record<ReportKind, string> = {
   'gift-cards': 'Gift Cards',
   'end-of-day': 'End of Day',
   'head-count': 'Head Count',
+  refunds: 'Refunds',
 };
 
 /** Validate/normalize an arbitrary string into a known report kind (defaults to revenue). */
@@ -77,4 +80,5 @@ export const REPORT_CONTROLS: Record<
   'gift-cards': { basis: false, compare: false, activity: false },
   'end-of-day': { basis: false, compare: false, activity: false },
   'head-count': { basis: false, compare: false, activity: true },
+  refunds: { basis: false, compare: false, activity: false },
 };

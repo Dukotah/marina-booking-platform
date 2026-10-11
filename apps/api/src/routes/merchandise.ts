@@ -25,6 +25,8 @@ const merchandiseInputSchema = z.object({
   /** Variant of a parent product sharing the same name (e.g. "1/4 gallon"). */
   variant: z.string().trim().min(1).max(80).nullable().optional(),
   cost_cents: z.number().int().nonnegative('cost_cents must be >= 0').default(0),
+  /** Retail/sale price in integer cents; the register default. Null = unset. */
+  price_cents: z.number().int().nonnegative('price_cents must be >= 0').nullable().optional(),
   on_hand_qty: z.number().int().nonnegative().nullable().optional(),
   reorder_alert_qty: z.number().int().nonnegative().nullable().optional(),
   is_active: z.boolean().default(true),
@@ -41,6 +43,7 @@ function serialize(item: {
   category: string;
   variant: string | null;
   cost_cents: number;
+  price_cents: number | null;
   on_hand_qty: number | null;
   reorder_alert_qty: number | null;
   is_active: boolean;
@@ -55,6 +58,7 @@ function serialize(item: {
     category: item.category,
     variant: item.variant,
     costCents: item.cost_cents,
+    priceCents: item.price_cents,
     onHandQty: item.on_hand_qty,
     reorderAlertQty: item.reorder_alert_qty,
     isActive: item.is_active,
@@ -114,6 +118,7 @@ merchandise.post('/', async (c) => {
       category: parsed.data.category,
       variant: parsed.data.variant ?? null,
       cost_cents: parsed.data.cost_cents,
+      price_cents: parsed.data.price_cents ?? null,
       on_hand_qty: parsed.data.on_hand_qty ?? null,
       reorder_alert_qty: parsed.data.reorder_alert_qty ?? null,
       is_active: parsed.data.is_active,
@@ -145,6 +150,7 @@ merchandise.patch('/:id', async (c) => {
       ...(d.category !== undefined ? { category: d.category } : {}),
       ...(d.variant !== undefined ? { variant: d.variant } : {}),
       ...(d.cost_cents !== undefined ? { cost_cents: d.cost_cents } : {}),
+      ...(d.price_cents !== undefined ? { price_cents: d.price_cents } : {}),
       ...(d.on_hand_qty !== undefined ? { on_hand_qty: d.on_hand_qty } : {}),
       ...(d.reorder_alert_qty !== undefined ? { reorder_alert_qty: d.reorder_alert_qty } : {}),
       ...(d.is_active !== undefined ? { is_active: d.is_active } : {}),

@@ -80,6 +80,16 @@ export async function loadActivityForm(
           online_only: true,
           internal_only: true,
           is_from_price: true,
+          rate_classes: {
+            orderBy: [{ sort_index: 'asc' }],
+            select: {
+              id: true,
+              kind: true,
+              label: true,
+              price_modifier_cents: true,
+              is_active: true,
+            },
+          },
         },
       },
     },
@@ -114,6 +124,14 @@ export async function loadActivityForm(
       online_only: r.online_only,
       internal_only: r.internal_only,
       is_from_price: r.is_from_price,
+      rate_classes: r.rate_classes.map((c) => ({
+        id: c.id,
+        kind: c.kind,
+        label: c.label,
+        // Stored as integer cents; entered/edited in dollars in the form.
+        price_modifier_dollars: fromCents(c.price_modifier_cents),
+        is_active: c.is_active,
+      })),
     })),
   };
 }

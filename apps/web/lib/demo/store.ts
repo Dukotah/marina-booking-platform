@@ -13,7 +13,9 @@
  */
 import { cookies } from 'next/headers';
 import { computeDemoOrder, parseTimeslotId } from './fixtures';
+import { ApiError } from '@/lib/api';
 import type { CreateBookingPayload, OrderSummary, PaymentResult } from '@/lib/api';
+import type { CancellationPreview } from '@/lib/orders';
 
 const COOKIE = 'demo_orders';
 const MAX_ORDERS = 10;
@@ -97,6 +99,62 @@ export function rescheduleDemoOrder(
     target.datetime = parsed.datetime;
   }
 
+  writeAll(orders);
+  return order;
+}
+
+/** Find a demo order by number + matching email, or null (the demo identity gate). */
+function findGated(orderNumber: string, email: string): OrderSummary | null {
+  const target = orderNumber.trim().toUpperCase();
+  const wantEmail = email.trim().toLowerCase();
+  const order = readAll().find((o) => o.orderNumber.toUpperCase() === target) ?? null;
+  if (!order || order.customerEmail.trim().toLowerCase() !== wantEmail) return null;
+  return order;
+}
+
+/**
+ * Demo refund preview. The demo has no stored cancellation policy, so it mirrors
+ * the API's SAFE_DEFAULT (full refund, no fee, no cutoff): the whole amount paid is
+ * refundable and the guest is always inside the self-cancel window. Throws to match
+ * the live client's 404 on a missing order / wrong email.
+ */
+export function previewDemoCancellation(
+  orderNumber: string,
+  email: string,
+): CancellationPreview {
+  const order = findGated(orderNumber, email);
+  if (!order) {
+    throw new ApiError('Order not found', 404, 'NOT_FOUND');
+  }
+  return {
+    tierPercent: 100,
+    refundCents: order.amountPaidCents,
+    feeCents: 0,
+    amountPaidCents: order.amountPaidCents,
+    withinSelfCancelWindow: true,
+    selfCancelHours: 0,
+  };
+}
+
+/**
+ * Demo self-service cancel. Marks the order CANCELLED and books the (full) refund
+ * back, mirroring the live SAFE_DEFAULT policy. Throws to match the live 404.
+ */
+export function cancelDemoOrder(orderNumber: string, email: string): OrderSummary {
+  const orders = readAll();
+  const target = orderNumber.trim().toUpperCase();
+  const wantEmail = email.trim().toLowerCase();
+  const order = orders.find(
+    (o) =>
+      o.orderNumber.toUpperCase() === target &&
+      o.customerEmail.trim().toLowerCase() === wantEmail,
+  );
+  if (!order) {
+    throw new ApiError('Order not found', 404, 'NOT_FOUND');
+  }
+  order.status = 'CANCELLED';
+  order.amountPaidCents = 0;
+  order.balanceDueCents = order.totalCents;
   writeAll(orders);
   return order;
 }

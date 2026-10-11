@@ -458,3 +458,235 @@ describe.skipIf(!HAS_DB)('waiver editor API (live HTTP, LSRA seed)', () => {
     });
   });
 });
+
+/**
+ * xss-02 regression — a privileged author (operator:manage) cannot smuggle an
+ * executable HTML payload into the waiver intro or a clause body. Both are
+ * rendered raw via dangerouslySetInnerHTML on the public signer, the editor
+ * preview, and the IMMUTABLE legal packet, so the payload must be stripped at the
+ * write boundary (allowlist sanitizer, same policy as activity description_html)
+ * AND never survive into a signed snapshot. Self-contained: own waiver + booking,
+ * torn down in afterAll. Pre-fix this FAILS (onerror/script survive); post-fix the
+ * stored intro/body, GET /active, and the signed snapshot all carry safe markup
+ * only.
+ */
+describe.skipIf(!HAS_DB)('xss-02: waiver intro/clause HTML is sanitized (live HTTP, LSRA seed)', () => {
+  const XSS_EMAIL = 'waiver-xss02-itest@example.com';
+  let xWaiverId = '';
+  let xClauseId = '';
+  let xTimeslotId = '';
+  let xOrderId = '';
+  let xOrderItemId = '';
+  let xCreatedStaff = false;
+
+  const PAYLOAD = '<p>Safe lead-in.</p><img src=x onerror="fetch(`/evil`)"><script>alert(1)</script>';
+
+  beforeAll(async () => {
+    const existingStaff = await adminPrisma.staffMember.findFirst({
+      where: { operator_id: OP, auth_user_id: 'dev-owner' },
+      select: { id: true },
+    });
+    if (!existingStaff) {
+      const loc = await adminPrisma.location.findFirst({
+        where: { operator_id: OP },
+        select: { id: true },
+      });
+      await adminPrisma.staffMember.create({
+        data: {
+          operator_id: OP,
+          auth_user_id: 'dev-owner',
+          name: 'Dev Owner',
+          email: 'dev-owner@example.com',
+          role: 'OWNER',
+          is_active: true,
+          locations: loc ? { create: { location_id: loc.id } } : undefined,
+        },
+      });
+      xCreatedStaff = true;
+    }
+
+    // Created LAST so GET /active + POST /sign resolve to this waiver.
+    const waiver = await adminPrisma.waiver.create({
+      data: {
+        operator_id: OP,
+        name: 'XSS02 Test Waiver',
+        template_html: '',
+        intro_html: '<p>Clean intro.</p>',
+        version: 1,
+        is_active: true,
+        clauses: {
+          create: [
+            {
+              sort_order: 0,
+              title: 'Assumption of Risk',
+              body_html: '<p>Clean risk text.</p>',
+              requires_initials: true,
+              is_required: true,
+            },
+          ],
+        },
+      },
+      include: { clauses: { orderBy: { sort_order: 'asc' } } },
+    });
+    xWaiverId = waiver.id;
+    xClauseId = waiver.clauses[0]!.id;
+
+    const rate = await adminPrisma.rate.findFirst({
+      where: {
+        operator_id: OP,
+        is_active: true,
+        internal_only: false,
+        activity: { status: 'ACTIVE', visible_online: true },
+      },
+      select: {
+        id: true,
+        activity_id: true,
+        activity: { select: { min_participants: true, max_participants: true } },
+      },
+      orderBy: { price_cents: 'asc' },
+    });
+    if (!rate) throw new Error('No public rate found in the LSRA seed — run `pnpm db:seed`.');
+
+    const db = forOperator(OP);
+    const slot = await db.timeslot.create({
+      data: {
+        operator_id: OP,
+        activity_id: rate.activity_id,
+        datetime: new Date(Date.now() + 34 * 24 * 60 * 60 * 1000),
+        capacity_total: rate.activity.max_participants,
+        capacity_booked: 0,
+        status: 'AVAILABLE',
+      },
+      select: { id: true },
+    });
+    xTimeslotId = slot.id;
+
+    await adminPrisma.customer.deleteMany({ where: { operator_id: OP, email: XSS_EMAIL } });
+    const order = await createBooking(
+      OP,
+      {
+        activityId: rate.activity_id,
+        rateId: rate.id,
+        timeslotId: xTimeslotId,
+        quantity: rate.activity.min_participants,
+        customer: { first_name: 'Xss', last_name: 'Signer', email: XSS_EMAIL },
+        participants: [],
+      },
+      { channel: 'CUSTOMER' },
+    );
+    xOrderId = order.id;
+    const item = await adminPrisma.orderItem.findFirst({
+      where: { order_id: xOrderId },
+      select: { id: true },
+    });
+    xOrderItemId = item!.id;
+  });
+
+  afterAll(async () => {
+    if (xWaiverId) {
+      await adminPrisma.waiverSignature.deleteMany({ where: { waiver_id: xWaiverId } });
+      await adminPrisma.waiver.deleteMany({ where: { id: xWaiverId } });
+    }
+    if (xOrderId) await adminPrisma.order.deleteMany({ where: { id: xOrderId } });
+    if (xTimeslotId) await adminPrisma.timeslot.deleteMany({ where: { id: xTimeslotId } });
+    await adminPrisma.customer.deleteMany({ where: { operator_id: OP, email: XSS_EMAIL } });
+    await adminPrisma.auditLog.deleteMany({
+      where: { operator_id: OP, action: 'waiver.edit', entity_id: xWaiverId },
+    });
+    if (xCreatedStaff) {
+      await adminPrisma.staffMember.deleteMany({
+        where: { operator_id: OP, auth_user_id: 'dev-owner' },
+      });
+    }
+    await adminPrisma.$disconnect();
+  });
+
+  it('strips script/on* out of introHtml on write and in GET /active', async () => {
+    const res = await app.request(`/api/waivers/manage/${xWaiverId}`, {
+      method: 'PATCH',
+      headers: staffJson,
+      body: JSON.stringify({ introHtml: PAYLOAD }),
+    });
+    expect(res.status).toBe(200);
+
+    const stored = await adminPrisma.waiver.findUnique({
+      where: { id: xWaiverId },
+      select: { intro_html: true },
+    });
+    const introLc = (stored!.intro_html ?? '').toLowerCase();
+    expect(introLc).not.toContain('onerror');
+    expect(introLc).not.toContain('<script');
+    expect(stored!.intro_html).toContain('Safe lead-in.');
+
+    const activeRes = await app.request('/api/waivers/active', {
+      headers: { 'x-operator-slug': SLUG },
+    });
+    const active = (await activeRes.json()) as { waiver: { introHtml: string } };
+    const activeLc = active.waiver.introHtml.toLowerCase();
+    expect(activeLc).not.toContain('onerror');
+    expect(activeLc).not.toContain('<script');
+  });
+
+  it('strips script/on* out of clause bodyHtml on write and in GET /active', async () => {
+    const res = await app.request(`/api/waivers/manage/clauses/${xClauseId}`, {
+      method: 'PATCH',
+      headers: staffJson,
+      body: JSON.stringify({ bodyHtml: PAYLOAD }),
+    });
+    expect(res.status).toBe(200);
+
+    const stored = await adminPrisma.waiverClause.findUnique({
+      where: { id: xClauseId },
+      select: { body_html: true },
+    });
+    const bodyLc = stored!.body_html.toLowerCase();
+    expect(bodyLc).not.toContain('onerror');
+    expect(bodyLc).not.toContain('<script');
+    expect(stored!.body_html).toContain('Safe lead-in.');
+
+    const activeRes = await app.request('/api/waivers/active', {
+      headers: { 'x-operator-slug': SLUG },
+    });
+    const active = (await activeRes.json()) as { waiver: { clauses: Array<{ bodyHtml: string }> } };
+    const activeLc = active.waiver.clauses[0]!.bodyHtml.toLowerCase();
+    expect(activeLc).not.toContain('onerror');
+    expect(activeLc).not.toContain('<script');
+  });
+
+  it('never embeds an executable payload in the immutable signed snapshot', async () => {
+    // Even if a raw payload somehow sat in the DB, buildSnapshotHtml re-sanitizes
+    // intro + clause body before freezing them into the legal record. Force a raw
+    // row directly (bypassing the write boundary) to prove render-time defense.
+    await adminPrisma.waiver.update({
+      where: { id: xWaiverId },
+      data: { intro_html: PAYLOAD },
+    });
+    await adminPrisma.waiverClause.update({
+      where: { id: xClauseId },
+      data: { body_html: PAYLOAD },
+    });
+
+    const signRes = await app.request('/api/waivers/sign', {
+      method: 'POST',
+      headers: publicJson,
+      body: JSON.stringify({
+        orderItemId: xOrderItemId,
+        signerName: 'Xss Signer',
+        signatureData: 'typed:Xss Signer',
+        isMinor: false,
+        acknowledgments: [{ clauseId: xClauseId, initials: 'XS' }],
+      }),
+    });
+    expect(signRes.status).toBe(201);
+    const signed = (await signRes.json()) as { signature: { id: string } };
+
+    const row = await adminPrisma.waiverSignature.findUnique({
+      where: { id: signed.signature.id },
+      select: { snapshot_html: true },
+    });
+    const snapLc = row!.snapshot_html!.toLowerCase();
+    expect(snapLc).not.toContain('onerror');
+    expect(snapLc).not.toContain('<script');
+    expect(row!.snapshot_html).toContain('Safe lead-in.');
+  });
+});

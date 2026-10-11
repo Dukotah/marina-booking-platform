@@ -108,6 +108,35 @@ export async function updateCustomerNotes(
   }
 }
 
+/**
+ * Flip a customer's tax-exempt status. Tenant-scoped (RLS) and gated on
+ * customer:write. When exempt, the pricing engine skips tax fees for this customer.
+ */
+export async function setCustomerTaxExempt(
+  customerId: string,
+  taxExempt: boolean,
+): Promise<ActionResult> {
+  try {
+    await requirePermission('customer:write');
+    if (!customerId) return { ok: false, error: 'Missing customer.' };
+
+    const db = await getTenantDb();
+    if (!(await assertCustomerExists(db, customerId))) {
+      return { ok: false, error: 'Customer not found.' };
+    }
+
+    await db.customer.update({
+      where: { id: customerId },
+      data: { tax_exempt: Boolean(taxExempt) },
+    });
+
+    revalidatePath(`/customers/${customerId}`);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: errorMessage(err) };
+  }
+}
+
 function errorMessage(err: unknown): string {
   if (err && typeof err === 'object' && 'status' in err && (err as { status: unknown }).status === 403) {
     return 'You do not have permission to edit customers.';

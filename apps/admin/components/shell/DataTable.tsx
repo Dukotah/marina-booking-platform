@@ -64,7 +64,7 @@ export function DataTable<T>({
   return (
     <div
       className={cn(
-        'overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm',
+        'overflow-hidden rounded-lg border border-line bg-surface shadow-sm',
         className,
       )}
     >
@@ -84,13 +84,13 @@ export function DataTable<T>({
         <table className="w-full border-collapse text-sm">
           {caption ? <caption className="sr-only">{caption}</caption> : null}
           <thead>
-            <tr className="border-b border-slate-200 bg-slate-50 text-left">
+            <tr className="border-b border-line bg-surface-muted text-left">
               {columns.map((col) => (
                 <th
                   key={col.id}
                   scope="col"
                   className={cn(
-                    'whitespace-nowrap px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500',
+                    'whitespace-nowrap px-4 py-3 text-xs font-semibold uppercase tracking-wide text-ink-muted',
                     alignClass[col.align ?? 'left'],
                     col.className,
                     col.headerClassName,
@@ -101,10 +101,10 @@ export function DataTable<T>({
               ))}
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
+          <tbody className="divide-y divide-line">
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={columns.length} className="px-4 py-12 text-center text-slate-500">
+                <td colSpan={columns.length} className="px-4 py-12 text-center text-ink-muted">
                   {emptyState ?? 'No records to display.'}
                 </td>
               </tr>
@@ -115,14 +115,14 @@ export function DataTable<T>({
                   onClick={onRowClick ? () => onRowClick(row) : undefined}
                   className={cn(
                     'transition-colors',
-                    onRowClick && 'cursor-pointer hover:bg-slate-50',
+                    onRowClick && 'cursor-pointer hover:bg-surface-muted',
                   )}
                 >
                   {columns.map((col) => (
                     <td
                       key={col.id}
                       className={cn(
-                        'whitespace-nowrap px-4 py-3 text-slate-700',
+                        'whitespace-nowrap px-4 py-3 text-ink-body',
                         alignClass[col.align ?? 'left'],
                         col.className,
                       )}

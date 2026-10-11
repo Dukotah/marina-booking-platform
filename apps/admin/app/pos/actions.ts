@@ -184,12 +184,13 @@ export async function submitSale(input: SaleInput): Promise<SaleResult> {
 
       const feeRows = await tx.fee.findMany({
         where: { operator_id: operatorId, enabled: true, activity_id: null },
-        select: { name: true, type: true, value: true },
+        select: { name: true, type: true, value: true, is_tax: true },
       });
       const fees: PricingFee[] = feeRows.map((f) => ({
         name: f.name,
         type: f.type,
         value: f.value,
+        isTax: f.is_tax,
       }));
 
       // 2. Re-validate booking lines against live catalog data (price + capacity).
@@ -248,6 +249,7 @@ export async function submitSale(input: SaleInput): Promise<SaleResult> {
               category: true,
               variant: true,
               cost_cents: true,
+              price_cents: true,
               on_hand_qty: true,
             },
           });
@@ -255,10 +257,15 @@ export async function submitSale(input: SaleInput): Promise<SaleResult> {
           if (item.on_hand_qty !== null && item.on_hand_qty < line.quantity) {
             throw new SaleError(`Not enough "${item.name}" in stock.`);
           }
+          // Default to the retail price (falling back to cost for cost-only
+          // items), but honor a valid register override sent by the operator.
+          const defaultPriceCents = item.price_cents ?? item.cost_cents;
+          const unitPriceCents =
+            line.unitPriceCents >= 0 ? line.unitPriceCents : defaultPriceCents;
           resolved.push({
             kind: 'MERCHANDISE',
             label: item.name,
-            unitPriceCents: item.cost_cents,
+            unitPriceCents,
             quantity: line.quantity,
             merchandiseId: item.id,
             merchCategory: item.category,

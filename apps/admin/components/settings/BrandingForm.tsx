@@ -10,6 +10,7 @@ export interface BrandingFormValues {
   name_external: string;
   website: string;
   phone: string;
+  review_url: string;
   brand_color: string;
   logo_dark_url: string;
   logo_light_url: string;
@@ -89,6 +90,14 @@ export function BrandingForm({ initial }: { initial: BrandingFormValues }) {
           <Field label="Phone" htmlFor="phone" error={errors.phone?.message}>
             <TextInput id="phone" type="tel" placeholder="(555) 555-5555" {...register('phone')} />
           </Field>
+          <Field
+            label="Review link"
+            htmlFor="review_url"
+            hint="Where to send guests after their trip (Google, Yelp, etc.). Leave blank to turn review requests off."
+            error={errors.review_url?.message}
+          >
+            <TextInput id="review_url" type="url" placeholder="https://" {...register('review_url')} />
+          </Field>
         </div>
       </SettingsCard>
 
@@ -106,7 +115,7 @@ export function BrandingForm({ initial }: { initial: BrandingFormValues }) {
                 onChange={(e) =>
                   setValue('brand_color', e.target.value, { shouldDirty: true, shouldValidate: true })
                 }
-                className="h-10 w-12 shrink-0 cursor-pointer rounded-lg border border-slate-300 bg-white p-1"
+                className="h-10 w-12 shrink-0 cursor-pointer rounded-lg border border-line-strong bg-surface p-1"
               />
               <TextInput
                 id="brand_color"
@@ -136,8 +145,8 @@ export function BrandingForm({ initial }: { initial: BrandingFormValues }) {
           </Field>
         </div>
 
-        <div className="mt-5 rounded-lg border border-slate-200 bg-slate-50 p-4">
-          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">Preview</p>
+        <div className="mt-5 rounded-lg border border-line bg-surface-muted p-4">
+          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-ink-muted">Preview</p>
           <div className="flex items-center gap-3">
             <button
               type="button"

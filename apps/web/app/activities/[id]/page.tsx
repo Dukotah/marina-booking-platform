@@ -332,7 +332,9 @@ export default async function ActivityDetailPage({ params, searchParams }: PageP
               </h2>
               <div
                 className="space-y-3 leading-[1.55] [&_a]:text-accent-ink [&_a]:underline [&_li]:ml-5 [&_li]:list-disc [&_ul]:space-y-1"
-                // Description is operator-authored rich text stored as sanitized HTML.
+                // Operator-authored rich text. Sanitized to a safe allowlist on write
+                // (activity schema) AND again server-side in GET /api/activities/:id
+                // before it reaches this public page — see @marina/core sanitizeHtml.
                 dangerouslySetInnerHTML={{ __html: activity.descriptionHtml }}
               />
             </div>

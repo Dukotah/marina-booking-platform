@@ -4,11 +4,13 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
   CalendarDays,
+  GanttChartSquare,
   ListChecks,
   Receipt,
   Sailboat,
   Users,
   ScanLine,
+  QrCode,
   BarChart3,
   Settings,
   ShieldCheck,
@@ -50,6 +52,8 @@ const NAV_SECTIONS: NavSection[] = [
     label: 'Run the day',
     items: [
       { label: 'Manifest', href: '/manifest', icon: ListChecks },
+      { label: 'Scan', href: '/scan', icon: QrCode },
+      { label: 'Schedule', href: '/schedule', icon: GanttChartSquare },
       { label: 'Calendar', href: '/calendar', icon: CalendarDays },
       { label: 'POS', href: '/pos', icon: ScanLine },
     ],
@@ -106,7 +110,7 @@ export function Sidebar({
   const pathname = usePathname();
 
   return (
-    <aside className="hidden w-60 shrink-0 flex-col border-r border-slate-800 bg-slate-900 text-slate-300 md:flex">
+    <aside className="hidden w-60 shrink-0 flex-col border-r border-line bg-surface text-ink-body md:flex">
       {/* The brand IS the dashboard link — one fewer nav row, same muscle memory
           as every SaaS the crew already uses. Named for what it does, not what
           it shows, so a screen reader hears the destination. */}
@@ -114,22 +118,20 @@ export function Sidebar({
         href="/"
         aria-label={`${brandName} — dashboard`}
         aria-current={pathname === '/' ? 'page' : undefined}
-        className="flex h-16 items-center gap-2 border-b border-slate-800 px-5 transition-colors hover:bg-slate-800/60 focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-sky-400"
+        className="flex h-16 items-center gap-2 border-b border-line px-5 transition-colors hover:bg-surface-muted focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent"
       >
         {logoUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={logoUrl} alt={brandName} className="h-8 w-auto object-contain" />
         ) : (
-          <span className="truncate text-lg font-semibold text-white">{brandName}</span>
+          <span className="truncate text-lg font-semibold text-ink">{brandName}</span>
         )}
       </Link>
 
       <nav className="flex-1 space-y-5 overflow-y-auto p-3">
         {NAV_SECTIONS.map((section) => (
           <div key={section.label}>
-            {/* slate-400, not slate-500: on the dark rail slate-500 is 3.75:1,
-                under the 4.5:1 floor (1.4.3) — same rule as the footer below. */}
-            <h2 className="px-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+            <h2 className="px-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-ink-muted">
               {section.label}
             </h2>
             <div className="space-y-1">
@@ -142,13 +144,17 @@ export function Sidebar({
                     href={item.href}
                     aria-current={active ? 'page' : undefined}
                     className={cn(
-                      'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+                      // 44px tap target (min-h-11), dad-simple.
+                      'flex min-h-11 items-center gap-3 rounded-lg px-3 text-sm font-medium transition-colors',
                       active
-                        ? 'bg-slate-800 text-white'
-                        : 'text-slate-400 hover:bg-slate-800/60 hover:text-white',
+                        ? 'bg-accent-tint text-accent-ink'
+                        : 'text-ink-body hover:bg-surface-muted hover:text-ink',
                     )}
                   >
-                    <Icon className="h-5 w-5 shrink-0" aria-hidden />
+                    <Icon
+                      className={cn('h-5 w-5 shrink-0', active ? 'text-accent' : 'text-ink-muted')}
+                      aria-hidden
+                    />
                     <span>{item.label}</span>
                   </Link>
                 );
@@ -159,10 +165,10 @@ export function Sidebar({
       </nav>
 
       {showDevConsole && (
-        <div className="border-t border-slate-800 p-3">
+        <div className="border-t border-line p-3">
           <Link
             href="/dev"
-            className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-amber-300 transition-colors hover:bg-amber-500/10"
+            className="flex min-h-11 items-center gap-3 rounded-lg px-3 text-sm font-medium text-amber-700 transition-colors hover:bg-amber-50"
           >
             <FlaskConical className="h-5 w-5 shrink-0" aria-hidden />
             <span>Local Console</span>
@@ -171,10 +177,10 @@ export function Sidebar({
       )}
 
       {showPlatformLink && (
-        <div className="border-t border-slate-800 p-3">
+        <div className="border-t border-line p-3">
           <Link
             href="/platform"
-            className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-emerald-300 transition-colors hover:bg-emerald-500/10"
+            className="flex min-h-11 items-center gap-3 rounded-lg px-3 text-sm font-medium text-emerald-700 transition-colors hover:bg-emerald-50"
           >
             <ShieldCheck className="h-5 w-5 shrink-0" aria-hidden />
             <span>Platform</span>
@@ -182,10 +188,7 @@ export function Sidebar({
         </div>
       )}
 
-      {/* slate-400, not slate-500: on the dark rail (bg-slate-900) slate-500 is
-          3.75:1, under the 4.5:1 floor. slate-400 is 6.9:1 there. The rail inverts,
-          so the safe grey inverts with it. (1.4.3) */}
-      <div className="border-t border-slate-800 p-4 text-xs text-slate-400">
+      <div className="border-t border-line p-4 text-xs text-ink-muted">
         &copy; {new Date().getFullYear()} {brandName}
       </div>
     </aside>

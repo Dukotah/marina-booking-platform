@@ -26,10 +26,23 @@ import { getTenantDb, requirePermission } from '../../lib/session';
  * server-side) and reconciled (create / update / delete) against what exists.
  */
 
+/** A per-head rate class submitted with a rate. `id` present => existing row. */
+const wizardRateClassSchema = z.object({
+  id: z.string().min(1).optional(),
+  kind: z.enum(['ADULT', 'CHILD', 'INFANT', 'YOUTH', 'SENIOR', 'OTHER']).default('OTHER'),
+  label: z.string().trim().min(1, 'Label is required').max(80),
+  /** Signed delta on the rate base, integer cents (may be negative). */
+  price_modifier_cents: z.number().int(),
+  is_active: z.boolean().default(true),
+});
+
 /** A rate as submitted by the wizard. `id` present => existing row to update. */
 const wizardRateSchema = rateInputSchema
   .omit({ activity_id: true })
-  .extend({ id: z.string().min(1).optional() });
+  .extend({
+    id: z.string().min(1).optional(),
+    rate_classes: z.array(wizardRateClassSchema).default([]),
+  });
 
 /** The full wizard payload: activity fields + its rates. */
 const wizardSchema = z.object({
@@ -133,6 +146,20 @@ export async function createActivity(input: WizardInput): Promise<ActionResult> 
           internal_only: r.internal_only,
           is_from_price: r.is_from_price,
           sort_index: r.sort_index || i,
+          // Per-head rate classes nested under the rate. operator_id is carried
+          // explicitly (RLS + the tenant-composite FK both require it); the parent
+          // rate's id is supplied by Prisma via the nested write.
+          rate_classes: {
+            create: r.rate_classes.map((rc, j) => ({
+              id: createId(),
+              operator_id: operatorId,
+              kind: rc.kind,
+              label: rc.label,
+              price_modifier_cents: rc.price_modifier_cents,
+              is_active: rc.is_active,
+              sort_index: j,
+            })),
+          },
         })),
       },
     },
@@ -162,11 +189,18 @@ export async function updateActivity(
   // Confirm the activity exists and belongs to this operator before mutating.
   const existing = await db.activity.findFirst({
     where: { id: activityId, operator_id: operatorId },
-    select: { id: true, rates: { select: { id: true } } },
+    select: {
+      id: true,
+      rates: { select: { id: true, rate_classes: { select: { id: true } } } },
+    },
   });
   if (!existing) {
     return { ok: false, message: 'Activity not found.' };
   }
+  // Existing rate-class ids per rate, for the nested reconcile below.
+  const existingClassIdsByRate = new Map<string, Set<string>>(
+    existing.rates.map((r) => [r.id, new Set(r.rate_classes.map((c) => c.id))]),
+  );
 
   if (activity.location_id) {
     const loc = await db.location.findFirst({
@@ -210,20 +244,57 @@ export async function updateActivity(
         // Update rates that already existed (scoped by id within this activity).
         update: rates
           .filter((r) => r.id && existingRateIds.has(r.id))
-          .map((r) => ({
-            where: { id: r.id! },
-            data: {
-              name_internal: r.name_internal,
-              name_external: r.name_external,
-              price_cents: r.price_cents,
-              duration_minutes: r.duration_minutes,
-              is_active: r.is_active,
-              online_only: r.online_only,
-              internal_only: r.internal_only,
-              is_from_price: r.is_from_price,
-              sort_index: r.sort_index,
-            },
-          })),
+          .map((r) => {
+            // Reconcile this rate's per-head classes the same way rates are:
+            // delete only the ones the user removed, update existing by id, create
+            // new. A RESTRICT FK from OrderItem.rate_class_id means a class already
+            // sold on an order can't be hard-deleted — so we never blanket-replace;
+            // the user deactivates (is_active=false) such a class instead.
+            const existingClassIds = existingClassIdsByRate.get(r.id!) ?? new Set<string>();
+            const submittedClassIds = new Set(
+              r.rate_classes.map((c) => c.id).filter((id): id is string => Boolean(id)),
+            );
+            const classesToDelete = [...existingClassIds].filter((id) => !submittedClassIds.has(id));
+            return {
+              where: { id: r.id! },
+              data: {
+                name_internal: r.name_internal,
+                name_external: r.name_external,
+                price_cents: r.price_cents,
+                duration_minutes: r.duration_minutes,
+                is_active: r.is_active,
+                online_only: r.online_only,
+                internal_only: r.internal_only,
+                is_from_price: r.is_from_price,
+                sort_index: r.sort_index,
+                rate_classes: {
+                  deleteMany: classesToDelete.length ? { id: { in: classesToDelete } } : undefined,
+                  update: r.rate_classes
+                    .filter((c) => c.id && existingClassIds.has(c.id))
+                    .map((c) => ({
+                      where: { id: c.id! },
+                      data: {
+                        kind: c.kind,
+                        label: c.label,
+                        price_modifier_cents: c.price_modifier_cents,
+                        is_active: c.is_active,
+                      },
+                    })),
+                  create: r.rate_classes
+                    .filter((c) => !c.id)
+                    .map((c, j) => ({
+                      id: createId(),
+                      operator_id: operatorId,
+                      kind: c.kind,
+                      label: c.label,
+                      price_modifier_cents: c.price_modifier_cents,
+                      is_active: c.is_active,
+                      sort_index: j,
+                    })),
+                },
+              },
+            };
+          }),
         // Create brand-new rates.
         create: rates
           .filter((r) => !r.id)
@@ -239,6 +310,17 @@ export async function updateActivity(
             internal_only: r.internal_only,
             is_from_price: r.is_from_price,
             sort_index: r.sort_index || i,
+            rate_classes: {
+              create: r.rate_classes.map((c, j) => ({
+                id: createId(),
+                operator_id: operatorId,
+                kind: c.kind,
+                label: c.label,
+                price_modifier_cents: c.price_modifier_cents,
+                is_active: c.is_active,
+                sort_index: j,
+              })),
+            },
           })),
       },
     },

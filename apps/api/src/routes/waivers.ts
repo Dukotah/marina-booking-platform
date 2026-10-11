@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { z } from 'zod';
 import { assertPermission } from '@marina/auth';
+import { sanitizeHtml } from '@marina/core';
 import type { Env } from '../context.js';
 import { requireStaff } from '../middleware/auth.js';
 import { rateLimit } from '../middleware/rate-limit.js';
@@ -279,15 +280,33 @@ waivers.get('/', requireStaff, async (c) => {
 /** Body for PATCH /manage/:waiverId. */
 const updateWaiverSchema = z.object({
   name: z.string().trim().min(1).max(200).optional(),
-  /** Preamble HTML shown above the clause list; empty string clears it. */
-  introHtml: z.string().max(50_000).optional(),
+  /**
+   * Preamble HTML shown above the clause list; empty string clears it. Rendered via
+   * dangerouslySetInnerHTML on the public signer, the editor preview, and the
+   * immutable legal packet, so sanitize to the allowlist at the write boundary
+   * (same policy as activity description_html) — a stored payload can never carry
+   * <script>, on* handlers or javascript:/data: URLs to begin with.
+   */
+  introHtml: z
+    .string()
+    .max(50_000)
+    .transform((v) => sanitizeHtml(v))
+    .optional(),
   requiresMinorSignature: z.boolean().optional(),
 });
 
 /** Body for creating a clause. */
 const createClauseSchema = z.object({
   title: z.string().trim().min(1, 'title is required').max(200),
-  bodyHtml: z.string().trim().min(1, 'bodyHtml is required').max(50_000),
+  // Clause body is injected via dangerouslySetInnerHTML into the same three
+  // surfaces as introHtml; sanitize at the write boundary (min length checked on
+  // the raw input before the allowlist pass strips any disallowed markup).
+  bodyHtml: z
+    .string()
+    .trim()
+    .min(1, 'bodyHtml is required')
+    .max(50_000)
+    .transform((v) => sanitizeHtml(v)),
   requiresInitials: z.boolean().default(true),
   isRequired: z.boolean().default(true),
 });
@@ -295,7 +314,13 @@ const createClauseSchema = z.object({
 /** Body for editing a clause — same fields, all optional. */
 const updateClauseSchema = z.object({
   title: z.string().trim().min(1).max(200).optional(),
-  bodyHtml: z.string().trim().min(1).max(50_000).optional(),
+  bodyHtml: z
+    .string()
+    .trim()
+    .min(1)
+    .max(50_000)
+    .transform((v) => sanitizeHtml(v))
+    .optional(),
   requiresInitials: z.boolean().optional(),
   isRequired: z.boolean().optional(),
 });

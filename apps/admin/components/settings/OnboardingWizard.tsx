@@ -171,7 +171,7 @@ export function OnboardingWizard({ defaults }: { defaults: OnboardingDefaults })
     <div className="mx-auto w-full max-w-2xl">
       <Stepper step={step} />
 
-      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+      <div className="rounded-lg border border-line bg-surface p-6 shadow-sm">
         {step === 0 ? (
           <div className="space-y-5">
             <Header
@@ -194,7 +194,7 @@ export function OnboardingWizard({ defaults }: { defaults: OnboardingDefaults })
                     aria-label="Pick brand color"
                     value={validHex ? state.brand.brand_color : '#0ea5e9'}
                     onChange={(e) => setBrand({ brand_color: e.target.value })}
-                    className="h-10 w-12 shrink-0 cursor-pointer rounded-lg border border-slate-300 bg-white p-1"
+                    className="h-10 w-12 shrink-0 cursor-pointer rounded-lg border border-line-strong bg-surface p-1"
                   />
                   <TextInput
                     className="font-mono"
@@ -314,17 +314,17 @@ export function OnboardingWizard({ defaults }: { defaults: OnboardingDefaults })
               <ReviewRow label="Brand">
                 <span className="inline-flex items-center gap-2">
                   <span
-                    className="h-4 w-4 rounded-full border border-slate-300"
+                    className="h-4 w-4 rounded-full border border-line-strong"
                     style={{ backgroundColor: validHex ? state.brand.brand_color : '#e2e8f0' }}
                     aria-hidden
                   />
-                  <span className="font-medium text-slate-900">{state.brand.name_external || '—'}</span>
+                  <span className="font-medium text-ink">{state.brand.name_external || '—'}</span>
                 </span>
               </ReviewRow>
               <ReviewRow label="Location">
-                <span className="font-medium text-slate-900">{state.location.name || '—'}</span>
+                <span className="font-medium text-ink">{state.location.name || '—'}</span>
                 {state.location.city ? (
-                  <span className="text-slate-500">
+                  <span className="text-ink-muted">
                     {' '}
                     · {[state.location.city, state.location.state].filter(Boolean).join(', ')}
                   </span>
@@ -335,9 +335,9 @@ export function OnboardingWizard({ defaults }: { defaults: OnboardingDefaults })
                   {state.activities
                     .filter((a) => a.name_external.trim())
                     .map((a, i) => (
-                      <li key={i} className="text-slate-900">
+                      <li key={i} className="text-ink">
                         {a.name_external}{' '}
-                        <span className="text-xs text-slate-400">
+                        <span className="text-xs text-ink-muted">
                           ({CATEGORY_OPTIONS.find((c) => c.value === a.category)?.label})
                         </span>
                       </li>
@@ -349,7 +349,7 @@ export function OnboardingWizard({ defaults }: { defaults: OnboardingDefaults })
           </div>
         ) : null}
 
-        <div className="mt-8 flex items-center justify-between border-t border-slate-100 pt-5">
+        <div className="mt-8 flex items-center justify-between border-t border-line pt-5">
           <SecondaryButton type="button" onClick={goBack} disabled={step === 0 || isPending}>
             <ChevronLeft className="h-4 w-4" aria-hidden /> Back
           </SecondaryButton>
@@ -382,8 +382,8 @@ function Stepper({ step }: { step: number }) {
                 done
                   ? 'bg-emerald-500 text-white'
                   : active
-                    ? 'bg-slate-900 text-white'
-                    : 'bg-slate-200 text-slate-500',
+                    ? 'bg-accent text-white'
+                    : 'bg-surface-muted text-ink-muted',
               ].join(' ')}
             >
               {done ? <Check className="h-4 w-4" aria-hidden /> : i + 1}
@@ -391,12 +391,12 @@ function Stepper({ step }: { step: number }) {
             <span
               className={[
                 'hidden text-sm font-medium sm:inline',
-                active ? 'text-slate-900' : 'text-slate-400',
+                active ? 'text-ink' : 'text-ink-muted',
               ].join(' ')}
             >
               {label}
             </span>
-            {i < STEPS.length - 1 ? <span className="h-px flex-1 bg-slate-200" aria-hidden /> : null}
+            {i < STEPS.length - 1 ? <span className="h-px flex-1 bg-line" aria-hidden /> : null}
           </li>
         );
       })}
@@ -407,8 +407,8 @@ function Stepper({ step }: { step: number }) {
 function Header({ title, subtitle }: { title: string; subtitle: string }) {
   return (
     <div>
-      <h2 className="text-lg font-semibold text-slate-900">{title}</h2>
-      <p className="mt-1 text-sm text-slate-500">{subtitle}</p>
+      <h2 className="text-lg font-semibold text-ink">{title}</h2>
+      <p className="mt-1 text-sm text-ink-muted">{subtitle}</p>
     </div>
   );
 }
@@ -416,7 +416,7 @@ function Header({ title, subtitle }: { title: string; subtitle: string }) {
 function ReviewRow({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex gap-4">
-      <dt className="w-24 shrink-0 text-xs font-medium uppercase tracking-wide text-slate-400">{label}</dt>
+      <dt className="w-24 shrink-0 text-xs font-medium uppercase tracking-wide text-ink-muted">{label}</dt>
       <dd className="min-w-0">{children}</dd>
     </div>
   );

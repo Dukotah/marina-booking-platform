@@ -33,7 +33,7 @@ export default async function PosPage() {
     if (err instanceof AuthorizationError) {
       return (
         <AdminShell>
-          <div className="rounded-xl border border-amber-200 bg-amber-50 p-8 text-center">
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-8 text-center">
             <h1 className="text-lg font-semibold text-amber-900">Register access required</h1>
             <p className="mt-1 text-sm text-amber-800">
               Your role doesn’t include permission to operate the point of sale. Ask an
@@ -106,12 +106,13 @@ export default async function PosPage() {
         name: true,
         category: true,
         cost_cents: true,
+        price_cents: true,
         on_hand_qty: true,
       },
     }),
     db.fee.findMany({
       where: { operator_id: operatorId, enabled: true, activity_id: null },
-      select: { name: true, type: true, value: true },
+      select: { name: true, type: true, value: true, is_tax: true },
     }),
     db.customer.findFirst({
       where: { operator_id: operatorId, email: 'walk-in@register.local' },
@@ -147,11 +148,11 @@ export default async function PosPage() {
     id: m.id,
     name: m.name,
     category: m.category,
-    priceCents: m.cost_cents,
+    priceCents: m.price_cents ?? m.cost_cents,
     onHandQty: m.on_hand_qty,
   }));
 
-  const fees: PosFee[] = feeRows.map((f) => ({ name: f.name, type: f.type, value: f.value }));
+  const fees: PosFee[] = feeRows.map((f) => ({ name: f.name, type: f.type, value: f.value, isTax: f.is_tax }));
 
   const config: PosConfig = {
     operatorName: operator?.name_external || operator?.name_internal || 'Register',

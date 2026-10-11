@@ -13,10 +13,13 @@ import {
 import { formatUSD } from '../../lib/format';
 import type { RevenueDayPoint } from './queries';
 
+/** The single accent (teal-600) — charts use the one accent, never a second color. */
+const ACCENT = 'rgb(var(--accent))';
+
 export interface RevenueReportChartProps {
   data: RevenueDayPoint[];
-  /** Operator brand color (hex) — keeps the chart white-label. */
-  brandColor: string;
+  /** Accepted for call-site compatibility; the series renders on the teal accent. */
+  brandColor?: string;
 }
 
 interface ChartRow {
@@ -51,10 +54,10 @@ function ChartTooltip({
   const row = payload[0]?.payload;
   if (!row) return null;
   return (
-    <div className="rounded-md border border-slate-200 bg-white px-3 py-2 text-xs shadow-md">
-      <div className="font-medium text-slate-900">{row.label}</div>
-      <div className="mt-0.5 text-slate-600">{formatUSD(row.cents)}</div>
-      <div className="text-slate-400">
+    <div className="rounded-lg border border-line bg-surface px-3 py-2 text-xs shadow-sm">
+      <div className="font-medium text-ink">{row.label}</div>
+      <div className="mt-0.5 text-ink-body">{formatUSD(row.cents)}</div>
+      <div className="text-ink-muted">
         {row.orders} order{row.orders === 1 ? '' : 's'}
       </div>
     </div>
@@ -66,7 +69,7 @@ function ChartTooltip({
  * brand color so the report stays white-label. With no data the series is a flat
  * run of zeros and the chart renders an empty baseline rather than breaking.
  */
-export function RevenueReportChart({ data, brandColor }: RevenueReportChartProps) {
+export function RevenueReportChart({ data }: RevenueReportChartProps) {
   const rows = useMemo<ChartRow[]>(
     () =>
       data.map((p) => ({
@@ -101,11 +104,11 @@ export function RevenueReportChart({ data, brandColor }: RevenueReportChartProps
           />
           <Tooltip
             content={<ChartTooltip />}
-            cursor={{ fill: brandColor, fillOpacity: 0.06 }}
+            cursor={{ fill: ACCENT, fillOpacity: 0.06 }}
           />
           <Bar
             dataKey="dollars"
-            fill={brandColor}
+            fill={ACCENT}
             radius={[4, 4, 0, 0]}
             maxBarSize={48}
             isAnimationActive={false}

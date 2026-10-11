@@ -20,6 +20,7 @@
  */
 
 import { forOperator, withTenant, type Prisma } from '@marina/database';
+import { sanitizeHtml } from '@marina/core';
 
 /** A typed, user-facing failure that route handlers map to a clean HTTP status. */
 export class WaiverError extends Error {
@@ -177,12 +178,19 @@ function buildSnapshotHtml(args: {
             initials ? esc(initials) : '—'
           }</p>`
         : '';
-      return `<section class="waiver-clause"><h3>${esc(c.title)}</h3>${c.bodyHtml}${initialsLine}</section>`;
+      // Sanitize clause bodyHtml before embedding, consistent with the esc()
+      // applied to signer-supplied fields. Operator-authored HTML is allowlist-
+      // sanitized at the write boundary (routes/waivers.ts); this is defense in
+      // depth so even a pre-existing unsanitized row can't carry an executable
+      // payload into the immutable snapshot or any of its render surfaces.
+      return `<section class="waiver-clause"><h3>${esc(c.title)}</h3>${sanitizeHtml(
+        c.bodyHtml,
+      )}${initialsLine}</section>`;
     })
     .join('\n');
 
   // Fall back to the legacy single-blob body only if there are no structured clauses.
-  const intro = args.introHtml ?? '';
+  const intro = args.introHtml ? sanitizeHtml(args.introHtml) : '';
   const body = args.clauses.length > 0 ? clauseBlocks : args.templateHtml;
 
   const dobLine = args.signerDob

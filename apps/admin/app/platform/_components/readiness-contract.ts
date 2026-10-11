@@ -35,28 +35,29 @@ export interface StatusMeta {
 }
 
 /**
- * Colours are AA against the slate-950/900 platform chrome (the 300-weight text
- * tokens this app already uses for status pills — see the client list page).
+ * Semantic tones on the Clean SaaS light system — muted tinted chips that match
+ * the shared Badge tones (success=emerald, waiting=amber, owed=rose, neutral=slate).
+ * Status is never carried by colour alone: the word + icon ride along.
  */
 export const STATUS_META: Record<ReadinessStatus, StatusMeta> = {
   OK: {
     word: 'Done',
-    pill: 'border border-emerald-500/40 bg-emerald-500/10 text-emerald-300',
-    icon: 'text-emerald-300',
+    pill: 'bg-emerald-50 text-emerald-700',
+    icon: 'text-emerald-600',
   },
   WARN: {
     word: 'Needs a look',
-    pill: 'border border-amber-500/40 bg-amber-500/10 text-amber-200',
-    icon: 'text-amber-200',
+    pill: 'bg-amber-50 text-amber-700',
+    icon: 'text-amber-600',
   },
   BLOCKED: {
     word: 'Blocked',
-    pill: 'border border-rose-500/40 bg-rose-500/10 text-rose-300',
-    icon: 'text-rose-300',
+    pill: 'bg-rose-50 text-rose-700',
+    icon: 'text-rose-600',
   },
   NOT_APPLICABLE: {
     word: 'Not needed',
-    pill: 'border border-slate-700 bg-slate-800/60 text-slate-300',
+    pill: 'bg-slate-100 text-slate-500',
     icon: 'text-slate-400',
   },
 };

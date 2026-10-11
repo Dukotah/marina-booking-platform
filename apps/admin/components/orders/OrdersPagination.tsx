@@ -2,7 +2,7 @@
 
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { cn } from '../../lib/cn';
+import { Button } from '../ui';
 
 /**
  * URL-driven pager for the orders list. Page number lives in the `page` query
@@ -40,50 +40,40 @@ export function OrdersPagination({
 
   return (
     <div className="mt-4 flex items-center justify-between gap-4">
-      {/* slate-600, not slate-500: the pager sits on the page background
-          (bg-slate-100), where slate-500 measures 4.34:1. (1.4.3) */}
-      <p className="text-sm text-slate-600">
+      <p className="text-sm text-ink-body tabular-nums">
         {total === 0 ? (
           'No orders'
         ) : (
           <>
-            Showing <span className="font-medium text-slate-700">{firstShown}</span>–
-            <span className="font-medium text-slate-700">{lastShown}</span> of{' '}
-            <span className="font-medium text-slate-700">{total.toLocaleString('en-US')}</span>
+            Showing <span className="font-medium text-ink">{firstShown}</span>–
+            <span className="font-medium text-ink">{lastShown}</span> of{' '}
+            <span className="font-medium text-ink">{total.toLocaleString('en-US')}</span>
           </>
         )}
       </p>
 
-      <div className="flex items-center gap-1">
-        <button
-          type="button"
+      <div className="flex items-center gap-2">
+        <Button
+          variant="secondary"
           onClick={() => goTo(safePage - 1)}
           disabled={!canPrev}
           aria-label="Previous page"
-          className={cn(
-            'inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700',
-            canPrev ? 'hover:bg-slate-50' : 'cursor-not-allowed opacity-40',
-          )}
         >
           <ChevronLeft className="h-4 w-4" aria-hidden />
           Prev
-        </button>
-        <span className="px-2 text-sm text-slate-600">
+        </Button>
+        <span className="px-1 text-sm text-ink-body tabular-nums">
           Page {safePage} of {totalPages}
         </span>
-        <button
-          type="button"
+        <Button
+          variant="secondary"
           onClick={() => goTo(safePage + 1)}
           disabled={!canNext}
           aria-label="Next page"
-          className={cn(
-            'inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700',
-            canNext ? 'hover:bg-slate-50' : 'cursor-not-allowed opacity-40',
-          )}
         >
           Next
           <ChevronRight className="h-4 w-4" aria-hidden />
-        </button>
+        </Button>
       </div>
     </div>
   );

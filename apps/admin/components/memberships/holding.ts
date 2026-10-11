@@ -22,13 +22,14 @@ export interface HoldingState {
 }
 
 const BADGE: Record<HoldingStatusLabel, string> = {
-  // 700-weight text on a 100-weight tint: every pair here measures above 4.5:1,
-  // which the 600 variants on the same tints do not reliably do.
-  Active: 'bg-emerald-100 text-emerald-800',
-  Scheduled: 'bg-sky-100 text-sky-800',
-  Expired: 'bg-slate-200 text-slate-700',
-  'Used up': 'bg-amber-100 text-amber-900',
-  Cancelled: 'bg-red-100 text-red-800',
+  // 700/800-weight text on a 50/100-weight tint: every pair clears 4.5:1 on the
+  // white row. Tones follow the app status law — success (emerald), waiting
+  // (amber), cancelled/neutral (slate); scheduled is quiet slate, never sky.
+  Active: 'bg-emerald-50 text-emerald-700',
+  Scheduled: 'bg-slate-100 text-slate-700',
+  Expired: 'bg-slate-100 text-slate-500',
+  'Used up': 'bg-amber-50 text-amber-700',
+  Cancelled: 'bg-rose-50 text-rose-700',
 };
 
 export function holdingState(

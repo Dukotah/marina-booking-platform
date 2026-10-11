@@ -80,7 +80,9 @@ export default async function BookingsPage({
   let order: OrderSummary | null = null;
   let networkError = false;
   try {
-    order = await getOrder(orderNumber);
+    // Email is the identity proof; the API gates on it and 404s on a mismatch, so
+    // a non-matching email never gets the order's PII back in the first place.
+    order = await getOrder(orderNumber, email);
   } catch (err) {
     if (isApiError(err) && err.status === 0) networkError = true;
     order = null;
@@ -90,8 +92,7 @@ export default async function BookingsPage({
     return <NotAuthorized reason="network" />;
   }
 
-  // Re-verify email server-side; never reveal whether the order exists otherwise.
-  if (!order || normalizeEmail(order.customerEmail) !== email) {
+  if (!order) {
     return <NotAuthorized reason="mismatch" />;
   }
 
@@ -145,6 +146,7 @@ export default async function BookingsPage({
       <ManagePanelSection
         orderNumber={order.orderNumber}
         operatorName={brand.name}
+        operatorPhone={brand.phone}
         changeable={changeable}
         email={email}
         rescheduleItems={rescheduleItems}
@@ -207,6 +209,7 @@ export default async function BookingsPage({
 function ManagePanelSection(props: {
   orderNumber: string;
   operatorName: string;
+  operatorPhone: string | null;
   changeable: boolean;
   email: string;
   rescheduleItems: RescheduleItem[];
@@ -218,6 +221,7 @@ function ManagePanelSection(props: {
         orderNumber={props.orderNumber}
         operatorName={props.operatorName}
         contactEmail={operatorContactEmail()}
+        operatorPhone={props.operatorPhone}
         changeable={props.changeable}
         email={props.email}
         rescheduleItems={props.rescheduleItems}

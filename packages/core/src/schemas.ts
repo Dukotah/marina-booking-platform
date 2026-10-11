@@ -4,6 +4,7 @@
  * sync with the Prisma schema where they mirror DB rows.
  */
 import { z } from 'zod';
+import { sanitizeHtml } from './html-sanitize.js';
 
 /** Activity categories — mirrors the Prisma `ActivityCategory` enum. */
 export const ACTIVITY_CATEGORIES = [
@@ -66,9 +67,43 @@ export const bookingInputSchema = z.object({
   quantity: z.number().int().positive('quantity must be at least 1'),
   customer: customerInputSchema,
   participants: z.array(participantInfoSchema).default([]),
+  /**
+   * Per-head rate-class breakdown: how many guests fall in each class (adult /
+   * child / …). ONLY the class id + a non-negative count are accepted — NEVER a
+   * price. When present and totalling >= 1, this drives the booking: the server
+   * re-reads the rate's class catalog, prices each class server-side (base +
+   * modifier, clamped >= 0), and the sum of counts becomes the effective quantity
+   * (so `quantity` above is ignored). Omitted/empty => the single-quantity path
+   * (one default "Guest" class at the base price). An unknown/inactive class id is
+   * refused by the server; see services/booking.ts.
+   */
+  rateClasses: z
+    .array(
+      z.object({
+        classId: z.string().min(1),
+        count: z.number().int().nonnegative(),
+      }),
+    )
+    .optional(),
   promoCode: z.string().trim().min(1).max(64).optional(),
   /** Optional gratuity in integer cents. */
   tipCents: z.number().int().nonnegative().optional(),
+  /**
+   * Optional checkout add-ons the guest selected (life jackets, coolers, fuel…).
+   * Only the add-on id and a requested quantity are accepted — NEVER a price. The
+   * booking path re-reads each add-on from the catalog and re-derives the price and
+   * the resolved quantity server-side, so a tampered or stale client price can never
+   * become money. An unknown/sold-out selection is dropped (or, for another
+   * activity's add-on, refused) by the server; see services/addons.ts.
+   */
+  addOns: z
+    .array(
+      z.object({
+        addOnId: z.string().min(1),
+        quantity: z.number().int().nonnegative(),
+      }),
+    )
+    .optional(),
   /**
    * Signed price quote from POST /api/pricing-rules/quote. Pins the price the guest
    * was actually shown, so a rule changing mid-checkout cannot charge them a number
@@ -117,7 +152,15 @@ export const activityInputSchema = z.object({
   visible_register: z.boolean().default(true),
   min_participants: z.number().int().positive().default(1),
   max_participants: z.number().int().positive().default(10),
-  description_html: z.string().max(20000).optional(),
+  // Operator-authored rich text that is injected via dangerouslySetInnerHTML onto
+  // the PUBLIC, unauthenticated booking page and the third-party embed widget.
+  // Sanitize at the write boundary (not just at render) so a stored payload can
+  // never carry <script>, on* handlers or javascript:/data: URLs to begin with.
+  description_html: z
+    .string()
+    .max(20000)
+    .transform((v) => sanitizeHtml(v))
+    .optional(),
   photo_urls: z.array(z.string().url()).default([]),
   color: z
     .string()

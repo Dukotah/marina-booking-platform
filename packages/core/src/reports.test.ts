@@ -5,8 +5,11 @@ import {
   resolveDateBasis,
   rollUpByLocation,
   summarizePayments,
+  aggregateRefunds,
+  REFUND_REASON_NONE,
   type LocationMetricRow,
   type PaymentRow,
+  type RefundRow,
 } from './reports.js';
 
 describe('resolveDateBasis', () => {
@@ -157,5 +160,54 @@ describe('rollUpByLocation', () => {
     ]);
     expect(rollup.rows[0]!.locationId).toBeNull();
     expect(rollup.rows[0]!.occupancy).toBe(0);
+  });
+});
+
+describe('aggregateRefunds', () => {
+  const rows: RefundRow[] = [
+    { reason: 'Weather', amountCents: 5000, activityId: 'a1', activityName: 'Kayak' },
+    { reason: 'weather', amountCents: 2500, activityId: 'a1', activityName: 'Kayak' },
+    { reason: 'Customer request', amountCents: 3000, activityId: 'a2', activityName: 'Pontoon' },
+    { reason: '  ', amountCents: 1000, activityId: null, activityName: 'Unassigned' },
+    { reason: null, amountCents: 500, activityId: null, activityName: 'Unassigned' },
+  ];
+
+  it('groups by exact (trimmed, case-sensitive) reason', () => {
+    const r = aggregateRefunds(rows);
+    const weather = r.byReason.find((x) => x.reason === 'Weather');
+    const weatherLower = r.byReason.find((x) => x.reason === 'weather');
+    expect(weather).toEqual({ reason: 'Weather', amountCents: 5000, count: 1 });
+    expect(weatherLower).toEqual({ reason: 'weather', amountCents: 2500, count: 1 });
+  });
+
+  it('buckets blank/null reasons under the NONE label and keeps them', () => {
+    const r = aggregateRefunds(rows);
+    const none = r.byReason.find((x) => x.reason === REFUND_REASON_NONE);
+    expect(none).toEqual({ reason: REFUND_REASON_NONE, amountCents: 1500, count: 2 });
+  });
+
+  it('groups by activity (null folded into one bucket)', () => {
+    const r = aggregateRefunds(rows);
+    const unassigned = r.byActivity.find((x) => x.activityId === null);
+    expect(unassigned).toEqual({
+      activityId: null,
+      activityName: 'Unassigned',
+      amountCents: 1500,
+      count: 2,
+    });
+  });
+
+  it('computes grand totals and sorts by amount desc', () => {
+    const r = aggregateRefunds(rows);
+    expect(r.totals).toEqual({ amountCents: 12000, count: 5 });
+    expect(r.byReason[0]!.amountCents).toBe(5000);
+    expect(r.byActivity[0]!.amountCents).toBe(7500);
+  });
+
+  it('returns empty breakdowns and zero totals for no rows', () => {
+    const r = aggregateRefunds([]);
+    expect(r.byReason).toEqual([]);
+    expect(r.byActivity).toEqual([]);
+    expect(r.totals).toEqual({ amountCents: 0, count: 0 });
   });
 });

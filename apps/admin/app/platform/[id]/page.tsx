@@ -79,7 +79,7 @@ export default async function ClientCockpitPage({ params }: { params: { id: stri
     <div className="space-y-8">
       <Link
         href="/platform"
-        className="inline-flex items-center gap-1.5 text-sm text-slate-400 hover:text-slate-200"
+        className="inline-flex items-center gap-1.5 text-sm text-ink-muted transition-colors hover:text-ink-body"
       >
         <ArrowLeft className="h-4 w-4" aria-hidden /> All clients
       </Link>
@@ -87,12 +87,12 @@ export default async function ClientCockpitPage({ params }: { params: { id: stri
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <div className="flex flex-wrap items-center gap-3">
-            <h1 className="text-2xl font-bold">{op.name_external}</h1>
-            <span className="rounded-full border border-slate-700 bg-slate-900 px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide text-slate-200">
+            <h1 className="text-2xl font-bold text-ink">{op.name_external}</h1>
+            <span className="rounded-full border border-line bg-surface px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide text-ink-body">
               {STAGE_LABEL[stage]}
             </span>
           </div>
-          <p className="mt-1 text-sm text-slate-400">
+          <p className="mt-1 text-sm text-ink-body">
             {op.slug}
             {readiness && (
               <>
@@ -110,25 +110,25 @@ export default async function ClientCockpitPage({ params }: { params: { id: stri
       {(blocker || targetOverdue) && (
         <div className="space-y-3">
           {blocker && (
-            <div className="flex items-start gap-3 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3">
-              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-200" aria-hidden />
+            <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" aria-hidden />
               <div className="min-w-0">
-                <p className="text-sm font-semibold text-amber-100">Blocked on</p>
-                <p className="mt-0.5 whitespace-pre-wrap break-words text-sm text-amber-50">
+                <p className="text-sm font-semibold text-amber-800">Blocked on</p>
+                <p className="mt-0.5 whitespace-pre-wrap break-words text-sm text-amber-700">
                   {blocker.body}
                 </p>
-                <p className="mt-1 text-xs text-amber-200/80">
+                <p className="mt-1 text-xs text-amber-700/80">
                   Noted by {blocker.author} · {formatRelative(blocker.createdAt)}
                 </p>
               </div>
             </div>
           )}
           {targetOverdue && target && daysToTarget !== null && (
-            <div className="flex items-start gap-3 rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3">
-              <CalendarClock className="mt-0.5 h-5 w-5 shrink-0 text-rose-300" aria-hidden />
+            <div className="flex items-start gap-3 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3">
+              <CalendarClock className="mt-0.5 h-5 w-5 shrink-0 text-rose-600" aria-hidden />
               <div>
-                <p className="text-sm font-semibold text-rose-100">Target go-live has passed</p>
-                <p className="mt-0.5 text-sm text-rose-50">
+                <p className="text-sm font-semibold text-rose-800">Target go-live has passed</p>
+                <p className="mt-0.5 text-sm text-rose-700">
                   {formatDate(target)} was {Math.abs(daysToTarget)}{' '}
                   {Math.abs(daysToTarget) === 1 ? 'day' : 'days'} ago and this client is still at{' '}
                   {STAGE_LABEL[stage].toLowerCase()}. Move the date or move the client.
@@ -146,13 +146,13 @@ export default async function ClientCockpitPage({ params }: { params: { id: stri
         <div className="space-y-6">
           <StageControl operatorId={op.id} stage={stage} />
           {!cockpit.onboarding.exists && (
-            <p className="text-sm text-slate-400">
+            <p className="text-sm text-ink-muted">
               Nobody has set a stage for this client yet — the one shown is what their data
               suggests. Picking one above files it properly.
             </p>
           )}
           {target && !targetOverdue && daysToTarget !== null && (
-            <p className="text-sm text-slate-300">
+            <p className="text-sm text-ink-body">
               Target go-live {formatDate(target)}
               {settled
                 ? '.'
@@ -162,11 +162,11 @@ export default async function ClientCockpitPage({ params }: { params: { id: stri
             </p>
           )}
           {cockpit.onboarding.wentLiveOn && (
-            <p className="text-sm text-slate-400">
+            <p className="text-sm text-ink-muted">
               Went live {formatDate(cockpit.onboarding.wentLiveOn)}.
             </p>
           )}
-          <div className="border-t border-slate-800 pt-6">
+          <div className="border-t border-line pt-6">
             <OnboardingDetailsForm
               operatorId={op.id}
               values={{
@@ -179,10 +179,10 @@ export default async function ClientCockpitPage({ params }: { params: { id: stri
             />
           </div>
           {(cockpit.onboarding.contactEmail || cockpit.onboarding.contactPhone) && (
-            <p className="flex flex-wrap items-center gap-4 text-sm text-slate-400">
+            <p className="flex flex-wrap items-center gap-4 text-sm text-ink-muted">
               {cockpit.onboarding.contactEmail && (
                 <a
-                  className="text-emerald-300 underline underline-offset-2 hover:text-emerald-200"
+                  className="text-accent underline underline-offset-2 hover:text-accent-hover"
                   href={`mailto:${cockpit.onboarding.contactEmail}`}
                 >
                   Email {cockpit.onboarding.contactName || 'the client'}
@@ -190,7 +190,7 @@ export default async function ClientCockpitPage({ params }: { params: { id: stri
               )}
               {cockpit.onboarding.contactPhone && (
                 <a
-                  className="text-emerald-300 underline underline-offset-2 hover:text-emerald-200"
+                  className="text-accent underline underline-offset-2 hover:text-accent-hover"
                   href={`tel:${cockpit.onboarding.contactPhone.replace(/[^\d+]/g, '')}`}
                 >
                   Call {cockpit.onboarding.contactPhone}
@@ -265,10 +265,10 @@ function Section({
   return (
     <section aria-labelledby={id} className="space-y-4">
       <div>
-        <h2 id={id} className="text-lg font-semibold text-slate-100">
+        <h2 id={id} className="text-lg font-semibold text-ink">
           {title}
         </h2>
-        <p className="mt-0.5 text-sm text-slate-400">{description}</p>
+        <p className="mt-0.5 text-sm text-ink-body">{description}</p>
       </div>
       {children}
     </section>

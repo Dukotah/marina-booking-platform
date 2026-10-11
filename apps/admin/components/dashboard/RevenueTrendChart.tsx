@@ -13,10 +13,13 @@ import {
 import { formatUSD } from '../../lib/format';
 import type { RevenuePoint } from './queries';
 
+/** The single accent (teal-600) — the trend renders on the one accent, never a second color. */
+const ACCENT = 'rgb(var(--accent))';
+
 export interface RevenueTrendChartProps {
   data: RevenuePoint[];
-  /** Operator brand color (hex) — keeps the chart white-label. */
-  brandColor: string;
+  /** Accepted for call-site compatibility; the trend renders on the teal accent. */
+  brandColor?: string;
 }
 
 interface ChartRow {
@@ -50,9 +53,9 @@ function ChartTooltip({
   const row = payload[0]?.payload;
   if (!row) return null;
   return (
-    <div className="rounded-md border border-slate-200 bg-white px-3 py-2 text-xs shadow-md">
-      <div className="font-medium text-slate-900">{row.label}</div>
-      <div className="mt-0.5 text-slate-600">{formatUSD(row.cents)}</div>
+    <div className="rounded-lg border border-line bg-surface px-3 py-2 text-xs shadow-sm">
+      <div className="font-medium text-ink">{row.label}</div>
+      <div className="mt-0.5 text-ink-body">{formatUSD(row.cents)}</div>
     </div>
   );
 }
@@ -64,7 +67,7 @@ function ChartTooltip({
  * With no seed data the series is a flat run of zeros — the chart still renders
  * an empty baseline rather than breaking.
  */
-export function RevenueTrendChart({ data, brandColor }: RevenueTrendChartProps) {
+export function RevenueTrendChart({ data }: RevenueTrendChartProps) {
   const rows = useMemo<ChartRow[]>(
     () =>
       data.map((p) => ({
@@ -84,8 +87,8 @@ export function RevenueTrendChart({ data, brandColor }: RevenueTrendChartProps) 
         <AreaChart data={rows} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
           <defs>
             <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={brandColor} stopOpacity={0.28} />
-              <stop offset="100%" stopColor={brandColor} stopOpacity={0.02} />
+              <stop offset="0%" stopColor={ACCENT} stopOpacity={0.28} />
+              <stop offset="100%" stopColor={ACCENT} stopOpacity={0.02} />
             </linearGradient>
           </defs>
           <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
@@ -106,16 +109,16 @@ export function RevenueTrendChart({ data, brandColor }: RevenueTrendChartProps) 
           />
           <Tooltip
             content={<ChartTooltip />}
-            cursor={{ stroke: brandColor, strokeWidth: 1, strokeOpacity: 0.3 }}
+            cursor={{ stroke: ACCENT, strokeWidth: 1, strokeOpacity: 0.3 }}
           />
           <Area
             type="monotone"
             dataKey="dollars"
-            stroke={brandColor}
+            stroke={ACCENT}
             strokeWidth={2}
             fill={`url(#${gradientId})`}
             dot={false}
-            activeDot={{ r: 4, fill: brandColor }}
+            activeDot={{ r: 4, fill: ACCENT }}
             isAnimationActive={false}
           />
         </AreaChart>

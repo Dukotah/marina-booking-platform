@@ -3,11 +3,13 @@ import {
   Palette,
   ShieldCheck,
   Receipt,
+  Fuel,
   MapPin,
   Plug,
   UserCog,
   Ship,
   FileSignature,
+  ListChecks,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -32,7 +34,9 @@ export const SETTINGS_TABS: SettingsTab[] = [
   { label: 'Branding', href: '/settings/branding', icon: Palette, description: 'Name, logo, brand color' },
   { label: 'Policies', href: '/settings/policies', icon: ShieldCheck, description: 'Adult age, cancellation, check-in' },
   { label: 'Waivers', href: '/settings/waivers', icon: FileSignature, description: 'Liability waiver text & clauses' },
+  { label: 'Customer Questions', href: '/settings/questions', icon: ListChecks, description: 'Extra checkout fields & details' },
   { label: 'Fees & Taxes', href: '/settings/fees', icon: Receipt, description: 'Taxes, processing, custom fees' },
+  { label: 'Charge Presets', href: '/settings/charges', icon: Fuel, description: 'Reusable fuel, cleaning & damage charges' },
   { label: 'Pricing', href: '/settings/pricing', icon: TrendingUp, description: 'Seasons, weekends, demand' },
   { label: 'Locations', href: '/settings/locations', icon: MapPin, description: 'Sites & addresses' },
   { label: 'Resources', href: '/settings/resources', icon: Ship, description: 'Shared boats, gear & guides' },

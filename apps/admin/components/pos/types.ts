@@ -66,6 +66,7 @@ export interface PosFee {
   name: string;
   type: 'PERCENT' | 'FLAT';
   value: number;
+  isTax: boolean;
 }
 
 /** White-label + register configuration handed to the terminal. */

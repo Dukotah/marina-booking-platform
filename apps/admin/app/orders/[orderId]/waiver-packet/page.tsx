@@ -82,7 +82,7 @@ export default async function WaiverPacketPage({
       <div className="mb-6 flex items-center justify-between print:hidden">
         <Link
           href={`/orders/${order.id}`}
-          className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-slate-700"
+          className="inline-flex min-h-11 items-center gap-1.5 text-sm font-medium text-ink-body hover:text-ink"
         >
           <ArrowLeft className="h-4 w-4" aria-hidden />
           Back to order

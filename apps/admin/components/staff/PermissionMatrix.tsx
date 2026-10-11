@@ -91,7 +91,7 @@ function PermissionMark({ source }: { source: Source }) {
     <span
       className={cn(
         'inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium',
-        isExtra ? 'bg-sky-100 text-sky-700' : 'bg-emerald-100 text-emerald-700',
+        isExtra ? 'bg-accent-tint text-accent-ink' : 'bg-emerald-100 text-emerald-700',
       )}
       aria-label={isExtra ? 'Granted as extra permission' : 'Granted by role'}
     >

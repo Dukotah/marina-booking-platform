@@ -2,7 +2,8 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { ArrowLeft } from 'lucide-react';
-import { AdminShell, PageHeader, DataTable, KpiCard, type Column } from '../../../components/shell';
+import { AdminShell, PageHeader, DataTable, type Column } from '../../../components/shell';
+import { StatCard } from '../../../components/ui';
 import { getTenantDb, requirePermission, currentPermissions } from '../../../lib/session';
 import { formatUSD, formatNumber, formatDate } from '../../../lib/format';
 import {
@@ -113,7 +114,7 @@ export default async function MembershipDetailPage({
       cell: (r) => (
         <Link
           href={`/customers/${r.customerId}`}
-          className="font-medium text-sky-800 underline underline-offset-2 hover:text-sky-900 focus:outline-none focus:ring-2 focus:ring-sky-600"
+          className="font-medium text-accent hover:text-accent-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-focus"
         >
           {r.name}
         </Link>
@@ -152,7 +153,7 @@ export default async function MembershipDetailPage({
               r.usable ? (
                 <RevokeButton membershipId={id} holdingId={r.id} holderName={r.name} />
               ) : (
-                <span className="text-xs text-slate-600">—</span>
+                <span className="text-xs text-ink-muted">—</span>
               ),
           },
         ]
@@ -176,7 +177,7 @@ export default async function MembershipDetailPage({
       <div className="mb-4">
         <Link
           href="/memberships"
-          className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-700 underline underline-offset-2 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-sky-600"
+          className="inline-flex min-h-11 items-center gap-1.5 text-sm font-medium text-ink-body hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-focus"
         >
           <ArrowLeft className="h-4 w-4" aria-hidden />
           All memberships
@@ -192,12 +193,12 @@ export default async function MembershipDetailPage({
       />
 
       <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <KpiCard label="Active members" value={formatNumber(usableRows.length)} />
-        <KpiCard
+        <StatCard label="Active members" value={formatNumber(usableRows.length)} tone="success" />
+        <StatCard
           label={membership.kind === 'PUNCH_CARD' ? 'Punches outstanding' : 'Ever issued'}
           value={formatNumber(membership.kind === 'PUNCH_CARD' ? punchesLeft : rows.length)}
         />
-        <KpiCard
+        <StatCard
           label="Member saves per booking"
           value={
             membership.discount_type === 'PERCENT'
@@ -213,7 +214,7 @@ export default async function MembershipDetailPage({
         </div>
       ) : null}
 
-      <h2 className="mb-3 text-base font-semibold text-slate-900">Members</h2>
+      <h2 className="mb-3 text-base font-semibold text-ink">Members</h2>
       {canReadCustomers ? (
         <>
           <DataTable
@@ -224,13 +225,13 @@ export default async function MembershipDetailPage({
             emptyState="Nobody holds this membership yet."
           />
           {rows.length === HOLDER_LIMIT ? (
-            <p className="mt-3 text-xs text-slate-600">
+            <p className="mt-3 text-xs text-ink-body">
               Showing the {formatNumber(HOLDER_LIMIT)} most recent members.
             </p>
           ) : null}
         </>
       ) : (
-        <p className="text-sm text-slate-600">
+        <p className="text-sm text-ink-body">
           You do not have access to customer records, so the member list is hidden.
         </p>
       )}

@@ -152,7 +152,7 @@ function EditorLoaded({ waiver }: { waiver: WaiverData }) {
   return (
     <div className="space-y-6">
       {/* The versioning contract, stated where edits happen. */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-surface-muted px-4 py-3 text-sm text-ink-body">
         <p>
           <span className="font-semibold">Version {waiver.version}.</span> Any text change
           creates a new version for future signers.{' '}
@@ -223,14 +223,14 @@ function EditorLoaded({ waiver }: { waiver: WaiverData }) {
         ) : null}
 
         {waiver.clauses.length === 0 ? (
-          <p className="text-sm text-slate-500">
+          <p className="text-sm text-ink-muted">
             No clauses yet — add the sections guests must read and initial.
           </p>
         ) : (
           <ol className="space-y-3">
             {waiver.clauses.map((clause, index) =>
               editingId === clause.id ? (
-                <li key={clause.id} className="rounded-lg border border-slate-300 bg-slate-50 p-4">
+                <li key={clause.id} className="rounded-lg border border-line-strong bg-surface-muted p-4">
                   <ClauseForm
                     initial={clause}
                     pending={listPending}
@@ -242,13 +242,13 @@ function EditorLoaded({ waiver }: { waiver: WaiverData }) {
               ) : (
                 <li
                   key={clause.id}
-                  className="flex items-start justify-between gap-3 rounded-lg border border-slate-200 p-4"
+                  className="flex items-start justify-between gap-3 rounded-lg border border-line p-4"
                 >
                   <div className="min-w-0">
-                    <p className="text-sm font-semibold text-slate-800">
+                    <p className="text-sm font-semibold text-ink">
                       {index + 1}. {clause.title}
                     </p>
-                    <p className="mt-1 line-clamp-2 text-xs text-slate-500">
+                    <p className="mt-1 line-clamp-2 text-xs text-ink-muted">
                       {stripTags(clause.bodyHtml)}
                     </p>
                     <p className="mt-1.5 flex flex-wrap gap-1.5 text-[11px]">
@@ -310,7 +310,7 @@ function EditorLoaded({ waiver }: { waiver: WaiverData }) {
 
         <div className="mt-4">
           {adding ? (
-            <div className="rounded-lg border border-slate-300 bg-slate-50 p-4">
+            <div className="rounded-lg border border-line-strong bg-surface-muted p-4">
               <ClauseForm
                 pending={listPending}
                 submitLabel="Add clause"
@@ -337,8 +337,8 @@ function EditorLoaded({ waiver }: { waiver: WaiverData }) {
 
 function badge(active: boolean): string {
   return active
-    ? 'rounded-full bg-slate-800 px-2 py-0.5 font-medium text-white'
-    : 'rounded-full bg-slate-100 px-2 py-0.5 font-medium text-slate-600';
+    ? 'rounded-full bg-accent-tint px-2 py-0.5 font-medium text-accent-ink'
+    : 'rounded-full bg-surface-muted px-2 py-0.5 font-medium text-ink-body';
 }
 
 function stripTags(html: string): string {
@@ -359,7 +359,7 @@ function IconButton({
       className={`inline-flex h-8 w-8 items-center justify-center rounded-md border transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
         danger
           ? 'border-rose-200 text-rose-600 hover:bg-rose-50'
-          : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+          : 'border-line text-ink-body hover:bg-surface-muted'
       }`}
       {...props}
     >
@@ -452,57 +452,57 @@ function SignerPreview({ waiver }: { waiver: WaiverData }) {
   return (
     <section
       aria-label="Waiver preview, as the customer signer renders it"
-      className="rounded-xl border-2 border-dashed border-slate-300 bg-white p-5 sm:p-6"
+      className="rounded-lg border-2 border-dashed border-line-strong bg-surface p-5 sm:p-6"
     >
-      <p className="mb-4 text-xs font-semibold uppercase tracking-wide text-slate-400">
+      <p className="mb-4 text-xs font-semibold uppercase tracking-wide text-ink-muted">
         Preview — what the signer sees
       </p>
-      <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-800">
+      <h2 className="flex items-center gap-2 text-sm font-semibold text-ink">
         <FileSignature className="h-5 w-5 text-teal-700" aria-hidden />
         {waiver.name}
       </h2>
       {waiver.introHtml.trim() ? (
         <div
-          className="prose prose-sm mt-3 max-w-none text-slate-600"
+          className="prose prose-sm mt-3 max-w-none text-ink-body"
           // Operator-authored copy — same trust model as the customer signer.
           dangerouslySetInnerHTML={{ __html: waiver.introHtml }}
         />
       ) : null}
       <ol className="mt-4 space-y-4">
         {waiver.clauses.map((clause, index) => (
-          <li key={clause.id} className="rounded-lg border border-slate-200 bg-white p-4">
-            <h3 className="mb-2 text-sm font-semibold text-slate-800">
+          <li key={clause.id} className="rounded-lg border border-line bg-surface p-4">
+            <h3 className="mb-2 text-sm font-semibold text-ink">
               {index + 1}. {clause.title}
               {!clause.isRequired ? (
-                <span className="ml-2 text-xs font-normal text-slate-500">(optional)</span>
+                <span className="ml-2 text-xs font-normal text-ink-muted">(optional)</span>
               ) : null}
             </h3>
             <div
-              className="prose prose-sm max-w-none text-slate-600"
+              className="prose prose-sm max-w-none text-ink-body"
               dangerouslySetInnerHTML={{ __html: clause.bodyHtml }}
             />
             {clause.requiresInitials ? (
               <div className="mt-3 flex items-center gap-3">
-                <span className="text-xs font-medium text-slate-700">
+                <span className="text-xs font-medium text-ink-body">
                   Initials{clause.isRequired ? '' : ' (optional)'}
                 </span>
                 <span
                   aria-hidden
-                  className="inline-block h-9 w-24 rounded-md border border-slate-300 bg-slate-50"
+                  className="inline-block h-9 w-24 rounded-md border border-line-strong bg-surface-muted"
                 />
               </div>
             ) : null}
           </li>
         ))}
       </ol>
-      <div className="mt-5 grid gap-4 border-t border-slate-100 pt-4 sm:grid-cols-2">
+      <div className="mt-5 grid gap-4 border-t border-line pt-4 sm:grid-cols-2">
         <div>
-          <p className="text-xs font-medium text-slate-700">Signature (typed full legal name)</p>
-          <span aria-hidden className="mt-1 inline-block h-9 w-full rounded-md border border-slate-300 bg-slate-50" />
+          <p className="text-xs font-medium text-ink-body">Signature (typed full legal name)</p>
+          <span aria-hidden className="mt-1 inline-block h-9 w-full rounded-md border border-line-strong bg-surface-muted" />
         </div>
         <div>
-          <p className="text-xs font-medium text-slate-700">Date of birth</p>
-          <span aria-hidden className="mt-1 inline-block h-9 w-full rounded-md border border-slate-300 bg-slate-50" />
+          <p className="text-xs font-medium text-ink-body">Date of birth</p>
+          <span aria-hidden className="mt-1 inline-block h-9 w-full rounded-md border border-line-strong bg-surface-muted" />
         </div>
       </div>
     </section>

@@ -42,15 +42,15 @@ export function CustomerTable({ rows, isFiltered = false }: CustomerTableProps) 
       header: 'Customer',
       cell: (row) => (
         <div className="min-w-0">
-          <div className="font-medium text-slate-900">{fullName(row)}</div>
-          <div className="truncate text-xs text-slate-500">{row.email}</div>
+          <div className="font-medium text-ink">{fullName(row)}</div>
+          <div className="truncate text-xs text-ink-muted">{row.email}</div>
         </div>
       ),
     },
     {
       id: 'phone',
       header: 'Phone',
-      cell: (row) => row.phone ?? <span className="text-slate-400">—</span>,
+      cell: (row) => row.phone ?? <span className="text-ink-muted">—</span>,
     },
     {
       id: 'tags',
@@ -62,11 +62,11 @@ export function CustomerTable({ rows, isFiltered = false }: CustomerTableProps) 
               <Badge key={tag}>{tag}</Badge>
             ))}
             {row.tags.length > 3 ? (
-              <Badge className="bg-slate-50 text-slate-400">+{row.tags.length - 3}</Badge>
+              <Badge tone="cancelled">+{row.tags.length - 3}</Badge>
             ) : null}
           </div>
         ) : (
-          <span className="text-slate-400">—</span>
+          <span className="text-ink-muted">—</span>
         ),
     },
     {
@@ -87,9 +87,9 @@ export function CustomerTable({ rows, isFiltered = false }: CustomerTableProps) 
       align: 'right',
       cell: (row) =>
         row.lastBookingAt ? (
-          <span className="tabular-nums text-slate-600">{formatDate(row.lastBookingAt)}</span>
+          <span className="tabular-nums text-ink-body">{formatDate(row.lastBookingAt)}</span>
         ) : (
-          <span className="text-slate-400">Never</span>
+          <span className="text-ink-muted">Never</span>
         ),
     },
   ];

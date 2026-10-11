@@ -52,7 +52,7 @@ export async function AdminShell({ children }: { children: ReactNode }) {
   const impersonating = platformAdmin && Boolean(getActiveOperatorOverride());
 
   return (
-    <div className="flex h-screen overflow-hidden bg-slate-100">
+    <div className="flex h-screen overflow-hidden bg-canvas">
       <Sidebar
         brandName={brandName}
         logoUrl={logoUrl}

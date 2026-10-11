@@ -355,6 +355,9 @@ async function releaseDeclinedOrder(
     await cancelBooking(operatorId, order.id, {
       actor: 'system',
       reason: 'Payment declined at checkout — booking released',
+      // Nothing settled (guarded above: amount_paid = 0, no prior payments), so
+      // there is nothing to refund — skip the refund leg entirely.
+      refund: false,
     });
     // Then remove it. An abandoned checkout never became a booking, and an
     // operator who leaves a busy Saturday with thirty dead CANCELLED rows in
@@ -600,6 +603,8 @@ payments.post('/confirm', async (c) => {
       await cancelBooking(c.var.operatorId, order.id, {
         actor: 'customer',
         reason: 'Card authentication was cancelled before payment',
+        // The 3DS challenge was abandoned before any charge settled — nothing to refund.
+        refund: false,
       });
     } catch (err) {
       // Already cancelled is the desired end state, not a failure to report.

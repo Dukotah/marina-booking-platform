@@ -29,6 +29,8 @@ export interface TemplateOverride {
   enabled: boolean;
   subject_override: string | null;
   body_override: string | null;
+  /** SMS-channel body override (no subject on SMS). */
+  sms_body_override: string | null;
 }
 
 /**
@@ -69,6 +71,27 @@ export function resolveTemplate(input: {
 }
 
 /**
+ * Resolve the effective SMS body for a message kind. SMS has no subject, so this is
+ * a single string: an enabled operator override (with {{placeholders}} filled from
+ * `facts`) when present and non-blank, else the built-in `defaultBody`. Never throws;
+ * a missing/disabled/blank override cleanly falls back so an SMS flow is never broken
+ * by a bad template.
+ */
+export function resolveSmsBody(input: {
+  defaultBody: string;
+  override: TemplateOverride | null;
+  facts: Record<string, string>;
+}): { body: string; customized: boolean } {
+  const { defaultBody, override, facts } = input;
+  if (!override || !override.enabled) {
+    return { body: defaultBody, customized: false };
+  }
+  const raw = override.sms_body_override?.trim();
+  if (!raw) return { body: defaultBody, customized: false };
+  return { body: interpolate(raw, facts), customized: true };
+}
+
+/**
  * Load the operator's override for one message kind (or null). Tenant-scoped via the
  * RLS client. Returns null on any error so callers cleanly fall back to defaults.
  */
@@ -79,7 +102,7 @@ export async function loadTemplateOverride(
   try {
     const row = await db.messageTemplate.findFirst({
       where: { kind },
-      select: { enabled: true, subject_override: true, body_override: true },
+      select: { enabled: true, subject_override: true, body_override: true, sms_body_override: true },
     });
     return row ?? null;
   } catch (err) {

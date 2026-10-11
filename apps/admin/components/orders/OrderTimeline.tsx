@@ -23,7 +23,7 @@ export interface TimelineEvent {
 function eventVisual(type: string): { icon: LucideIcon; className: string } {
   switch (type) {
     case 'ORDER_CREATED':
-      return { icon: CalendarPlus, className: 'bg-sky-50 text-sky-600 ring-sky-600/20' };
+      return { icon: CalendarPlus, className: 'bg-accent-tint text-accent ring-accent/20' };
     case 'ORDER_CANCELLED':
       return { icon: Ban, className: 'bg-slate-100 text-slate-500 ring-slate-500/20' };
     case 'PAYMENT':
@@ -31,7 +31,7 @@ function eventVisual(type: string): { icon: LucideIcon; className: string } {
     case 'REFUND':
       return { icon: Undo2, className: 'bg-amber-50 text-amber-600 ring-amber-600/20' };
     case 'EMAIL_RESENT':
-      return { icon: Mail, className: 'bg-indigo-50 text-indigo-600 ring-indigo-600/20' };
+      return { icon: Mail, className: 'bg-slate-100 text-slate-500 ring-slate-500/20' };
     case 'CHECKED_IN':
     case 'COMPLETED':
       return { icon: CheckCircle2, className: 'bg-emerald-50 text-emerald-600 ring-emerald-600/20' };
@@ -55,7 +55,7 @@ function actorLabel(actor: string | null): string {
  */
 export function OrderTimeline({ events }: { events: TimelineEvent[] }) {
   if (events.length === 0) {
-    return <p className="text-sm text-slate-500">No activity recorded yet.</p>;
+    return <p className="text-sm text-ink-muted">No activity recorded yet.</p>;
   }
 
   return (
@@ -68,7 +68,7 @@ export function OrderTimeline({ events }: { events: TimelineEvent[] }) {
             {!isLast ? (
               <span
                 aria-hidden
-                className="absolute left-[15px] top-8 bottom-0 w-px bg-slate-200"
+                className="absolute left-[15px] top-8 bottom-0 w-px bg-line"
               />
             ) : null}
             <span
@@ -80,10 +80,8 @@ export function OrderTimeline({ events }: { events: TimelineEvent[] }) {
               <Icon className="h-4 w-4" aria-hidden />
             </span>
             <div className="min-w-0 pt-1">
-              <p className="text-sm text-slate-800">{event.description}</p>
-              {/* slate-500, not slate-400: slate-400 on the white card is 2.45:1.
-                  This line carries the audit trail's when and who. (1.4.3) */}
-              <p className="mt-0.5 text-xs text-slate-500">
+              <p className="text-sm text-ink">{event.description}</p>
+              <p className="mt-0.5 text-xs text-ink-muted">
                 {formatDateTime(event.createdAt)} · {actorLabel(event.actor)}
               </p>
             </div>

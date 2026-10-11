@@ -39,7 +39,7 @@ export function LocationRollUpView({ report }: LocationRollUpViewProps) {
       <Card>
         <CardHeader className="flex-row items-center justify-between gap-2">
           <CardTitle>Revenue &amp; occupancy by location</CardTitle>
-          <span className="flex items-center gap-1.5 text-xs text-slate-400">
+          <span className="flex items-center gap-1.5 text-xs text-ink-muted">
             <CalendarRange className="h-3.5 w-3.5" aria-hidden />
             {rangeLabel(report.range.from, report.range.to)}
           </span>
@@ -55,7 +55,7 @@ export function LocationRollUpView({ report }: LocationRollUpViewProps) {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-slate-200 text-left text-xs font-medium text-slate-500">
+                  <tr className="border-b border-line text-left text-xs font-medium text-ink-muted">
                     <th className="py-2 pr-4">Location</th>
                     <th className="py-2 pr-4 text-right">Revenue</th>
                     <th className="py-2 pr-4 text-right">Share</th>
@@ -68,35 +68,35 @@ export function LocationRollUpView({ report }: LocationRollUpViewProps) {
                   {rows.map((r) => (
                     <tr
                       key={r.locationId ?? '__none__'}
-                      className="border-b border-slate-100 last:border-0"
+                      className="border-b border-line last:border-0"
                     >
-                      <td className="py-2.5 pr-4 font-medium text-slate-800">
+                      <td className="py-2.5 pr-4 font-medium text-ink">
                         <span className="flex items-center gap-2">
-                          <MapPin className="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden />
+                          <MapPin className="h-3.5 w-3.5 shrink-0 text-ink-muted" aria-hidden />
                           <span className="truncate">{r.locationName}</span>
                         </span>
                       </td>
-                      <td className="py-2.5 pr-4 text-right tabular-nums font-medium text-slate-900">
+                      <td className="py-2.5 pr-4 text-right tabular-nums font-medium text-ink">
                         {formatUSD(r.grossCents)}
                       </td>
-                      <td className="py-2.5 pr-4 text-right tabular-nums text-slate-500">
+                      <td className="py-2.5 pr-4 text-right tabular-nums text-ink-muted">
                         {formatPercent(r.revenueShare)}
                       </td>
-                      <td className="py-2.5 pr-4 text-right tabular-nums text-slate-500">
+                      <td className="py-2.5 pr-4 text-right tabular-nums text-ink-muted">
                         {formatNumber(r.orders)}
                       </td>
-                      <td className="py-2.5 pr-4 text-right tabular-nums text-slate-500">
+                      <td className="py-2.5 pr-4 text-right tabular-nums text-ink-muted">
                         {r.capacityBooked}/{r.capacityTotal}
                       </td>
                       <td className="py-2.5 pl-4">
                         <span className="flex items-center justify-end gap-2">
-                          <span className="hidden h-2 w-24 overflow-hidden rounded-full bg-slate-100 sm:block">
+                          <span className="hidden h-2 w-24 overflow-hidden rounded-full bg-surface-muted sm:block">
                             <span
-                              className="block h-full rounded-full bg-[var(--brand-color,#0ea5e9)]"
+                              className="block h-full rounded-full bg-accent"
                               style={{ width: barWidth(r.occupancy) }}
                             />
                           </span>
-                          <span className="tabular-nums font-medium text-slate-900">
+                          <span className="tabular-nums font-medium text-ink">
                             {formatPercent(r.occupancy)}
                           </span>
                         </span>

@@ -23,21 +23,18 @@ export function Topbar({ brandName, userName, roleLabel }: TopbarProps) {
     .join('');
 
   return (
-    <header className="flex h-16 shrink-0 items-center gap-4 border-b border-slate-200 bg-white px-4 md:px-6">
-      <span className="text-base font-semibold text-slate-900 md:hidden">{brandName}</span>
+    <header className="flex h-16 shrink-0 items-center gap-4 border-b border-line bg-surface px-4 md:px-6">
+      <span className="text-base font-semibold text-ink md:hidden">{brandName}</span>
 
       <div className="relative hidden flex-1 md:block">
-        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" aria-hidden />
-        {/* Placeholder text is text: slate-400 on the slate-50 field is 2.45:1.
-            slate-500 clears AA on both the resting (slate-50) and focused (white)
-            field. (1.4.3) */}
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-muted" aria-hidden />
         <input
           type="search"
           // A placeholder is not a label: it is the fallback name source, and it
           // disappears the moment the field has content. (4.1.2)
           aria-label="Search orders, customers and activities"
           placeholder="Search orders, customers, activities…"
-          className="w-full max-w-md rounded-lg border border-slate-200 bg-slate-50 py-2 pl-9 pr-3 text-sm text-slate-700 placeholder:text-slate-500 focus:border-slate-300 focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-200"
+          className="h-10 w-full max-w-md rounded-lg border border-line bg-surface-muted pl-9 pr-3 text-sm text-ink placeholder:text-ink-muted transition-colors focus:border-accent focus:bg-surface focus:outline-none focus:ring-2 focus:ring-focus"
         />
       </div>
 
@@ -45,7 +42,7 @@ export function Topbar({ brandName, userName, roleLabel }: TopbarProps) {
         <button
           type="button"
           aria-label="Notifications"
-          className="rounded-lg p-2 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700"
+          className="rounded-lg p-2 text-ink-muted transition-colors hover:bg-surface-muted hover:text-ink"
         >
           <Bell className="h-5 w-5" aria-hidden />
         </button>
@@ -58,8 +55,8 @@ export function Topbar({ brandName, userName, roleLabel }: TopbarProps) {
             {initials || '–'}
           </div>
           <div className="hidden leading-tight sm:block">
-            <div className="text-sm font-medium text-slate-900">{userName}</div>
-            <div className="text-xs text-slate-500">{roleLabel}</div>
+            <div className="text-sm font-medium text-ink">{userName}</div>
+            <div className="text-xs text-ink-muted">{roleLabel}</div>
           </div>
         </div>
       </div>

@@ -29,6 +29,13 @@ interface PriceBreakdownProps {
   promo: AppliedPromo | null;
   tipCents: number;
   /**
+   * Selected add-ons as pricing line items (unit price × resolved quantity). Folded
+   * into the SAME `calculatePricing` as the seats, so they are taxed, fee'd and
+   * discounted identically and the total matches what the API charges. A separate
+   * "Add-ons" line shows their combined subtotal when any are selected.
+   */
+  addOnItems?: Array<{ unitPriceCents: number; quantity: number }>;
+  /**
    * Operator fees (tax + processing + surcharges) the API will apply. When
    * supplied, the breakdown shows the real total; when empty, it falls back to a
    * pre-fee estimate with a disclaimer.
@@ -66,15 +73,22 @@ export function PriceBreakdown({
   promo,
   tipCents,
   fees,
+  addOnItems = [],
 }: PriceBreakdownProps) {
   const pricing = calculatePricing({
-    items: [{ unitPriceCents, quantity }],
+    items: [{ unitPriceCents, quantity }, ...addOnItems],
     fees,
     promo: promo
       ? { discountType: promo.discountType, discountValue: promo.discountValue }
       : null,
     tipCents,
   });
+
+  // The add-ons' combined subtotal, for a dedicated line. Integer cents.
+  const addOnSubtotalCents = addOnItems.reduce(
+    (sum, i) => sum + i.unitPriceCents * i.quantity,
+    0,
+  );
 
   // When the API supplied fees we can show the real total the confirmation will
   // show; only then are the tax/processing lines meaningful. Without them we fall
@@ -85,8 +99,11 @@ export function PriceBreakdown({
     <div className="space-y-2">
       <Row
         label={`${formatUSD(unitPriceCents)} × ${quantity}`}
-        value={formatUSD(pricing.subtotalCents)}
+        value={formatUSD(unitPriceCents * quantity)}
       />
+      {addOnSubtotalCents > 0 && (
+        <Row label="Add-ons" value={formatUSD(addOnSubtotalCents)} />
+      )}
       {pricing.discountCents > 0 && (
         <Row
           label={promo ? `Promo (${promo.code})` : 'Discount'}

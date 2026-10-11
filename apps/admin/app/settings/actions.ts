@@ -60,6 +60,13 @@ const brandingSchema = z.object({
     .optional()
     .or(z.literal('')),
   phone: z.string().trim().max(32).optional().or(z.literal('')),
+  review_url: z
+    .string()
+    .trim()
+    .url('Enter a valid URL (https://…)')
+    .max(2048)
+    .optional()
+    .or(z.literal('')),
   brand_color: z.string().regex(HEX_COLOR, 'Brand color must be a hex value (e.g. #0ea5e9)'),
   logo_dark_url: z.string().trim().url('Enter a valid image URL').max(2048).optional().or(z.literal('')),
   logo_light_url: z.string().trim().url('Enter a valid image URL').max(2048).optional().or(z.literal('')),
@@ -82,6 +89,7 @@ export async function updateBranding(input: BrandingInput): Promise<ActionResult
         name_external: v.name_external,
         website: emptyToNull(v.website),
         phone: emptyToNull(v.phone),
+        review_url: emptyToNull(v.review_url),
         brand_color: v.brand_color,
         logo_dark_url: emptyToNull(v.logo_dark_url),
         logo_light_url: emptyToNull(v.logo_light_url),
@@ -169,6 +177,98 @@ export async function updatePolicies(input: PoliciesInput): Promise<ActionResult
 }
 
 // ===========================================================================
+// Cancellation policy (Operator.cancellation_policy — tiered refund model)
+// ===========================================================================
+
+/**
+ * The tiered cancellation policy stored on `Operator.cancellation_policy` (a Json
+ * column — editing it is migration-free). Shape mirrors `CancellationPolicy` in
+ * @marina/core, which `computeCancellationRefund` and the API's `cancelBooking`
+ * read. We validate here so a malformed policy can never reach the money path.
+ *
+ * Tiers are `{ hours_before -> refund_percent }` thresholds; the calculator sorts
+ * them, so order in the UI is just for the operator's reading.
+ */
+const cancellationTierSchema = z.object({
+  min_hours_before: z.coerce
+    .number()
+    .int('Use whole hours')
+    .min(0, 'Hours cannot be negative')
+    .max(8760, 'That is over a year out'),
+  refund_percent: z.coerce
+    .number()
+    .int('Use a whole percent')
+    .min(0, 'Percent cannot be negative')
+    .max(100, 'Percent cannot exceed 100'),
+});
+
+const cancellationPolicySchema = z.object({
+  tiers: z
+    .array(cancellationTierSchema)
+    .min(1, 'Add at least one refund tier')
+    .max(8, 'That is a lot of tiers — keep it simple'),
+  /** Dollars in the UI; persisted as integer cents. */
+  cancellation_fee_dollars: z.coerce
+    .number()
+    .min(0, 'Fee cannot be negative')
+    .max(100000, 'Fee seems too high'),
+  fee_scope: z.enum(['order', 'guest']),
+  self_cancel_hours: z.coerce
+    .number()
+    .int('Use whole hours')
+    .min(0, 'Hours cannot be negative')
+    .max(8760, 'That is over a year out'),
+  refund_method: z.enum(['card', 'gift_card', 'card_then_gift']),
+});
+
+export type CancellationPolicyInput = z.infer<typeof cancellationPolicySchema>;
+
+/**
+ * Persist the operator-default cancellation policy onto `Operator.cancellation_policy`.
+ * Tenant-scoped (RLS) + gated on operator:manage, mirroring every settings mutation.
+ * Tiers are de-duplicated + sorted most-generous-first so the stored JSON is tidy;
+ * the fee is converted dollars -> cents to match the core model.
+ */
+export async function updateCancellationPolicy(
+  input: CancellationPolicyInput,
+): Promise<ActionResult> {
+  try {
+    const { operatorId } = await requirePermission('operator:manage');
+    const parsed = cancellationPolicySchema.safeParse(input);
+    if (!parsed.success) return { ok: false, errors: zodErrors(parsed.error) };
+    const v = parsed.data;
+
+    // Collapse duplicate thresholds (last one wins) and sort most-generous first so
+    // the stored policy reads top-down the way the preview describes it.
+    const byHours = new Map<number, number>();
+    for (const t of v.tiers) byHours.set(t.min_hours_before, t.refund_percent);
+    const tiers = [...byHours.entries()]
+      .map(([min_hours_before, refund_percent]) => ({ min_hours_before, refund_percent }))
+      .sort((a, b) => b.min_hours_before - a.min_hours_before);
+
+    const policy = {
+      tiers,
+      cancellation_fee_cents: Math.round(v.cancellation_fee_dollars * 100),
+      fee_scope: v.fee_scope,
+      self_cancel_hours: v.self_cancel_hours,
+      refund_method: v.refund_method,
+    };
+
+    const db = await getTenantDb();
+    await db.operator.update({
+      where: { id: operatorId },
+      data: { cancellation_policy: policy },
+    });
+
+    revalidatePath('/settings/policies');
+    return { ok: true };
+  } catch (err) {
+    if (err instanceof AuthorizationError) return denied();
+    throw err;
+  }
+}
+
+// ===========================================================================
 // Manager-approval workflow (Singenuity §2)
 // ===========================================================================
 
@@ -228,6 +328,8 @@ const feeSchema = z.object({
   value: z.coerce.number().min(0, 'Value cannot be negative'),
   enabled: z.coerce.boolean().default(true),
   ignore_tax_exempt: z.coerce.boolean().default(false),
+  /** First-class tax flag: identifies this fee as tax (skipped for tax-exempt customers). */
+  is_tax: z.coerce.boolean().default(false),
   /** Empty string => global fee (applies to all activities). */
   activity_id: z.string().trim().optional().or(z.literal('')),
 });
@@ -269,6 +371,7 @@ export async function createFee(input: FeeInput): Promise<ActionResult> {
         value: normalizeFeeValue(v.type, v.value),
         enabled: v.enabled,
         ignore_tax_exempt: v.ignore_tax_exempt,
+        is_tax: v.is_tax,
       },
     });
 
@@ -309,6 +412,7 @@ export async function updateFee(feeId: string, input: FeeInput): Promise<ActionR
         value: normalizeFeeValue(v.type, v.value),
         enabled: v.enabled,
         ignore_tax_exempt: v.ignore_tax_exempt,
+        is_tax: v.is_tax,
       },
     });
 
@@ -356,6 +460,135 @@ export async function toggleFee(feeId: string): Promise<ActionResult> {
     await db.fee.update({ where: { id: feeId }, data: { enabled: !existing.enabled } });
     revalidatePath('/settings/fees');
     return { ok: true, id: feeId };
+  } catch (err) {
+    if (err instanceof AuthorizationError) return denied();
+    throw err;
+  }
+}
+
+// ===========================================================================
+// Charge presets (reusable one-click post-trip charges)
+// ===========================================================================
+
+/** Same free-string set as OrderCharge.category / addOrderChargeAction. */
+const CHARGE_PRESET_CATEGORIES = ['FUEL', 'CLEANING', 'DAMAGE', 'LATE', 'OTHER'] as const;
+
+const chargePresetSchema = z.object({
+  label: z.string().trim().min(1, 'Label is required').max(120),
+  category: z.enum(CHARGE_PRESET_CATEGORIES),
+  /** Dollars in the UI; persisted as integer cents. */
+  amount_dollars: z.coerce
+    .number()
+    .positive('Amount must be greater than zero')
+    .max(10000, 'That amount looks too high'),
+  active: z.coerce.boolean().default(true),
+});
+
+export type ChargePresetInput = z.infer<typeof chargePresetSchema>;
+
+export async function createChargePreset(input: ChargePresetInput): Promise<ActionResult> {
+  try {
+    const { operatorId } = await requirePermission('operator:manage');
+    const parsed = chargePresetSchema.safeParse(input);
+    if (!parsed.success) return { ok: false, errors: zodErrors(parsed.error) };
+    const v = parsed.data;
+
+    const db = await getTenantDb();
+    const id = createId();
+    await db.chargePreset.create({
+      data: {
+        id,
+        operator_id: operatorId,
+        category: v.category,
+        label: v.label,
+        amount_cents: Math.round(v.amount_dollars * 100),
+        active: v.active,
+      },
+    });
+
+    revalidatePath('/settings/charges');
+    return { ok: true, id };
+  } catch (err) {
+    if (err instanceof AuthorizationError) return denied();
+    throw err;
+  }
+}
+
+export async function updateChargePreset(
+  presetId: string,
+  input: ChargePresetInput,
+): Promise<ActionResult> {
+  try {
+    const { operatorId } = await requirePermission('operator:manage');
+    if (!presetId) return { ok: false, message: 'Missing preset.' };
+    const parsed = chargePresetSchema.safeParse(input);
+    if (!parsed.success) return { ok: false, errors: zodErrors(parsed.error) };
+    const v = parsed.data;
+
+    const db = await getTenantDb();
+    const existing = await db.chargePreset.findFirst({
+      where: { id: presetId, operator_id: operatorId },
+      select: { id: true },
+    });
+    if (!existing) return { ok: false, message: 'Preset not found.' };
+
+    await db.chargePreset.update({
+      where: { id: presetId },
+      data: {
+        category: v.category,
+        label: v.label,
+        amount_cents: Math.round(v.amount_dollars * 100),
+        active: v.active,
+      },
+    });
+
+    revalidatePath('/settings/charges');
+    return { ok: true, id: presetId };
+  } catch (err) {
+    if (err instanceof AuthorizationError) return denied();
+    throw err;
+  }
+}
+
+export async function deleteChargePreset(presetId: string): Promise<ActionResult> {
+  try {
+    const { operatorId } = await requirePermission('operator:manage');
+    if (!presetId) return { ok: false, message: 'Missing preset.' };
+
+    const db = await getTenantDb();
+    const existing = await db.chargePreset.findFirst({
+      where: { id: presetId, operator_id: operatorId },
+      select: { id: true },
+    });
+    if (!existing) return { ok: false, message: 'Preset not found.' };
+
+    await db.chargePreset.delete({ where: { id: presetId } });
+    revalidatePath('/settings/charges');
+    return { ok: true };
+  } catch (err) {
+    if (err instanceof AuthorizationError) return denied();
+    throw err;
+  }
+}
+
+export async function toggleChargePreset(presetId: string): Promise<ActionResult> {
+  try {
+    const { operatorId } = await requirePermission('operator:manage');
+    if (!presetId) return { ok: false, message: 'Missing preset.' };
+
+    const db = await getTenantDb();
+    const existing = await db.chargePreset.findFirst({
+      where: { id: presetId, operator_id: operatorId },
+      select: { active: true },
+    });
+    if (!existing) return { ok: false, message: 'Preset not found.' };
+
+    await db.chargePreset.update({
+      where: { id: presetId },
+      data: { active: !existing.active },
+    });
+    revalidatePath('/settings/charges');
+    return { ok: true, id: presetId };
   } catch (err) {
     if (err instanceof AuthorizationError) return denied();
     throw err;
@@ -647,4 +880,183 @@ async function resolveActivityId(
     select: { id: true },
   });
   return found ? found.id : INVALID;
+}
+
+// ===========================================================================
+// Customer Questions
+// ===========================================================================
+
+const QUESTION_TYPES = [
+  'TEXT',
+  'TEXTAREA',
+  'SELECT',
+  'CHECKBOX',
+  'NUMBER',
+  'DATE',
+  'PHONE',
+] as const;
+
+const questionSchema = z.object({
+  label: z.string().trim().min(1, 'Label is required').max(200),
+  type: z.enum(QUESTION_TYPES).default('TEXT'),
+  required: z.coerce.boolean().default(false),
+  /** SELECT choices; ignored for other types but always persisted as an array. */
+  options: z.array(z.string().trim().min(1).max(120)).max(50).default([]),
+  /** Empty => applies to every activity. */
+  applies_to: z.string().trim().optional().or(z.literal('')),
+  /** Empty => not narrowed to a single rate. */
+  applies_to_rate: z.string().trim().optional().or(z.literal('')),
+  show_in_confirmation: z.coerce.boolean().default(false),
+  is_active: z.coerce.boolean().default(true),
+  sort_index: z.coerce.number().int().min(0).max(9999).default(0),
+});
+
+export type QuestionInput = z.infer<typeof questionSchema>;
+
+/**
+ * Resolve the optional per-rate scope: empty => null; otherwise confirm the rate
+ * belongs to this operator (RLS guarantees it, but we fail loudly rather than
+ * persist a dangling reference). Returns the INVALID symbol when not found.
+ */
+async function resolveRateId(
+  db: Awaited<ReturnType<typeof getTenantDb>>,
+  operatorId: string,
+  rateId: string | undefined,
+): Promise<string | null | typeof INVALID> {
+  const trimmed = (rateId ?? '').trim();
+  if (!trimmed) return null;
+  const found = await db.rate.findFirst({
+    where: { id: trimmed, operator_id: operatorId },
+    select: { id: true },
+  });
+  return found ? found.id : INVALID;
+}
+
+export async function createQuestion(input: QuestionInput): Promise<ActionResult> {
+  try {
+    const { operatorId } = await requirePermission('operator:manage');
+    const parsed = questionSchema.safeParse(input);
+    if (!parsed.success) return { ok: false, errors: zodErrors(parsed.error) };
+    const v = parsed.data;
+
+    const db = await getTenantDb();
+    const activityId = await resolveActivityId(db, operatorId, v.applies_to);
+    if (activityId === INVALID) return { ok: false, errors: { applies_to: 'Unknown activity.' } };
+    const rateId = await resolveRateId(db, operatorId, v.applies_to_rate);
+    if (rateId === INVALID) return { ok: false, errors: { applies_to_rate: 'Unknown rate.' } };
+
+    const id = createId();
+    await db.customerQuestion.create({
+      data: {
+        id,
+        operator_id: operatorId,
+        label: v.label,
+        type: v.type,
+        required: v.required,
+        options: v.type === 'SELECT' ? v.options : [],
+        applies_to: activityId,
+        applies_to_rate: rateId,
+        show_in_confirmation: v.show_in_confirmation,
+        is_active: v.is_active,
+        sort_index: v.sort_index,
+      },
+    });
+
+    revalidatePath('/settings/questions');
+    return { ok: true, id };
+  } catch (err) {
+    if (err instanceof AuthorizationError) return denied();
+    throw err;
+  }
+}
+
+export async function updateQuestion(
+  questionId: string,
+  input: QuestionInput,
+): Promise<ActionResult> {
+  try {
+    const { operatorId } = await requirePermission('operator:manage');
+    if (!questionId) return { ok: false, message: 'Missing question.' };
+    const parsed = questionSchema.safeParse(input);
+    if (!parsed.success) return { ok: false, errors: zodErrors(parsed.error) };
+    const v = parsed.data;
+
+    const db = await getTenantDb();
+    const existing = await db.customerQuestion.findFirst({
+      where: { id: questionId, operator_id: operatorId },
+      select: { id: true },
+    });
+    if (!existing) return { ok: false, message: 'Question not found.' };
+
+    const activityId = await resolveActivityId(db, operatorId, v.applies_to);
+    if (activityId === INVALID) return { ok: false, errors: { applies_to: 'Unknown activity.' } };
+    const rateId = await resolveRateId(db, operatorId, v.applies_to_rate);
+    if (rateId === INVALID) return { ok: false, errors: { applies_to_rate: 'Unknown rate.' } };
+
+    await db.customerQuestion.update({
+      where: { id: questionId },
+      data: {
+        label: v.label,
+        type: v.type,
+        required: v.required,
+        options: v.type === 'SELECT' ? v.options : [],
+        applies_to: activityId,
+        applies_to_rate: rateId,
+        show_in_confirmation: v.show_in_confirmation,
+        is_active: v.is_active,
+        sort_index: v.sort_index,
+      },
+    });
+
+    revalidatePath('/settings/questions');
+    return { ok: true, id: questionId };
+  } catch (err) {
+    if (err instanceof AuthorizationError) return denied();
+    throw err;
+  }
+}
+
+export async function deleteQuestion(questionId: string): Promise<ActionResult> {
+  try {
+    const { operatorId } = await requirePermission('operator:manage');
+    if (!questionId) return { ok: false, message: 'Missing question.' };
+
+    const db = await getTenantDb();
+    const existing = await db.customerQuestion.findFirst({
+      where: { id: questionId, operator_id: operatorId },
+      select: { id: true },
+    });
+    if (!existing) return { ok: false, message: 'Question not found.' };
+
+    await db.customerQuestion.delete({ where: { id: questionId } });
+    revalidatePath('/settings/questions');
+    return { ok: true };
+  } catch (err) {
+    if (err instanceof AuthorizationError) return denied();
+    throw err;
+  }
+}
+
+export async function toggleQuestion(questionId: string): Promise<ActionResult> {
+  try {
+    const { operatorId } = await requirePermission('operator:manage');
+    if (!questionId) return { ok: false, message: 'Missing question.' };
+
+    const db = await getTenantDb();
+    const existing = await db.customerQuestion.findFirst({
+      where: { id: questionId, operator_id: operatorId },
+      select: { is_active: true },
+    });
+    if (!existing) return { ok: false, message: 'Question not found.' };
+
+    await db.customerQuestion.update({
+      where: { id: questionId },
+      data: { is_active: !existing.is_active },
+    });
+    revalidatePath('/settings/questions');
+    return { ok: true, id: questionId };
+  } catch (err) {
+    if (err instanceof AuthorizationError) return denied();
+    throw err;
+  }
 }

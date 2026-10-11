@@ -481,6 +481,83 @@ export async function addOrderNote(input: {
   return { ok: true, message: 'Note added.' };
 }
 
+// ---------------------------------------------------------------------------
+// Message one guest
+// ---------------------------------------------------------------------------
+
+export interface MessageGuestResult extends CardActionResult {
+  /** True when at least one channel actually dispatched (email and/or SMS). */
+  delivered?: boolean;
+}
+
+/**
+ * Message one order's guest a staff-authored note (the card's "Message guest").
+ * Calls the API's POST /api/orders/:id/message (which owns Resend + Twilio),
+ * mirroring rescheduleReservation's header shape. Email is the default channel;
+ * SMS is opt-in and only reaches a guest with a phone on file.
+ */
+export async function messageGuestAction(input: {
+  orderId: string;
+  body: string;
+  email?: boolean;
+  sms?: boolean;
+}): Promise<MessageGuestResult> {
+  let ctx: OperatorContext;
+  try {
+    ctx = await requirePermission('order:write');
+  } catch (err) {
+    if (err instanceof AuthorizationError) {
+      return { ok: false, error: 'You do not have permission to message guests.' };
+    }
+    throw err;
+  }
+
+  if (!input.orderId) return { ok: false, error: 'Missing order.' };
+  if (!input.body?.trim()) return { ok: false, error: 'Write the message first.' };
+
+  const base = (process.env.API_BASE_URL ?? process.env.NEXT_PUBLIC_API_BASE_URL ?? '').replace(
+    /\/+$/,
+    '',
+  );
+  if (!base) return { ok: false, error: 'The messaging service is not configured.' };
+
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+    'x-operator-id': ctx.operatorId,
+  };
+  if (process.env.REQUIRE_CLERK_AUTH !== 'true') {
+    headers['x-dev-staff-id'] = ctx.auth.userId;
+  }
+  if (process.env.INTERNAL_API_TOKEN) {
+    headers.authorization = `Bearer ${process.env.INTERNAL_API_TOKEN}`;
+  }
+
+  try {
+    const res = await fetch(`${base}/api/orders/${encodeURIComponent(input.orderId)}/message`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ body: input.body, email: input.email ?? true, sms: input.sms ?? false }),
+      cache: 'no-store',
+    });
+
+    if (res.ok) {
+      const body = (await res.json().catch(() => null)) as { delivered?: number } | null;
+      const delivered = (body?.delivered ?? 0) > 0;
+      return {
+        ok: true,
+        delivered,
+        message: delivered ? 'Message sent.' : 'Message queued, but no channel was reachable.',
+      };
+    }
+
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    return { ok: false, error: body?.error ?? `Could not send the message (${res.status}).` };
+  } catch (err) {
+    console.error('[calendar] messageGuestAction failed:', err);
+    return { ok: false, error: 'Could not reach the messaging service. Please try again.' };
+  }
+}
+
 /** The pages a reservation change can be visible on. */
 function revalidateReservation(orderId: string): void {
   revalidatePath('/calendar');

@@ -216,6 +216,13 @@ export async function redeemGiftCertificate(
 
     const order = await tx.order.findUnique({ where: { id: input.orderId } });
     if (!order) throw new GiftCertificateError('ORDER_NOT_FOUND', 'Order not found.', 404);
+    // Same payable-state bar as the gift-card path: a cancelled order must never
+    // take money. cancelBooking keeps balance_due as retained liability, so without
+    // this a public redeem would burn a single-use cert into a dead booking — and a
+    // GIFT_CARD Payment has no processor transaction, so it can't be refunded back out.
+    if (order.status === 'CANCELLED') {
+      throw new GiftCertificateError('ORDER_CANCELLED', 'This order has been cancelled.', 409);
+    }
 
     // If tied to a specific activity, that activity must be on the order.
     if (cert.activity_id) {

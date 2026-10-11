@@ -5,7 +5,7 @@
  *
  * All money is integer cents.
  */
-import type { ActivityCategory, ActivityFee } from '@/lib/api';
+import type { ActivityCategory, ActivityFee, OfferedAddOn } from '@/lib/api';
 
 /** The fully-resolved, validated booking selection passed to the client form. */
 export interface CheckoutSelection {
@@ -25,6 +25,12 @@ export interface CheckoutSelection {
    * then falls back to an explicit "estimated" label.
    */
   fees: ActivityFee[];
+  /**
+   * The operator's checkout add-ons for this activity + party size, priced and
+   * stock-resolved by the API. Empty when none are offered (or in DEMO_MODE). The
+   * guest's selections re-price server-side at booking, so these are display only.
+   */
+  addOns: OfferedAddOn[];
   rate: {
     id: string;
     name: string;

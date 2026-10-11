@@ -23,11 +23,9 @@ export function PageHeader({ title, description, actions, className }: PageHeade
       )}
     >
       <div className="min-w-0">
-        <h1 className="truncate text-2xl font-bold tracking-tight text-slate-900">{title}</h1>
-        {/* slate-600, not slate-500: this line sits on the admin page background
-            (bg-slate-100 #f1f5f9), where slate-500 measures 4.34:1 — under the 4.5:1
-            floor. slate-600 is 6.9:1 on the same ground. (1.4.3) */}
-        {description ? <p className="mt-1 text-sm text-slate-600">{description}</p> : null}
+        <h1 className="truncate text-2xl font-bold tracking-tight text-ink">{title}</h1>
+        {/* ink-body (neutral-600) clears AA on the light cool-gray canvas. (1.4.3) */}
+        {description ? <p className="mt-1 text-sm text-ink-body">{description}</p> : null}
       </div>
       {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
     </div>

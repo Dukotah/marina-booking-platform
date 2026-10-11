@@ -106,7 +106,7 @@ export function WeekCalendar({ days, events }: WeekCalendarProps) {
               type="checkbox"
               checked={showInactive}
               onChange={(e) => setShowInactive(e.target.checked)}
-              className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-slate-500"
+              className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 accent-accent focus:ring-slate-500"
             />
             Show cancelled & no-shows ({inactiveCount})
           </label>

@@ -42,7 +42,7 @@ export function OccupancyReportView({ report, brandColor }: OccupancyReportViewP
       <Card>
         <CardHeader className="flex-row items-center justify-between gap-2">
           <CardTitle>Daily occupancy</CardTitle>
-          <span className="flex items-center gap-1.5 text-xs text-slate-400">
+          <span className="flex items-center gap-1.5 text-xs text-ink-muted">
             <CalendarRange className="h-3.5 w-3.5" aria-hidden />
             {rangeLabel(report.range.from, report.range.to)}
           </span>
@@ -82,16 +82,16 @@ export function OccupancyReportView({ report, brandColor }: OccupancyReportViewP
                         style={{ backgroundColor: a.color }}
                         aria-hidden
                       />
-                      <span className="truncate font-medium text-slate-700">{a.activityName}</span>
+                      <span className="truncate font-medium text-ink-body">{a.activityName}</span>
                     </span>
                     <span className="flex shrink-0 items-baseline gap-3 tabular-nums">
-                      <span className="text-xs text-slate-400">
+                      <span className="text-xs text-ink-muted">
                         {a.capacityBooked}/{a.capacityTotal} seats
                       </span>
-                      <span className="font-medium text-slate-900">{formatPercent(a.ratio)}</span>
+                      <span className="font-medium text-ink">{formatPercent(a.ratio)}</span>
                     </span>
                   </div>
-                  <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
+                  <div className="h-2 w-full overflow-hidden rounded-full bg-surface-muted">
                     <div
                       className="h-full rounded-full"
                       style={{ width: barWidth(a.ratio), backgroundColor: a.color }}

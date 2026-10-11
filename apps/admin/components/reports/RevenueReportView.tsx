@@ -40,7 +40,7 @@ export function RevenueReportView({ report, brandColor }: RevenueReportViewProps
       <Card>
         <CardHeader className="flex-row items-center justify-between gap-2">
           <CardTitle>Daily revenue</CardTitle>
-          <span className="flex items-center gap-1.5 text-xs text-slate-400">
+          <span className="flex items-center gap-1.5 text-xs text-ink-muted">
             <CalendarRange className="h-3.5 w-3.5" aria-hidden />
             {rangeLabel(report.range.from, report.range.to)}
           </span>
@@ -64,7 +64,7 @@ export function RevenueReportView({ report, brandColor }: RevenueReportViewProps
             <CardTitle>Money breakdown</CardTitle>
           </CardHeader>
           <CardContent>
-            <dl className="divide-y divide-slate-100 text-sm">
+            <dl className="divide-y divide-line text-sm">
               <BreakdownRow label="Subtotal" value={formatUSD(totals.subtotalCents)} />
               <BreakdownRow
                 label="Discounts"
@@ -92,7 +92,7 @@ export function RevenueReportView({ report, brandColor }: RevenueReportViewProps
                 description="Booked activities will rank here by revenue."
               />
             ) : (
-              <ul className="flex flex-col divide-y divide-slate-100 text-sm">
+              <ul className="flex flex-col divide-y divide-line text-sm">
                 {report.byActivity.map((a) => (
                   <li key={a.activityId} className="flex items-center justify-between gap-3 py-3 first:pt-0 last:pb-0">
                     <span className="flex min-w-0 items-center gap-2">
@@ -101,13 +101,13 @@ export function RevenueReportView({ report, brandColor }: RevenueReportViewProps
                         style={{ backgroundColor: a.color }}
                         aria-hidden
                       />
-                      <span className="truncate font-medium text-slate-700">{a.activityName}</span>
+                      <span className="truncate font-medium text-ink-body">{a.activityName}</span>
                     </span>
                     <span className="flex shrink-0 items-baseline gap-3">
-                      <span className="text-xs text-slate-400">
+                      <span className="text-xs text-ink-muted">
                         {formatNumber(a.bookings)} booking{a.bookings === 1 ? '' : 's'}
                       </span>
-                      <span className="tabular-nums font-medium text-slate-900">
+                      <span className="tabular-nums font-medium text-ink">
                         {formatUSD(a.grossCents)}
                       </span>
                     </span>
@@ -135,14 +135,14 @@ function BreakdownRow({
 }) {
   return (
     <div className="flex items-center justify-between py-2.5 first:pt-0 last:pb-0">
-      <dt className={strong ? 'font-semibold text-slate-900' : 'text-slate-500'}>{label}</dt>
+      <dt className={strong ? 'font-semibold text-ink' : 'text-ink-muted'}>{label}</dt>
       <dd
         className={
           strong
-            ? 'tabular-nums text-base font-semibold text-slate-900'
+            ? 'tabular-nums text-base font-semibold text-ink'
             : muted
-              ? 'tabular-nums text-slate-500'
-              : 'tabular-nums font-medium text-slate-900'
+              ? 'tabular-nums text-ink-muted'
+              : 'tabular-nums font-medium text-ink'
         }
       >
         {value}

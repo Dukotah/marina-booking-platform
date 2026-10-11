@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from 'react';
 import { cn } from '../../lib/cn';
+import { Button } from '../ui';
 import { updateCustomerNotes, type ActionResult } from '../../app/customers/[id]/actions';
 
 export interface NotesEditorProps {
@@ -45,9 +46,9 @@ export function NotesEditor({ customerId, initialNotes, canEdit }: NotesEditorPr
 
   if (!canEdit) {
     return saved.trim() ? (
-      <p className="whitespace-pre-wrap text-sm text-slate-700">{saved}</p>
+      <p className="whitespace-pre-wrap text-sm text-ink-body">{saved}</p>
     ) : (
-      <p className="text-sm text-slate-400">No notes.</p>
+      <p className="text-sm text-ink-muted">No notes.</p>
     );
   }
 
@@ -65,38 +66,32 @@ export function NotesEditor({ customerId, initialNotes, canEdit }: NotesEditorPr
         placeholder="Add internal notes about this customer…"
         aria-label="Customer notes"
         className={cn(
-          'w-full resize-y rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-700 placeholder:text-slate-400 focus:border-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-200',
+          'w-full resize-y rounded-lg border border-line bg-surface p-3 text-sm text-ink shadow-sm placeholder:text-ink-muted focus:border-accent focus:outline-none focus:ring-2 focus:ring-focus',
           isPending && 'opacity-70',
         )}
       />
       <div className="mt-2 flex items-center justify-between gap-3">
         <div className="text-xs">
           {status === 'saved' ? <span className="text-emerald-600">Saved.</span> : null}
-          {status === 'error' ? <span className="text-red-600">{error}</span> : null}
+          {status === 'error' ? <span className="text-rose-600">{error}</span> : null}
         </div>
         <div className="flex items-center gap-2">
           {dirty ? (
-            <button
-              type="button"
+            <Button
+              variant="ghost"
               onClick={() => {
                 setValue(saved);
                 setStatus('idle');
                 setError(null);
               }}
               disabled={isPending}
-              className="rounded-lg px-3 py-1.5 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100"
             >
               Cancel
-            </button>
+            </Button>
           ) : null}
-          <button
-            type="button"
-            onClick={save}
-            disabled={!dirty || isPending}
-            className="rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-          >
+          <Button variant="primary" onClick={save} disabled={!dirty || isPending}>
             {isPending ? 'Saving…' : 'Save notes'}
-          </button>
+          </Button>
         </div>
       </div>
     </div>

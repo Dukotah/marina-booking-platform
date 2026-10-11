@@ -22,6 +22,7 @@ import { OccupancyReportView } from '../../components/reports/OccupancyReportVie
 import { GiftCardReportView } from '../../components/reports/GiftCardReportView';
 import { EndOfDayReportView } from '../../components/reports/EndOfDayReportView';
 import { HeadCountReportView } from '../../components/reports/HeadCountReportView';
+import { RefundsReportView } from '../../components/reports/RefundsReportView';
 
 export const metadata = {
   title: 'Reports',
@@ -129,6 +130,7 @@ export default async function ReportsPage({ searchParams }: ReportsPageProps) {
         ) : null}
         {reportKind === 'end-of-day' ? <EndOfDayReportView report={bundle.endOfDay} /> : null}
         {reportKind === 'head-count' ? <HeadCountReportView report={bundle.headCount} /> : null}
+        {reportKind === 'refunds' ? <RefundsReportView report={bundle.refunds} /> : null}
       </div>
     </AdminShell>
   );

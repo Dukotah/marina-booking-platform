@@ -1,3 +1,59 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/*
+ * Clean SaaS design tokens for the admin — the COOLER sibling of the customer
+ * "Estate" site. One accent (teal), cool-gray canvas, white surfaces, high
+ * contrast ink. These CSS variables are the single source of truth; the
+ * shared primitives in components/ui map Tailwind utilities onto them, and
+ * tailwind.config.ts exposes the same values as theme colors (bg-canvas,
+ * text-ink, border-line, bg-accent, …) so page builders never hardcode a hex.
+ *
+ * DO NOT introduce a second accent or any blue/indigo. Semantic tones below
+ * carry MEANING and are the only non-neutral colors allowed outside the accent.
+ */
+@layer base {
+  :root {
+    /* Canvas + surfaces */
+    --canvas: 247 248 250;        /* #F7F8FA  neutral-50-ish app background */
+    --surface: 255 255 255;       /* #FFFFFF  card / panel surface */
+    --surface-muted: 248 250 252; /* #F8FAFC  subtle inset (table head, wells) */
+    --line: 229 231 235;          /* #E5E7EB  neutral-200 hairline border */
+    --line-strong: 212 212 216;   /* #D4D4D8  neutral-300 stronger divider */
+
+    /* Ink */
+    --ink: 17 24 39;              /* #111827  neutral-900 headings */
+    --ink-body: 75 85 99;         /* #4B5563  neutral-600 body */
+    --ink-muted: 148 163 184;     /* #94A3B8  slate-400 muted/placeholder */
+
+    /* The single accent — teal */
+    --accent: 13 148 136;         /* #0D9488  teal-600 */
+    --accent-hover: 20 184 166;   /* #14B8A6  teal-500 */
+    --accent-tint: 240 253 250;   /* #F0FDFA  teal-50 selected tint */
+    --accent-ink: 15 118 110;     /* #0F766E  teal-700 text on tint */
+
+    /* Focus ring */
+    --ring: 94 234 212;           /* #5EEAD4  teal-300 */
+  }
+}
+
+@layer base {
+  html {
+    /* Clean system sans; no new webfont infra this pass. */
+    font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
+      Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji';
+  }
+
+  body {
+    background-color: rgb(var(--canvas));
+    color: rgb(var(--ink-body));
+  }
+
+  /* Tabular figures everywhere numbers carry meaning (money, counts, times). */
+  .tnum,
+  table,
+  [data-numeric] {
+    font-variant-numeric: tabular-nums;
+  }
+}

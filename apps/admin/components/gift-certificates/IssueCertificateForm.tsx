@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
+import { Button, Input, Select, FieldLabel } from '../ui';
 import { issueGiftCertificateAction } from '../../app/gift-certificates/actions';
 
 export interface ActivityOption {
@@ -19,7 +20,7 @@ export function IssueCertificateForm({ activities }: { activities: ActivityOptio
 
   return (
     <form
-      className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
+      className="flex flex-wrap items-end gap-4 rounded-lg border border-line bg-surface p-5 shadow-sm"
       action={(formData) =>
         startTransition(async () => {
           const r = await issueGiftCertificateAction(formData);
@@ -27,53 +28,41 @@ export function IssueCertificateForm({ activities }: { activities: ActivityOptio
         })
       }
     >
-      <label className="flex flex-col text-xs font-medium text-slate-600">
-        Value (USD)
-        <input
-          name="valueDollars"
-          type="number"
-          min="1"
-          step="0.01"
-          required
-          className="mt-1 w-28 rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900"
-        />
-      </label>
-      <label className="flex flex-col text-xs font-medium text-slate-600">
-        Specific activity (optional)
-        <select
-          name="activityId"
-          className="mt-1 w-56 rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900"
-        >
+      <div>
+        <FieldLabel htmlFor="gc-value">Value (USD)</FieldLabel>
+        <Input id="gc-value" name="valueDollars" type="number" min="1" step="0.01" required className="w-32" />
+      </div>
+      <div>
+        <FieldLabel htmlFor="gc-activity">Specific activity (optional)</FieldLabel>
+        <Select id="gc-activity" name="activityId" className="w-60">
           <option value="">Any — fixed dollar value</option>
           {activities.map((a) => (
             <option key={a.id} value={a.id}>
               {a.name}
             </option>
           ))}
-        </select>
-      </label>
-      <label className="flex flex-col text-xs font-medium text-slate-600">
-        Recipient email (optional)
-        <input
-          name="recipientEmail"
-          type="email"
-          className="mt-1 w-56 rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900"
-        />
-      </label>
-      <button
-        type="submit"
-        disabled={pending}
-        className="rounded-md bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700 disabled:opacity-60"
-      >
+        </Select>
+      </div>
+      <div>
+        <FieldLabel htmlFor="gc-recipient">Recipient email (optional)</FieldLabel>
+        <Input id="gc-recipient" name="recipientEmail" type="email" className="w-60" />
+      </div>
+      <Button type="submit" disabled={pending}>
         {pending ? 'Issuing…' : 'Issue certificate'}
-      </button>
+      </Button>
 
-      {result?.code ? (
-        <p className="w-full text-sm text-emerald-700">
-          Issued <span className="font-mono font-semibold">{result.code}</span>
-        </p>
-      ) : null}
-      {result?.error ? <p className="w-full text-sm text-red-600">{result.error}</p> : null}
+      <div aria-live="polite" className="w-full">
+        {result?.code ? (
+          <p className="text-sm text-emerald-700">
+            Issued <span className="font-mono font-semibold">{result.code}</span>
+          </p>
+        ) : null}
+        {result?.error ? (
+          <p role="alert" className="text-sm text-rose-700">
+            {result.error}
+          </p>
+        ) : null}
+      </div>
     </form>
   );
 }

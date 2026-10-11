@@ -66,7 +66,7 @@ export function ReportControls({
         <div
           role="group"
           aria-label="Sales view"
-          className="inline-flex overflow-hidden rounded-md border border-slate-200"
+          className="inline-flex overflow-hidden rounded-lg border border-line"
         >
           {SALES_VIEWS.map((v) => (
             <SegmentButton
@@ -83,14 +83,14 @@ export function ReportControls({
 
       {controls.basis ? (
         <div className="flex items-center gap-2">
-          <span className="flex items-center gap-1.5 text-xs font-medium text-slate-500">
+          <span className="flex items-center gap-1.5 text-xs font-medium text-ink-body">
             <CalendarClock className="h-3.5 w-3.5" aria-hidden />
             Date basis
           </span>
           <div
             role="group"
             aria-label="Date basis"
-            className="inline-flex overflow-hidden rounded-md border border-slate-200"
+            className="inline-flex overflow-hidden rounded-lg border border-line"
           >
             <SegmentButton
               active={basis === 'order'}
@@ -112,7 +112,7 @@ export function ReportControls({
 
       {controls.activity ? (
         <label className="flex items-center gap-2">
-          <span className="flex items-center gap-1.5 text-xs font-medium text-slate-500">
+          <span className="flex items-center gap-1.5 text-xs font-medium text-ink-body">
             <Sailboat className="h-3.5 w-3.5" aria-hidden />
             Activity
           </span>
@@ -120,7 +120,7 @@ export function ReportControls({
             value={activityId ?? ''}
             disabled={isPending}
             onChange={(e) => setParam('activity', e.target.value || null)}
-            className="rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 focus:border-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            className="h-11 rounded-lg border border-line bg-surface px-2.5 text-xs font-medium text-ink-body focus:border-accent focus:outline-none focus:ring-2 focus:ring-focus"
           >
             <option value="">All activities</option>
             {activities.map((a) => (
@@ -139,10 +139,10 @@ export function ReportControls({
           disabled={isPending}
           onClick={() => setParam('compare', compare ? null : '1')}
           className={cn(
-            'inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors',
+            'inline-flex min-h-11 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium transition-colors',
             compare
-              ? 'border-[var(--brand-color,#0ea5e9)] bg-[var(--brand-color,#0ea5e9)]/10 text-slate-900'
-              : 'border-slate-200 text-slate-600 hover:border-slate-300 hover:text-slate-900',
+              ? 'border-accent bg-accent-tint text-accent-ink'
+              : 'border-line text-ink-body hover:border-line-strong hover:text-ink',
           )}
         >
           <GitCompareArrows className="h-3.5 w-3.5" aria-hidden />
@@ -171,10 +171,10 @@ function SegmentButton({
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        'px-3 py-1.5 text-xs font-medium transition-colors',
+        'min-h-11 px-3 text-xs font-medium transition-colors',
         active
-          ? 'bg-[var(--brand-color,#0ea5e9)] text-white'
-          : 'bg-white text-slate-600 hover:bg-slate-50',
+          ? 'bg-accent text-white'
+          : 'bg-surface text-ink-body hover:bg-surface-muted',
       )}
     >
       {children}

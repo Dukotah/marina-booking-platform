@@ -4,10 +4,7 @@ import { useEffect, useRef } from 'react';
 import { useFormState, useFormStatus } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { saveOnboardingDetailsAction, type PlatformResult } from '../actions';
-
-const FIELD =
-  'mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500';
-const LABEL = 'block text-xs font-medium uppercase tracking-wide text-slate-400';
+import { Button, Input, FieldLabel } from '../../../components/ui';
 
 export interface OnboardingDetailsValues {
   owner: string;
@@ -21,13 +18,9 @@ export interface OnboardingDetailsValues {
 function Submit() {
   const { pending } = useFormStatus();
   return (
-    <button
-      type="submit"
-      disabled={pending}
-      className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400 disabled:opacity-50"
-    >
+    <Button type="submit" variant="primary" size="md" disabled={pending}>
       {pending ? 'Saving…' : 'Save details'}
-    </button>
+    </Button>
   );
 }
 
@@ -61,27 +54,21 @@ export function OnboardingDetailsForm({
     <form action={formAction} className="space-y-4">
       <div className="grid gap-4 sm:grid-cols-2">
         <div>
-          <label className={LABEL} htmlFor="owner">
-            Who owns this on our side
-          </label>
-          <input
+          <FieldLabel htmlFor="owner">Who owns this on our side</FieldLabel>
+          <Input
             id="owner"
             name="owner"
-            className={FIELD}
             defaultValue={values.owner}
             placeholder="e.g. Duke"
             autoComplete="off"
           />
         </div>
         <div>
-          <label className={LABEL} htmlFor="target_live_on">
-            Target go-live date
-          </label>
-          <input
+          <FieldLabel htmlFor="target_live_on">Target go-live date</FieldLabel>
+          <Input
             id="target_live_on"
             name="target_live_on"
             type="date"
-            className={FIELD}
             defaultValue={values.targetLiveOn}
             aria-invalid={e.target_live_on ? true : undefined}
             aria-describedby={e.target_live_on ? 'target_live_on-error' : undefined}
@@ -89,40 +76,31 @@ export function OnboardingDetailsForm({
           <FieldError id="target_live_on-error" msg={e.target_live_on} />
         </div>
         <div>
-          <label className={LABEL} htmlFor="contact_name">
-            Their contact
-          </label>
-          <input
+          <FieldLabel htmlFor="contact_name">Their contact</FieldLabel>
+          <Input
             id="contact_name"
             name="contact_name"
-            className={FIELD}
             defaultValue={values.contactName}
             placeholder="Name at the marina"
             autoComplete="off"
           />
         </div>
         <div>
-          <label className={LABEL} htmlFor="contact_phone">
-            Their phone
-          </label>
-          <input
+          <FieldLabel htmlFor="contact_phone">Their phone</FieldLabel>
+          <Input
             id="contact_phone"
             name="contact_phone"
             type="tel"
-            className={FIELD}
             defaultValue={values.contactPhone}
             autoComplete="off"
           />
         </div>
         <div className="sm:col-span-2">
-          <label className={LABEL} htmlFor="contact_email">
-            Their email
-          </label>
-          <input
+          <FieldLabel htmlFor="contact_email">Their email</FieldLabel>
+          <Input
             id="contact_email"
             name="contact_email"
             type="email"
-            className={FIELD}
             defaultValue={values.contactEmail}
             aria-invalid={e.contact_email ? true : undefined}
             aria-describedby={e.contact_email ? 'contact_email-error' : undefined}
@@ -135,12 +113,12 @@ export function OnboardingDetailsForm({
       <div className="flex items-center gap-3">
         <Submit />
         {state?.ok && (
-          <p aria-live="polite" className="text-sm text-emerald-300">
+          <p aria-live="polite" className="text-sm text-emerald-700">
             Saved.
           </p>
         )}
         {state && !state.ok && state.message && (
-          <p role="alert" className="text-sm text-rose-300">
+          <p role="alert" className="text-sm text-rose-700">
             {state.message}
           </p>
         )}
@@ -152,7 +130,7 @@ export function OnboardingDetailsForm({
 function FieldError({ id, msg }: { id: string; msg?: string }) {
   if (!msg) return null;
   return (
-    <p id={id} role="alert" className="mt-1 text-xs text-rose-300">
+    <p id={id} role="alert" className="mt-1 text-xs text-rose-700">
       {msg}
     </p>
   );

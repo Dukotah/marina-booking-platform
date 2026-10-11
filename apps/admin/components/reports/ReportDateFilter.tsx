@@ -120,16 +120,16 @@ export function ReportDateFilter({ from, to, reportKind }: ReportDateFilterProps
     <div className="flex flex-col gap-3">
       {/* Daily stepper — step through single days for the daily report routine. */}
       <div className="flex flex-wrap items-center gap-2">
-        <div className="flex items-center rounded-md border border-slate-300 bg-white shadow-sm">
+        <div className="flex items-center rounded-lg border border-line bg-surface shadow-sm">
           <button
             type="button"
             onClick={() => stepDay(-1)}
             aria-label="Previous day"
-            className="flex h-9 w-9 items-center justify-center rounded-l-md text-slate-600 hover:bg-slate-100"
+            className="flex h-11 w-11 items-center justify-center rounded-l-lg text-ink-body hover:bg-surface-muted"
           >
             <ChevronLeft className="h-4 w-4" aria-hidden />
           </button>
-          <span className="flex h-9 min-w-[8.5rem] items-center justify-center border-x border-slate-200 px-3 text-sm font-medium text-slate-800">
+          <span className="flex h-11 min-w-[8.5rem] items-center justify-center border-x border-line px-3 text-sm font-medium text-ink">
             {singleDay ? dayLabel(to) : 'Custom range'}
           </span>
           <button
@@ -137,7 +137,7 @@ export function ReportDateFilter({ from, to, reportKind }: ReportDateFilterProps
             onClick={() => stepDay(1)}
             aria-label="Next day"
             disabled={singleDay && to >= today}
-            className="flex h-9 w-9 items-center justify-center rounded-r-md text-slate-600 hover:bg-slate-100 disabled:opacity-40"
+            className="flex h-11 w-11 items-center justify-center rounded-r-lg text-ink-body hover:bg-surface-muted disabled:opacity-40"
           >
             <ChevronRight className="h-4 w-4" aria-hidden />
           </button>
@@ -165,24 +165,24 @@ export function ReportDateFilter({ from, to, reportKind }: ReportDateFilterProps
       {/* Broader ranges + a custom window. */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
       <div className="flex flex-wrap items-end gap-3">
-        <label className="flex flex-col gap-1 text-xs font-medium text-slate-500">
+        <label className="flex flex-col gap-1 text-xs font-medium text-ink-body">
           From
           <input
             type="date"
             value={from}
             max={to}
             onChange={(e) => e.target.value && apply(e.target.value, to)}
-            className="h-9 rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-[var(--brand-color,#0ea5e9)]"
+            className="h-11 rounded-lg border border-line bg-surface px-3 text-sm text-ink focus:border-accent focus:outline-none focus:ring-2 focus:ring-focus"
           />
         </label>
-        <label className="flex flex-col gap-1 text-xs font-medium text-slate-500">
+        <label className="flex flex-col gap-1 text-xs font-medium text-ink-body">
           To
           <input
             type="date"
             value={to}
             min={from}
             onChange={(e) => e.target.value && apply(from, e.target.value)}
-            className="h-9 rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-[var(--brand-color,#0ea5e9)]"
+            className="h-11 rounded-lg border border-line bg-surface px-3 text-sm text-ink focus:border-accent focus:outline-none focus:ring-2 focus:ring-focus"
           />
         </label>
       </div>

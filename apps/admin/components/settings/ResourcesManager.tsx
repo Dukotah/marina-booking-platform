@@ -154,11 +154,11 @@ export function ResourcesManager({
       ) : null}
 
       {resources.length === 0 && !creating ? (
-        <div className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">
+        <div className="rounded-lg border border-dashed border-line-strong bg-surface p-8 text-center text-sm text-ink-muted">
           No resources yet. Add a fleet of boats, jet skis, or guides that your activities share.
         </div>
       ) : (
-        <ul className="divide-y divide-slate-100">
+        <ul className="divide-y divide-line">
           {resources.map((row) =>
             editingId === row.id ? (
               <li key={row.id} className="py-4">
@@ -175,17 +175,17 @@ export function ResourcesManager({
               <li key={row.id} className="flex items-center justify-between gap-4 py-3">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    <span className="truncate text-sm font-medium text-slate-900">{row.name}</span>
+                    <span className="truncate text-sm font-medium text-ink">{row.name}</span>
                     {!row.isActive ? (
-                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500">
+                      <span className="rounded-full bg-surface-muted px-2 py-0.5 text-[11px] font-medium text-ink-muted">
                         Inactive
                       </span>
                     ) : null}
-                    <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-700">
+                    <span className="rounded-full bg-accent-tint px-2 py-0.5 text-[11px] font-medium text-accent-ink">
                       {poolSeats(rowToDraft(row))} seats
                     </span>
                   </div>
-                  <p className="mt-0.5 truncate text-xs text-slate-500">
+                  <p className="mt-0.5 truncate text-xs text-ink-muted">
                     {row.quantity} × {row.seatCapacity} seats
                     {row.outOfServiceQty > 0 ? ` (${row.outOfServiceQty} out of service)` : ''} ·{' '}
                     {activityNames(row.activityIds)}
@@ -197,7 +197,7 @@ export function ResourcesManager({
                     onClick={() => beginEdit(row)}
                     disabled={isPending}
                     aria-label={`Edit ${row.name}`}
-                    className="rounded-md p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                    className="rounded-md p-1.5 text-ink-muted hover:bg-surface-muted hover:text-ink-body"
                   >
                     <Pencil className="h-4 w-4" aria-hidden />
                   </button>
@@ -243,7 +243,7 @@ function ResourceEditor({
   }
 
   return (
-    <div className="mb-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
+    <div className="mb-4 rounded-lg border border-line bg-surface-muted p-4">
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Resource name" required hint="e.g. Pontoon Fleet, Jet Skis, Guides">
           <TextInput
@@ -281,25 +281,25 @@ function ResourceEditor({
         </Field>
       </div>
 
-      <p className="mt-3 text-xs text-slate-500">
-        Bookable capacity: <span className="font-semibold text-slate-700">{poolSeats(draft)} seats</span> across
+      <p className="mt-3 text-xs text-ink-muted">
+        Bookable capacity: <span className="font-semibold text-ink-body">{poolSeats(draft)} seats</span> across
         all linked activities at any overlapping time.
       </p>
 
       <div className="mt-4">
-        <p className="mb-1.5 text-sm font-medium text-slate-700">Activities that share this pool</p>
+        <p className="mb-1.5 text-sm font-medium text-ink-body">Activities that share this pool</p>
         {activities.length === 0 ? (
-          <p className="text-xs text-slate-500">No activities yet — create some first.</p>
+          <p className="text-xs text-ink-muted">No activities yet — create some first.</p>
         ) : (
-          <div className="grid max-h-56 gap-1 overflow-y-auto rounded-lg border border-slate-200 bg-white p-2 sm:grid-cols-2">
+          <div className="grid max-h-56 gap-1 overflow-y-auto rounded-lg border border-line bg-surface p-2 sm:grid-cols-2">
             {activities.map((a) => (
               <label
                 key={a.id}
-                className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
+                className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm text-ink-body hover:bg-surface-muted"
               >
                 <input
                   type="checkbox"
-                  className="h-4 w-4 rounded border-slate-300"
+                  className="h-4 w-4 rounded border-line-strong text-accent accent-accent focus:ring-focus"
                   checked={draft.activity_ids.includes(a.id)}
                   onChange={(e) => toggleActivity(a.id, e.target.checked)}
                 />
