@@ -24,6 +24,8 @@
  * conversion is needed, but the conversion point is centralized in `toSquareMoney`
  * so a non-cent currency would have one place to change.
  */
+import { createHmac, timingSafeEqual } from 'node:crypto';
+import type { Square } from 'square';
 import { PaymentProviderError } from './types.js';
 import type {
   ChargeOutcome,
@@ -36,9 +38,43 @@ import type {
   RefundOutcome,
   SettledChargeResult,
 } from './types.js';
+import {
+  getSquareClient,
+  moneyToCents,
+  toSquareError,
+  toSquareMoney as toSquareMoneyBig,
+  SquarePaymentError,
+} from '../square.js';
 
 /** USD is the only supported settlement currency for now (matches the Stripe driver). */
 const CURRENCY = 'USD';
+
+/**
+ * Verify a Square webhook signature synchronously. Square computes
+ * `base64( HMAC-SHA256( notificationUrl + requestBody, signatureKey ) )` and sends
+ * it in the `x-square-hmacsha256-signature` header — this is byte-for-byte what the
+ * SDK's `WebhooksHelper.verifySignature(...)` does (that helper is async-only in
+ * v46, so we reproduce its algorithm here to keep the seam's sync contract). Uses a
+ * timing-safe comparison. Returns false (never throws) on any mismatch or malformed
+ * signature so the caller can fail closed with a clean 401.
+ */
+function verifySquareSignature(
+  rawBody: string,
+  signatureHeader: string,
+  signatureKey: string,
+  notificationUrl: string,
+): boolean {
+  try {
+    const expected = createHmac('sha256', signatureKey)
+      .update(notificationUrl + rawBody)
+      .digest('base64');
+    const a = Buffer.from(expected);
+    const b = Buffer.from(signatureHeader);
+    return a.length === b.length && timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Thrown by every method whose live behavior still needs the Square SDK + real API
@@ -67,6 +103,13 @@ export interface SquareProviderConfig {
   locationId: string | null;
   /** Webhook signature key — enables webhook signature verification when present. */
   webhookSignatureKey: string | null;
+  /**
+   * The EXACT absolute URL registered as the webhook subscription's notification
+   * endpoint in the Square dashboard. Square signs `HMAC-SHA256(notificationUrl +
+   * rawBody)`, so verification fails unless this matches byte-for-byte. Required
+   * (alongside the signature key) for the signed webhook path to accept anything.
+   */
+  webhookNotificationUrl: string | null;
   /** Which Square environment the keys belong to. Drives the client SDK load + API host. */
   environment: 'sandbox' | 'production';
 }
@@ -91,6 +134,7 @@ export function envSquareConfig(): SquareProviderConfig | null {
       process.env.SQUARE_LOCATION_ID?.trim() ||
       null,
     webhookSignatureKey: process.env.SQUARE_WEBHOOK_SIGNATURE_KEY?.trim() || null,
+    webhookNotificationUrl: process.env.SQUARE_WEBHOOK_NOTIFICATION_URL?.trim() || null,
     environment: rawEnv === 'production' ? 'production' : 'sandbox',
   };
 }
@@ -114,17 +158,33 @@ export function toSquareMoney(amountCents: number): { amount: number; currency: 
  * moment real deliveries arrive — it does not need the SDK, only the parsed body.
  *
  * Square event types we react to:
- *   - payment.updated  -> payment_succeeded / payment_failed (by payment.status)
- *   - refund.updated   -> refund_completed (cumulative is derived from the payment,
- *                         so we surface the refund's own amount and let the ledger
- *                         accumulate; Square does not send a running total on the
- *                         refund object the way Stripe does on the charge).
+ *   - payment.updated  -> payment_succeeded / payment_failed (by payment.status),
+ *                         AND refund_completed when the payment carries a cumulative
+ *                         `refunded_money` (see CUMULATIVE note below).
+ *   - refund.updated   -> refund_completed (this refund's amount as a monotonic floor).
+ *
+ * CUMULATIVE refunded total: unlike Stripe (which sends the charge's running
+ * `amount_refunded` on `charge.refunded`), Square's `refund` webhook object carries
+ * only THIS refund's amount. Square fires a `payment.updated` alongside every refund
+ * whose `payment.refunded_money` IS the cumulative total, so we take the cumulative
+ * from there. The `refund.updated` path still emits this refund's amount as a floor;
+ * the ledger (webhooks.ts) applies `max(stored, event.refundedTotalCents)` so the two
+ * event streams converge monotonically and idempotently under retries.
  */
 export function normalizeSquareEvent(event: {
   type?: unknown;
   data?: { object?: Record<string, unknown> };
 }): NormalizedPaymentEvent[] {
   const object = event.data?.object ?? {};
+  const centsOf = (money: unknown): number => {
+    if (money && typeof money === 'object') {
+      const amount = (money as Record<string, unknown>).amount;
+      // Square v2 webhook JSON serializes Money.amount as a number of cents.
+      if (typeof amount === 'number') return amount;
+      if (typeof amount === 'string' && /^\d+$/.test(amount)) return Number(amount);
+    }
+    return 0;
+  };
   switch (event.type) {
     case 'payment.updated':
     case 'payment.created': {
@@ -135,13 +195,18 @@ export function normalizeSquareEvent(event: {
       const paymentRef = typeof payment.id === 'string' ? payment.id : null;
       if (!paymentRef) return [];
       const status = typeof payment.status === 'string' ? payment.status : '';
+      const events: NormalizedPaymentEvent[] = [];
       if (status === 'COMPLETED' || status === 'APPROVED') {
-        return [{ type: 'payment_succeeded', paymentRef }];
+        events.push({ type: 'payment_succeeded', paymentRef });
+      } else if (status === 'FAILED' || status === 'CANCELED') {
+        events.push({ type: 'payment_failed', paymentRef });
       }
-      if (status === 'FAILED' || status === 'CANCELED') {
-        return [{ type: 'payment_failed', paymentRef }];
+      // CUMULATIVE source: the payment's `refunded_money` is the running total.
+      const refundedTotalCents = centsOf(payment.refunded_money);
+      if (refundedTotalCents > 0) {
+        events.push({ type: 'refund_completed', paymentRef, refundedTotalCents });
       }
-      return [];
+      return events;
     }
     case 'refund.updated':
     case 'refund.created': {
@@ -153,19 +218,9 @@ export function normalizeSquareEvent(event: {
       if (status !== 'COMPLETED') return [];
       const paymentRef = typeof refund.payment_id === 'string' ? refund.payment_id : null;
       if (!paymentRef) return [];
-      const money =
-        refund.amount_money && typeof refund.amount_money === 'object'
-          ? (refund.amount_money as Record<string, unknown>)
-          : {};
-      const amount = typeof money.amount === 'number' ? money.amount : 0;
-      // NOTE: Square's refund object carries THIS refund's amount, not the running
-      // cumulative total Stripe sends. Until the live integration reconciles the
-      // cumulative from the parent payment, we surface this refund's amount. The
-      // go-live step below documents fetching the payment for the true cumulative.
-      // TODO(square-golive): resolve the CUMULATIVE refunded total for `paymentRef`
-      //   via Square `PaymentsApi.getPayment(paymentRef)` (sum of refunded_money) so
-      //   the ledger stays idempotent/monotonic under webhook retries, matching the
-      //   Stripe driver's `charge.amount_refunded` semantics.
+      // This refund's amount only — a monotonic FLOOR. The paired `payment.updated`
+      // (above) carries the true cumulative; the ledger's max() reconciles them.
+      const amount = centsOf(refund.amount_money);
       return [{ type: 'refund_completed', paymentRef, refundedTotalCents: amount }];
     }
     default:
@@ -173,8 +228,24 @@ export function normalizeSquareEvent(event: {
   }
 }
 
+/** Pull the settled-charge fields off a succeeded Square Payment. */
+function settledFromPayment(payment: Square.Payment, fallbackCents: number): SettledChargeResult {
+  const card = payment.cardDetails?.card ?? null;
+  const settledCents = moneyToCents(payment.amountMoney);
+  return {
+    paymentRef: payment.id ?? '',
+    amountCents: settledCents > 0 ? settledCents : fallbackCents,
+    cardBrand: card?.cardBrand ?? null,
+    cardLastFour: card?.last4 ?? null,
+    cardholderName: card?.cardholderName ?? null,
+    receiptUrl: payment.receiptUrl ?? null,
+  };
+}
+
 /** Build a Square-backed PaymentProvider bound to one set of keys. */
 export function createSquareProvider(config: SquareProviderConfig): PaymentProvider {
+  const client = () => getSquareClient(config.accessToken, config.environment);
+
   return {
     providerKey: 'square',
 
@@ -220,33 +291,47 @@ export function createSquareProvider(config: SquareProviderConfig): PaymentProvi
       }
 
       // Amount + idempotency are derived here so the only remaining work is the call.
-      const amountMoney = toSquareMoney(input.amountCents);
-      void amountMoney;
-      void CURRENCY;
+      // The SDK models Money.amount as a bigint; toSquareMoneyBig widens the cents.
+      const amountMoney = toSquareMoneyBig(input.amountCents);
 
-      // TODO(square-golive): create the payment with the Square SDK —
-      //   `new SquareClient({ token: config.accessToken, environment: config.environment })`
-      //   then `client.payments.create({
-      //     sourceId: input.tokenizedSource,   // the Web Payments card nonce
-      //     idempotencyKey: input.idempotencyKey,
-      //     amountMoney,                        // { amount: input.amountCents, currency: 'USD' }
-      //     locationId: config.locationId,
-      //     referenceId: input.orderId,
-      //     note: `Order ${input.orderId}`,
-      //   })`.
-      //   Then map the Square `Payment` to the seam's ChargeOutcome:
-      //     - status COMPLETED/APPROVED -> { status: 'succeeded', ...settledFromPayment }
-      //       (paymentRef = payment.id, amountCents = payment.amountMoney.amount,
-      //        cardBrand/cardLastFour/cardholderName from payment.cardDetails.card,
-      //        receiptUrl = payment.receiptUrl)
-      //     - a declined / failed payment -> { status: 'failed', failure: {...402...} }
-      //   Square card payments do NOT return a Stripe-style `requires_action` 3DS
-      //   intent on the server; Square runs Strong Customer Authentication in the
-      //   browser via `payments.verifyBuyer(...)` BEFORE tokenizing, so the server
-      //   charge path has no challenge branch to implement here.
-      //   Map Square ApiErrors through a `toSquareError(err)` helper (to be added in
-      //   `../square.ts`, mirroring `toPaymentError` in `../stripe.ts`).
-      throw new SquareNotConfiguredError('payments.create is not wired');
+      let payment: Square.Payment | undefined;
+      try {
+        const response = await client().payments.create({
+          sourceId: input.tokenizedSource, // the Web Payments card nonce
+          idempotencyKey: input.idempotencyKey,
+          amountMoney,
+          locationId: config.locationId,
+          referenceId: input.orderId,
+          note: `Order ${input.orderId}`,
+        });
+        payment = response.payment;
+      } catch (err) {
+        const mapped = toSquareError(err);
+        return {
+          status: 'failed',
+          failure: { message: mapped.message, code: mapped.code ?? null, httpStatus: mapped.status },
+        };
+      }
+
+      const status = payment?.status ?? '';
+      // Square card payments do NOT return a Stripe-style `requires_action` 3DS
+      // intent on the server; Square runs Strong Customer Authentication in the
+      // browser via `payments.verifyBuyer(...)` BEFORE tokenizing, so the server
+      // charge path has no challenge branch — it is COMPLETED/APPROVED or a decline.
+      if (payment && (status === 'COMPLETED' || status === 'APPROVED')) {
+        return { status: 'succeeded', ...settledFromPayment(payment, input.amountCents) };
+      }
+
+      // An expected decline (e.g. status FAILED / CANCELED, or a payment the API
+      // declined) is a 402 FAILED outcome — NOT a throw. Only true faults throw.
+      return {
+        status: 'failed',
+        failure: {
+          message: 'The card was declined. Please try a different card.',
+          code: status || 'declined',
+          httpStatus: 402,
+        },
+      };
     },
 
     async confirmChallenge({ action }): Promise<SettledChargeResult | null> {
@@ -272,23 +357,36 @@ export function createSquareProvider(config: SquareProviderConfig): PaymentProvi
     },
 
     async refund(input: ProviderRefundInput): Promise<RefundOutcome> {
-      // Validate now (throws like the other drivers on a bad amount).
-      const amountMoney = toSquareMoney(input.amountCents);
-      void amountMoney;
+      // Validate now (throws like the other drivers on a bad amount). The SDK models
+      // Money.amount as a bigint; toSquareMoneyBig widens the cents.
+      const amountMoney = toSquareMoneyBig(input.amountCents);
 
-      // TODO(square-golive): refund via the Square SDK —
-      //   `client.refunds.refundPayment({
-      //     idempotencyKey: `refund-${input.paymentRef}-${input.amountCents}`,
-      //     paymentId: input.paymentRef,
-      //     amountMoney,                      // { amount: input.amountCents, currency: 'USD' }
-      //     reason: input.reason,             // Square accepts free-text here
-      //   })`.
-      //   Map the returned Square `Refund` to RefundOutcome:
-      //     { refundRef: refund.id, status: refund.status (lower-cased to match the
-      //       seam's 'succeeded'/'pending' convention — Square returns
-      //       PENDING/COMPLETED/REJECTED/FAILED), amountCents: refund.amountMoney.amount }
-      //   Throw a mapped SquarePaymentError on refusal.
-      throw new SquareNotConfiguredError('refunds.refundPayment is not wired');
+      let refund: Square.PaymentRefund | undefined;
+      try {
+        const response = await client().refunds.refundPayment({
+          idempotencyKey: `refund-${input.paymentRef}-${input.amountCents}`,
+          paymentId: input.paymentRef,
+          amountMoney,
+          reason: input.reason, // Square accepts free-text here
+        });
+        refund = response.refund;
+      } catch (err) {
+        throw toSquareError(err);
+      }
+
+      if (!refund) {
+        throw new SquarePaymentError('Square returned no refund for the request', 502);
+      }
+      // Square returns PENDING / COMPLETED / REJECTED / FAILED; lower-case to the
+      // seam's 'succeeded'/'pending' convention (COMPLETED -> succeeded).
+      const raw = (refund.status ?? 'pending').toLowerCase();
+      const status = raw === 'completed' ? 'succeeded' : raw;
+      const refundedCents = moneyToCents(refund.amountMoney);
+      return {
+        refundRef: refund.id,
+        status,
+        amountCents: refundedCents > 0 ? refundedCents : input.amountCents,
+      };
     },
 
     verifyAndParseWebhook(rawBody, header): ParsedWebhook {
@@ -302,16 +400,22 @@ export function createSquareProvider(config: SquareProviderConfig): PaymentProvi
         if (!signature) {
           throw new PaymentProviderError('Missing Square webhook signature', 401, 'square');
         }
-        // TODO(square-golive): verify the signature. Square signs
-        //   HMAC-SHA256( notificationUrl + rawBody, webhookSignatureKey ) and sends
-        //   it base64 in the `x-square-hmacsha256-signature` header. Use the Square
-        //   SDK's `WebhooksHelper.verifySignature({ requestBody: rawBody, signatureHeader:
-        //   signature, signatureKey: config.webhookSignatureKey, notificationUrl })`
-        //   (notificationUrl is this endpoint's absolute public URL). Throw
-        //   `new PaymentProviderError('Invalid Square signature', 401)` on mismatch.
-        //   Do NOT remove this throw before the real check is in place — accepting an
-        //   unverified signed webhook would let anyone post a fake "payment_succeeded".
-        throw new SquareNotConfiguredError('webhook signature verification is not wired');
+        // The notification URL is part of the signed payload. Without the exact
+        // registered URL we CANNOT verify, and must never accept unverified — fail
+        // closed with a config error rather than letting a forged body through.
+        if (!config.webhookNotificationUrl) {
+          throw new SquareNotConfiguredError(
+            'SQUARE_WEBHOOK_NOTIFICATION_URL is required to verify signed webhooks',
+          );
+        }
+        // Square signs base64( HMAC-SHA256( notificationUrl + rawBody, signatureKey) )
+        // and sends it in `x-square-hmacsha256-signature`. This is exactly what
+        // `WebhooksHelper.verifySignature(...)` computes — we reproduce it with
+        // node:crypto because the seam's verifyAndParseWebhook is synchronous while
+        // the v46 helper is async-only. Fail closed (401) on any mismatch.
+        if (!verifySquareSignature(rawBody, signature, config.webhookSignatureKey, config.webhookNotificationUrl)) {
+          throw new PaymentProviderError('Invalid Square signature', 401, 'square');
+        }
       }
 
       // Dev / no-secret path: parse unverified (JSON.parse throws -> route 400s),

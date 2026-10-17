@@ -28,6 +28,7 @@ import { AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { calculatePricing, formatUSD } from '@marina/core';
 import { Button, Card, CardContent, CardHeader } from '@marina/ui';
 import type { StripeConfig } from '@/app/checkout/stripe-config';
+import { EMPTY_SQUARE_CONFIG, type SquareConfig } from '@/app/checkout/square-config';
 import type { PaymentMode } from '@/app/checkout/payment-mode';
 import type { WalletConfig } from '@/app/checkout/wallet-config';
 import { placeOrder } from '@/app/checkout/actions';
@@ -67,6 +68,12 @@ import type {
 interface CheckoutClientProps {
   selection: CheckoutSelection;
   stripe: StripeConfig;
+  /**
+   * Square Web Payments config. Live (configured) only when the API's resolved
+   * provider is Square. Mutually exclusive with a live Stripe config; defaults to
+   * the empty config so the Stripe path is untouched for every other deployment.
+   */
+  square?: SquareConfig;
   /**
    * How this site takes payment: 'card' collects a card online and charges it now;
    * 'reserve' holds the spot with nothing charged online and the full amount left as
@@ -212,6 +219,7 @@ function Section({
 export function CheckoutClient({
   selection,
   stripe,
+  square = EMPTY_SQUARE_CONFIG,
   paymentMode,
   wallet,
   operatorName,
@@ -454,7 +462,7 @@ export function CheckoutClient({
     // Reserve mode takes no card online — the balance is collected at the marina —
     // and a gift card that fully covers the total needs no card either, so the
     // "payments not configured" guard only applies when a card is actually needed.
-    if (!noCardNeeded && !stripe.configured && !stripe.fakeMode) {
+    if (!noCardNeeded && !stripe.configured && !square.configured && !stripe.fakeMode) {
       fail(
         'Online payments are not configured for this site yet, so this booking cannot be completed online. Please contact us to finish your reservation.',
       );
@@ -602,7 +610,8 @@ export function CheckoutClient({
   // A card only has to be configured when a card is actually needed. A gift card
   // that fully covers the total (noCardNeeded) takes no card online, so an
   // unconfigured Stripe must not block that booking — same as reserve mode.
-  const submitDisabled = !noCardNeeded && !stripe.configured && !stripe.fakeMode;
+  const submitDisabled =
+    !noCardNeeded && !stripe.configured && !square.configured && !stripe.fakeMode;
   // The amount the mobile submit bar surfaces: the total minus the gift card's
   // previewed credit (clamped at 0). A PREVIEW — the API re-derives the exact
   // applied amount at redeem time.
@@ -792,8 +801,10 @@ export function CheckoutClient({
                   <PaymentSection
                     ref={paymentRef}
                     stripe={stripe}
+                    square={square}
                     reserveMode={reserveMode}
                     dueAtMarinaCents={reserveDueCents}
+                    amountCents={amountDueNowCents}
                   />
                 </>
               )}

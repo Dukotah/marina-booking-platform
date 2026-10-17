@@ -18,8 +18,10 @@
  */
 import { forwardRef } from 'react';
 import type { StripeConfig } from '@/app/checkout/stripe-config';
+import { EMPTY_SQUARE_CONFIG, type SquareConfig } from '@/app/checkout/square-config';
 import type { PaymentMethodInputHandle } from './payment-methods/types';
 import { StripeElementsInput } from './payment-methods/StripeElementsInput';
+import { SquareWebPaymentsInput } from './payment-methods/SquareWebPaymentsInput';
 import { ReserveAtMarinaInput } from './payment-methods/ReserveAtMarinaInput';
 import { NotConfiguredNotice } from './payment-methods/NotConfiguredNotice';
 
@@ -29,6 +31,12 @@ export type PaymentSectionHandle = PaymentMethodInputHandle;
 interface PaymentSectionProps {
   stripe: StripeConfig;
   /**
+   * Square Web Payments config. Live (configured) ONLY when the API's resolved
+   * provider is Square; the default empty config means "Square not in play" and the
+   * Stripe path is untouched.
+   */
+  square?: SquareConfig;
+  /**
    * Reserve mode: hold the spot with no card taken online; the guest pays on
    * arrival. When true this renders the "Reserve now, pay at the marina" panel
    * regardless of Stripe wiring, and the parent never calls `tokenize`.
@@ -36,10 +44,15 @@ interface PaymentSectionProps {
   reserveMode?: boolean;
   /** Estimated amount owed at the marina (integer cents), shown in reserve mode. */
   dueAtMarinaCents?: number;
+  /** Amount about to be charged (integer cents), forwarded to Square's verifyBuyer SCA. */
+  amountCents?: number;
 }
 
 export const PaymentSection = forwardRef<PaymentSectionHandle, PaymentSectionProps>(
-  function PaymentSection({ stripe, reserveMode, dueAtMarinaCents }, ref) {
+  function PaymentSection(
+    { stripe, square = EMPTY_SQUARE_CONFIG, reserveMode, dueAtMarinaCents, amountCents },
+    ref,
+  ) {
     // --- Reserve mode: pay at the marina, no card online. This is a first-class,
     // customer-presentable mode (PAYMENT_MODE=reserve), independent of Stripe wiring.
     if (reserveMode) {
@@ -53,6 +66,20 @@ export const PaymentSection = forwardRef<PaymentSectionHandle, PaymentSectionPro
           ref={ref}
           publishableKey={stripe.publishableKey}
           testMode={stripe.testMode}
+        />
+      );
+    }
+
+    // --- Live card capture (Square Web Payments). Selected only when the API's
+    // resolved provider is Square; Stripe (above) always wins if also configured.
+    if (square.configured && square.applicationId && square.locationId) {
+      return (
+        <SquareWebPaymentsInput
+          ref={ref}
+          applicationId={square.applicationId}
+          locationId={square.locationId}
+          environment={square.environment}
+          amountCents={amountCents}
         />
       );
     }
