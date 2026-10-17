@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Sailboat, Gift, CreditCard, Ticket, type LucideIcon } from 'lucide-react';
+import { Sailboat, Gift, CreditCard, Ticket, Package, type LucideIcon } from 'lucide-react';
 import { cn } from '../../lib/cn';
 
 interface CatalogTab {
@@ -33,6 +33,7 @@ const CATALOG_TABS: CatalogTab[] = [
     also: ['/gift-cards'],
   },
   { label: 'Memberships', href: '/catalog/memberships', icon: Ticket, also: ['/memberships'] },
+  { label: 'Packages', href: '/catalog/packages', icon: Package, also: [] },
 ];
 
 function matches(pathname: string, prefix: string): boolean {
