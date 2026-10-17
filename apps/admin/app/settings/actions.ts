@@ -1060,3 +1060,165 @@ export async function toggleQuestion(questionId: string): Promise<ActionResult> 
     throw err;
   }
 }
+
+// ===========================================================================
+// Message templates (per-kind transactional copy overrides)
+// ===========================================================================
+
+/**
+ * The transactional messages an operator may override. Mirrors the
+ * `MessageTemplateKind` enum in schema.prisma — one row per kind per operator.
+ * The notifications service reads subject_override / body_override / sms_body_override
+ * and falls back to the built-in default copy for any blank field.
+ */
+const MESSAGE_TEMPLATE_KINDS = [
+  'BOOKING_CONFIRMATION',
+  'BOOKING_REMINDER',
+  'REFUND_RECEIPT',
+  'BOOKING_CANCELLED',
+  'REVIEW_REQUEST',
+] as const;
+
+const messageTemplateSchema = z.object({
+  kind: z.enum(MESSAGE_TEMPLATE_KINDS),
+  enabled: z.coerce.boolean().default(true),
+  /** Blank => fall back to the built-in default subject. */
+  subject_override: z.string().trim().max(200).optional().or(z.literal('')),
+  /** Blank => fall back to the built-in default email body. */
+  body_override: z.string().trim().max(5000).optional().or(z.literal('')),
+  /** Blank => fall back to the built-in compact SMS copy. */
+  sms_body_override: z.string().trim().max(1000).optional().or(z.literal('')),
+});
+
+export type MessageTemplateInput = z.infer<typeof messageTemplateSchema>;
+
+export async function createMessageTemplate(
+  input: MessageTemplateInput,
+): Promise<ActionResult> {
+  try {
+    const { operatorId } = await requirePermission('operator:manage');
+    const parsed = messageTemplateSchema.safeParse(input);
+    if (!parsed.success) return { ok: false, errors: zodErrors(parsed.error) };
+    const v = parsed.data;
+
+    const db = await getTenantDb();
+    // One row per kind per operator (@@unique([operator_id, kind])).
+    const clash = await db.messageTemplate.findFirst({
+      where: { operator_id: operatorId, kind: v.kind },
+      select: { id: true },
+    });
+    if (clash) {
+      return { ok: false, errors: { kind: 'You already have an override for this message.' } };
+    }
+
+    const id = createId();
+    await db.messageTemplate.create({
+      data: {
+        id,
+        operator_id: operatorId,
+        kind: v.kind,
+        enabled: v.enabled,
+        subject_override: emptyToNull(v.subject_override),
+        body_override: emptyToNull(v.body_override),
+        sms_body_override: emptyToNull(v.sms_body_override),
+      },
+    });
+
+    revalidatePath('/settings/messages');
+    return { ok: true, id };
+  } catch (err) {
+    if (err instanceof AuthorizationError) return denied();
+    throw err;
+  }
+}
+
+export async function updateMessageTemplate(
+  templateId: string,
+  input: MessageTemplateInput,
+): Promise<ActionResult> {
+  try {
+    const { operatorId } = await requirePermission('operator:manage');
+    if (!templateId) return { ok: false, message: 'Missing template.' };
+    const parsed = messageTemplateSchema.safeParse(input);
+    if (!parsed.success) return { ok: false, errors: zodErrors(parsed.error) };
+    const v = parsed.data;
+
+    const db = await getTenantDb();
+    const existing = await db.messageTemplate.findFirst({
+      where: { id: templateId, operator_id: operatorId },
+      select: { id: true },
+    });
+    if (!existing) return { ok: false, message: 'Template not found.' };
+
+    // Guard the per-kind uniqueness when the operator re-points a row's kind.
+    const clash = await db.messageTemplate.findFirst({
+      where: { operator_id: operatorId, kind: v.kind, id: { not: templateId } },
+      select: { id: true },
+    });
+    if (clash) {
+      return { ok: false, errors: { kind: 'You already have an override for this message.' } };
+    }
+
+    await db.messageTemplate.update({
+      where: { id: templateId },
+      data: {
+        kind: v.kind,
+        enabled: v.enabled,
+        subject_override: emptyToNull(v.subject_override),
+        body_override: emptyToNull(v.body_override),
+        sms_body_override: emptyToNull(v.sms_body_override),
+      },
+    });
+
+    revalidatePath('/settings/messages');
+    return { ok: true, id: templateId };
+  } catch (err) {
+    if (err instanceof AuthorizationError) return denied();
+    throw err;
+  }
+}
+
+export async function deleteMessageTemplate(templateId: string): Promise<ActionResult> {
+  try {
+    const { operatorId } = await requirePermission('operator:manage');
+    if (!templateId) return { ok: false, message: 'Missing template.' };
+
+    const db = await getTenantDb();
+    const existing = await db.messageTemplate.findFirst({
+      where: { id: templateId, operator_id: operatorId },
+      select: { id: true },
+    });
+    if (!existing) return { ok: false, message: 'Template not found.' };
+
+    await db.messageTemplate.delete({ where: { id: templateId } });
+    revalidatePath('/settings/messages');
+    return { ok: true };
+  } catch (err) {
+    if (err instanceof AuthorizationError) return denied();
+    throw err;
+  }
+}
+
+export async function toggleMessageTemplate(templateId: string): Promise<ActionResult> {
+  try {
+    const { operatorId } = await requirePermission('operator:manage');
+    if (!templateId) return { ok: false, message: 'Missing template.' };
+
+    const db = await getTenantDb();
+    const existing = await db.messageTemplate.findFirst({
+      where: { id: templateId, operator_id: operatorId },
+      select: { enabled: true },
+    });
+    if (!existing) return { ok: false, message: 'Template not found.' };
+
+    await db.messageTemplate.update({
+      where: { id: templateId },
+      data: { enabled: !existing.enabled },
+    });
+    revalidatePath('/settings/messages');
+    return { ok: true, id: templateId };
+  } catch (err) {
+    if (err instanceof AuthorizationError) return denied();
+    throw err;
+  }
+}
