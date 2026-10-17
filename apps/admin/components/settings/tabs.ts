@@ -11,6 +11,7 @@ import {
   Ship,
   FileSignature,
   ListChecks,
+  MessageSquare,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -37,6 +38,7 @@ export const SETTINGS_TABS: SettingsTab[] = [
   { label: 'Approvals', href: '/settings/approvals', icon: Gavel, description: 'Manager sign-off on large payments & refunds' },
   { label: 'Waivers', href: '/settings/waivers', icon: FileSignature, description: 'Liability waiver text & clauses' },
   { label: 'Customer Questions', href: '/settings/questions', icon: ListChecks, description: 'Extra checkout fields & details' },
+  { label: 'Message Templates', href: '/settings/messages', icon: MessageSquare, description: 'Confirmation, reminder & refund copy' },
   { label: 'Fees & Taxes', href: '/settings/fees', icon: Receipt, description: 'Taxes, processing, custom fees' },
   { label: 'Charge Presets', href: '/settings/charges', icon: Fuel, description: 'Reusable fuel, cleaning & damage charges' },
   { label: 'Pricing', href: '/settings/pricing', icon: TrendingUp, description: 'Seasons, weekends, demand' },
