@@ -50,11 +50,19 @@ function statusFromRefundTotals(amountCents: number, refundedCents: number): Pay
   return refundedCents >= amountCents ? 'REFUNDED' : 'PARTIAL_REFUND';
 }
 
-/** Find our Payment row for a processor charge handle (cross-tenant admin lookup). */
+/**
+ * Find our Payment row for a processor charge handle (cross-tenant admin lookup).
+ * Matched on `processor_transaction_id` alone — that handle is the processor's own
+ * unique charge id, so it identifies the row regardless of which processor
+ * (Stripe/Square) issued it. We intentionally do NOT narrow by `processor` here:
+ * the resolved webhook provider already proved the event's authenticity, and
+ * pinning a single processor would silently drop every Square (or future-processor)
+ * event whose row isn't STRIPE.
+ */
 async function findPaymentByRef(paymentRef: string | null | undefined) {
   if (!paymentRef) return null;
   return adminPrisma.payment.findFirst({
-    where: { processor_transaction_id: paymentRef, processor: 'STRIPE' },
+    where: { processor_transaction_id: paymentRef },
     select: { id: true, operator_id: true, amount_cents: true, refunded_cents: true },
   });
 }
