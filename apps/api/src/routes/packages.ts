@@ -5,6 +5,8 @@
  *   GET    /:id              public — price a single package
  *   GET    /manage           staff  — list all packages (activity:read)
  *   POST   /                 staff  — create a package + its items (activity:write)
+ *   PATCH  /:id              staff  — update a package + replace its items (activity:write)
+ *   DELETE /:id              staff  — delete a package + its items (activity:write)
  *
  * All data access is tenant-scoped by RLS. Pricing/shaping lives in
  * services/packages.ts. Mounted by the orchestrator at /api/packages.
@@ -64,6 +66,7 @@ const createSchema = z.object({
   nameExternal: z.string().trim().min(1).max(160),
   descriptionHtml: z.string().trim().max(10_000).optional(),
   priceCents: z.number().int().positive('Package price must be a positive number of cents'),
+  status: z.enum(['ACTIVE', 'INACTIVE']).default('ACTIVE'),
   visibleOnline: z.boolean().default(true),
   sortIndex: z.number().int().nonnegative().default(0),
   items: z
@@ -108,6 +111,7 @@ packages.post('/', requireStaff, async (c) => {
         name_external: input.nameExternal,
         description_html: input.descriptionHtml ?? null,
         price_cents: input.priceCents,
+        status: input.status,
         visible_online: input.visibleOnline,
         sort_index: input.sortIndex,
       },
@@ -127,4 +131,81 @@ packages.post('/', requireStaff, async (c) => {
   });
 
   return c.json({ package: created }, 201);
+});
+
+const updateSchema = createSchema;
+
+/**
+ * PATCH /api/packages/:id — staff update a package and REPLACE its item set.
+ * Items are replaced wholesale (delete-then-recreate) inside one tenant
+ * transaction: a package's line-up is small and the editor always submits the
+ * full list, so a full swap is simpler and race-free versus a diff.
+ */
+packages.patch('/:id', requireStaff, async (c) => {
+  assertPermission(c.var.auth, 'activity:write');
+  const id = c.req.param('id');
+  const body = await c.req.json().catch(() => null);
+  const parsed = updateSchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ error: 'Invalid request', issues: parsed.error.flatten() }, 400);
+  }
+  const input = parsed.data;
+  const operatorId = c.var.operatorId;
+
+  const existing = await c.var.db.package.findUnique({ where: { id } });
+  if (!existing) {
+    return c.json({ error: 'Package not found' }, 404);
+  }
+
+  // Validate each item's rate belongs to its activity (and to this tenant, via RLS).
+  for (const item of input.items) {
+    const rate = await c.var.db.rate.findUnique({ where: { id: item.rateId } });
+    if (!rate || rate.activity_id !== item.activityId) {
+      return c.json({ error: `Rate ${item.rateId} not found for activity ${item.activityId}` }, 400);
+    }
+  }
+
+  const updated = await withTenant(operatorId, async (tx) => {
+    const pkg = await tx.package.update({
+      where: { id },
+      data: {
+        name_internal: input.nameInternal,
+        name_external: input.nameExternal,
+        description_html: input.descriptionHtml ?? null,
+        price_cents: input.priceCents,
+        status: input.status,
+        visible_online: input.visibleOnline,
+        sort_index: input.sortIndex,
+      },
+    });
+    await tx.packageItem.deleteMany({ where: { package_id: id } });
+    await tx.packageItem.createMany({
+      data: input.items.map((it) => ({
+        operator_id: operatorId,
+        package_id: id,
+        activity_id: it.activityId,
+        rate_id: it.rateId,
+        quantity: it.quantity,
+        sort_index: it.sortIndex,
+      })),
+    });
+    const items = await tx.packageItem.findMany({ where: { package_id: id } });
+    return { ...pkg, items };
+  });
+
+  return c.json({ package: updated });
+});
+
+/** DELETE /api/packages/:id — staff delete a package (items cascade). */
+packages.delete('/:id', requireStaff, async (c) => {
+  assertPermission(c.var.auth, 'activity:write');
+  const id = c.req.param('id');
+  const existing = await c.var.db.package.findUnique({ where: { id } });
+  if (!existing) {
+    return c.json({ error: 'Package not found' }, 404);
+  }
+  // PackageItem has onDelete: Cascade on its package relation, so deleting the
+  // parent clears its lines in one statement.
+  await c.var.db.package.delete({ where: { id } });
+  return c.json({ ok: true });
 });

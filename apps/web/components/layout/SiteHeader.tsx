@@ -42,6 +42,7 @@ interface NavItem {
 
 const NAV: NavItem[] = [
   { label: 'Book', href: '/' },
+  { label: 'Packages', href: '/packages' },
   { label: 'My Booking', href: '/account' },
 ];
 
