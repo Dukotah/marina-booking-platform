@@ -309,7 +309,7 @@ export async function updateApprovalSettings(input: ApprovalInput): Promise<Acti
       },
     });
 
-    revalidatePath('/settings/policies');
+    revalidatePath('/settings/approvals');
     return { ok: true };
   } catch (err) {
     if (err instanceof AuthorizationError) return denied();
