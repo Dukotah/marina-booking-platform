@@ -1,0 +1,96 @@
+name: Scheduled sweeps
+
+# Host-agnostic scheduler for the API's internal sweep endpoints
+# (apps/api/src/routes/internal.ts). Each endpoint is idempotent and gated by a
+# shared secret. This replaces "Vercel Cron / Railway cron" with a GitHub Action
+# so the schedule lives with the code and works regardless of where the API runs.
+#
+# Required repository configuration (Settings → Secrets and variables → Actions):
+#   secret  CRON_SECRET    — must equal the API's CRON_SECRET env var
+#   variable API_BASE_URL  — deployed API origin, e.g. https://api.lakesonoma.example
+#                            (no trailing slash)
+#
+# Granularity note: GitHub's scheduled runs are best-effort and can lag a few
+# minutes under load. Every endpoint here is idempotent (REMINDER_SENT /
+# REVIEW_SENT dedup, slot-already-materialized no-op, lazy hold expiry), so a late
+# or doubled tick is harmless.
+
+on:
+  schedule:
+    - cron: '0 * * * *' # hourly — pre-arrival reminders
+    - cron: '15 */6 * * *' # every 6h — post-trip review requests
+    - cron: '30 7 * * *' # daily 07:30 UTC — top up the rolling schedule horizon
+    - cron: '*/30 * * * *' # every 30m — free expired cart holds (housekeeping)
+  workflow_dispatch:
+    inputs:
+      endpoint:
+        description: 'Which sweep to run now'
+        required: true
+        default: 'reminders/run'
+        type: choice
+        options:
+          - reminders/run
+          - reviews/run
+          - schedules/run
+          - holds/sweep
+          - all
+
+concurrency:
+  group: scheduled-sweeps-${{ github.event.schedule || github.event.inputs.endpoint }}
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Guard — required config present
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          API_BASE_URL: ${{ vars.API_BASE_URL }}
+        run: |
+          if [ -z "$API_BASE_URL" ]; then
+            echo "::error::API_BASE_URL repository variable is not set."; exit 1
+          fi
+          if [ -z "$CRON_SECRET" ]; then
+            echo "::error::CRON_SECRET repository secret is not set."; exit 1
+          fi
+
+      - name: Run sweep(s)
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          API_BASE_URL: ${{ vars.API_BASE_URL }}
+          SCHEDULE: ${{ github.event.schedule }}
+          DISPATCH: ${{ github.event.inputs.endpoint }}
+        run: |
+          set -euo pipefail
+          base="${API_BASE_URL%/}"
+
+          hit() {
+            local path="$1"
+            echo "→ POST ${base}/internal/${path}"
+            code=$(curl -sS -o /tmp/resp.json -w '%{http_code}' \
+              -X POST "${base}/internal/${path}" \
+              -H "Authorization: Bearer ${CRON_SECRET}" \
+              --retry 3 --retry-all-errors --max-time 120)
+            echo "  HTTP ${code}"
+            cat /tmp/resp.json 2>/dev/null || true
+            echo
+            if [ "$code" -ge 300 ]; then
+              echo "::error::${path} returned HTTP ${code}"; exit 1
+            fi
+          }
+
+          # Map the matched schedule (or manual dispatch) to the endpoint(s).
+          case "${SCHEDULE:-}" in
+            '0 * * * *')      hit "reminders/run" ;;
+            '15 */6 * * *')   hit "reviews/run" ;;
+            '30 7 * * *')     hit "schedules/run" ;;
+            '*/30 * * * *')   hit "holds/sweep" ;;
+            *)
+              case "${DISPATCH:-all}" in
+                all)
+                  hit "schedules/run"; hit "reminders/run"; hit "reviews/run"; hit "holds/sweep" ;;
+                *) hit "${DISPATCH}" ;;
+              esac
+              ;;
+          esac
