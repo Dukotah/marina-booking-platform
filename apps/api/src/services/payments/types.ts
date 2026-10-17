@@ -197,6 +197,18 @@ export interface ParsedWebhook {
  */
 export type ClientPaymentConfig =
   | { kind: 'stripe-elements'; publishableKey: string; testMode: boolean }
+  | {
+      /**
+       * Square Web Payments SDK. The browser mounts the Square card form with the
+       * application id + location id (both public) and tokenizes the card into the
+       * `tokenizedSource` nonce the server charges. See square-provider.ts.
+       */
+      kind: 'square-web-payments';
+      applicationId: string;
+      locationId: string;
+      /** 'sandbox' loads the Square sandbox Web Payments SDK; 'production' the live one. */
+      environment: 'sandbox' | 'production';
+    }
   | { kind: 'sandbox' }
   | { kind: 'none' };
 
@@ -204,7 +216,7 @@ export type ClientPaymentConfig =
 // The provider interface
 // ===========================================================================
 
-export type PaymentProviderKey = 'stripe' | 'sandbox' | 'none';
+export type PaymentProviderKey = 'stripe' | 'square' | 'sandbox' | 'none';
 
 export interface PaymentProvider {
   readonly providerKey: PaymentProviderKey;

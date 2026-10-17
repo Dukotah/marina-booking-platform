@@ -14,9 +14,12 @@
  *                           SANDBOX=local, or any non-production run by default)
  *   2. per-operator keys  — enabled `stripe` Integration record with a secret_key
  *                           (the admin Settings → Integrations catalog entry)
- *   3. env keys           — STRIPE_SECRET_KEY (single-tenant/platform deployment)
- *   4. sandbox (crude)    — DEV_FAKE_PAYMENTS=true (non-production, no Stripe key)
- *   5. none               — payments are off; money routes answer 501
+ *   3. square (opt-in)    — ONLY when PAYMENT_PROVIDER=square AND SQUARE_ACCESS_TOKEN
+ *                           is present. Stripe stays the default; Square is never
+ *                           selected implicitly. See square-provider.ts.
+ *   4. env keys           — STRIPE_SECRET_KEY (single-tenant/platform deployment)
+ *   5. sandbox (crude)    — DEV_FAKE_PAYMENTS=true (non-production, no Stripe key)
+ *   6. none               — payments are off; money routes answer 501
  *
  * Webhooks arrive with no tenant context, so `getWebhookProvider()` resolves
  * without an operator (env/sandbox only). Per-operator webhook secrets would need
@@ -28,6 +31,7 @@ import { arePaymentsEnabled, isFakePaymentsEnabled, isStripeConfigured } from '.
 import { sandboxPaymentsEnabled } from '../payments-sandbox.js';
 import { createStripeProvider, envStripeConfig } from './stripe-provider.js';
 import type { StripeProviderConfig } from './stripe-provider.js';
+import { createSquareProvider, envSquareConfig } from './square-provider.js';
 import { sandboxProvider } from './sandbox-provider.js';
 import { PaymentsNotConfiguredError } from './types.js';
 import type { ClientPaymentConfig, ParsedWebhook, PaymentProvider } from './types.js';
@@ -118,14 +122,26 @@ export async function getPaymentProvider(operatorId?: string): Promise<PaymentPr
     if (opConfig) return createStripeProvider(opConfig);
   }
 
-  // 3. Platform env keys.
+  // 3. Square — EXPLICIT opt-in only. Selected solely when PAYMENT_PROVIDER=square
+  //    and a Square access token is configured. This never fires by default, so the
+  //    default payment provider is unchanged (sandbox locally, Stripe in prod).
+  if (process.env.PAYMENT_PROVIDER?.trim().toLowerCase() === 'square') {
+    const squareEnv = envSquareConfig();
+    if (squareEnv) return createSquareProvider(squareEnv);
+    // PAYMENT_PROVIDER=square was asked for but no SQUARE_ACCESS_TOKEN is present:
+    // fall through rather than silently charging through Stripe. The `none` provider
+    // (or env Stripe, if its keys exist) handles it — a misconfiguration worth seeing
+    // as a 501, not a surprise Stripe charge.
+  }
+
+  // 4. Platform env keys.
   const env = envStripeConfig();
   if (env) return createStripeProvider(env);
 
-  // 4. Crude dev fake (DEV_FAKE_PAYMENTS with the simulator off).
+  // 5. Crude dev fake (DEV_FAKE_PAYMENTS with the simulator off).
   if (isFakePaymentsEnabled()) return sandboxProvider;
 
-  // 5. Payments are off.
+  // 6. Payments are off.
   return noneProvider;
 }
 
