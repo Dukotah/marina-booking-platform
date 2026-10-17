@@ -16,11 +16,13 @@
  */
 
 import { bookingInputSchema, promoValidateSchema } from '@marina/core';
-import { createBooking, submitPayment } from '@/lib/orders';
+import { createBooking, submitPayment, redeemGiftCard } from '@/lib/orders';
 import {
   validatePromo,
+  checkGiftCard,
   isApiError,
   type CreateBookingPayload,
+  type GiftCardCheck,
   type OrderSummary,
   type PaymentResult,
   type PromoValidation,
@@ -51,6 +53,36 @@ export async function checkPromo(
       error: isApiError(err)
         ? err.message
         : 'We could not check that promo code right now.',
+    };
+  }
+}
+
+/**
+ * Check a gift card's balance/validity before applying it at checkout. Runs
+ * server-side (the API client is server-only). Returns the API's `GiftCardCheck`
+ * (a balance PREVIEW) or a friendly error. This never moves money — the card is
+ * actually drawn down at redeem time, after the order exists, inside `placeOrder`.
+ */
+export async function checkGiftCardBalance(
+  code: string,
+): Promise<
+  | { ok: true; giftCard: GiftCardCheck }
+  | { ok: false; error: string }
+> {
+  const trimmed = code.trim();
+  if (!trimmed) {
+    return { ok: false, error: 'Enter a gift card code.' };
+  }
+
+  try {
+    const giftCard = await checkGiftCard(trimmed);
+    return { ok: true, giftCard };
+  } catch (err) {
+    return {
+      ok: false,
+      error: isApiError(err)
+        ? err.message
+        : 'We could not check that gift card right now.',
     };
   }
 }
@@ -109,6 +141,14 @@ export interface PlaceOrderInput {
     signatureName: string;
   };
   /**
+   * A gift card to apply to this booking. Checked for balance client-side, but
+   * only drawn down HERE, after the order exists: redeem runs against the created
+   * order id so the API is the sole authority on how much the card actually covers.
+   * When it covers the full balance due, no card is charged; a partial card is
+   * followed by a charge for the remainder on `paymentSourceId`.
+   */
+  giftCardCode?: string;
+  /**
    * Tokenized payment source — a Stripe PaymentMethod id from Stripe Elements.
    * Omitted in reserve mode, where no card is taken online.
    */
@@ -154,9 +194,11 @@ export async function placeOrder(
     };
   }
 
-  // Card mode requires a tokenized source before we create anything. Reserve mode
-  // takes no card online, so this guard does not apply there.
-  if (!input.reserve && !input.paymentSourceId) {
+  // Card mode requires a tokenized source before we create anything. Two paths are
+  // exempt: reserve mode (no card online), and a gift-card checkout (the card MIGHT
+  // cover the whole balance — we only find out after redeem, so we defer the
+  // card-required decision to the post-redeem branch below).
+  if (!input.reserve && !input.paymentSourceId && !input.giftCardCode) {
     return {
       ok: false,
       error: 'A payment method is required to complete your booking.',
@@ -196,16 +238,41 @@ export async function placeOrder(
     };
   }
 
-  // Reserve mode: the booking is complete the moment the order exists. No card is
-  // charged online — the order keeps its full balance due for on-arrival payment —
-  // so we skip submitPayment entirely and report the balance the guest will owe.
-  if (input.reserve) {
+  // Gift card: draw it down against the order NOW that the order exists. The API is
+  // the authority on how much it covers (min of card balance / order balance), so
+  // the remaining balance due comes back in the redemption — never guessed here.
+  // We omit amountCents so the card applies to the full outstanding balance.
+  let balanceDueCents = order.balanceDueCents;
+  let giftCardAppliedCents = 0;
+  if (input.giftCardCode) {
+    try {
+      const redemption = await redeemGiftCard(order.id, input.giftCardCode);
+      balanceDueCents = redemption.orderBalanceDueCents;
+      giftCardAppliedCents = redemption.appliedCents;
+    } catch (err) {
+      // The order exists but the gift card did not apply. Surface a clear,
+      // recoverable message — the guest must NOT think they paid. We do not fall
+      // through to a card charge on an unexpected gift-card failure: the guest
+      // chose to pay with the card, so let them retry or remove it deliberately.
+      return {
+        ok: false,
+        error: isApiError(err)
+          ? err.message
+          : 'Your booking was created but the gift card could not be applied. Please try again or remove the gift card.',
+        code: isApiError(err) ? err.code : 'GIFT_CARD_FAILED',
+      };
+    }
+  }
+
+  // Gift card covered the whole balance due → the order is fully paid by the card.
+  // Do NOT require or charge a payment card; report the order as paid (balanceDue 0),
+  // modelled on the reserve-mode branch that returns without submitPayment.
+  if (balanceDueCents <= 0) {
     const payment: PaymentResult = {
       paymentId: '',
-      // Not paid, not failed, no bank challenge — a reservation awaiting payment.
-      status: 'PRE_AUTHORIZED',
-      amountCents: 0,
-      balanceDueCents: order.balanceDueCents,
+      status: 'PAID',
+      amountCents: giftCardAppliedCents,
+      balanceDueCents: 0,
       cardLastFour: null,
       cardBrand: null,
       receiptUrl: null,
@@ -213,9 +280,41 @@ export async function placeOrder(
     return { ok: true, order, payment };
   }
 
+  // Reserve mode: the booking is complete the moment the order exists. No card is
+  // charged online — the order keeps its (post-gift-card) balance due for on-arrival
+  // payment — so we skip submitPayment entirely and report the balance the guest owes.
+  if (input.reserve) {
+    const payment: PaymentResult = {
+      paymentId: '',
+      // Not paid, not failed, no bank challenge — a reservation awaiting payment.
+      status: 'PRE_AUTHORIZED',
+      amountCents: 0,
+      balanceDueCents,
+      cardLastFour: null,
+      cardBrand: null,
+      receiptUrl: null,
+    };
+    return { ok: true, order, payment };
+  }
+
+  // A balance remains after any gift card (partial cover, or no gift card). This is
+  // the card path, so a tokenized source is now required — the top-of-function guard
+  // was deferred for the gift-card case because we only now know a card is needed.
+  if (!input.paymentSourceId) {
+    return {
+      ok: false,
+      error:
+        'Your gift card did not cover the full amount. Please add a card to pay the remaining balance.',
+      code: 'NO_PAYMENT_SOURCE',
+    };
+  }
+
   let payment: PaymentResult;
   try {
-    payment = await submitPayment(order.id, input.paymentSourceId!);
+    // submitPayment charges the order's remaining balance due (set by the API when
+    // the gift card was redeemed), so a partial card leaves only the remainder to
+    // the card — never the full original total.
+    payment = await submitPayment(order.id, input.paymentSourceId);
   } catch (err) {
     // The order exists but payment failed — surface a clear, recoverable message.
     return {

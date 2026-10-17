@@ -24,7 +24,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { FormProvider, useForm, type FieldErrors } from 'react-hook-form';
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { calculatePricing, formatUSD } from '@marina/core';
 import { Button, Card, CardContent, CardHeader } from '@marina/ui';
 import type { StripeConfig } from '@/app/checkout/stripe-config';
@@ -49,6 +49,7 @@ import { GuestPrefillBanner } from './GuestPrefillBanner';
 import { ParticipantFields } from './ParticipantFields';
 import { WaiverSection } from './WaiverSection';
 import { PromoField } from './PromoField';
+import { GiftCardField } from './GiftCardField';
 import { TipSelector } from './TipSelector';
 import { PriceBreakdown } from './PriceBreakdown';
 import { WalletExpress } from './WalletExpress';
@@ -56,6 +57,7 @@ import { PaymentSection, type PaymentSectionHandle } from './PaymentSection';
 import { ChallengeDialog, type ChallengeHandoff } from './ChallengeDialog';
 import { CartHoldTimer } from './CartHoldTimer';
 import type {
+  AppliedGiftCard,
   AppliedPromo,
   CheckoutFormValues,
   CheckoutSelection,
@@ -221,6 +223,10 @@ export function CheckoutClient({
 
   const [quantity, setQuantity] = useState(selection.quantity);
   const [promo, setPromo] = useState<AppliedPromo | null>(null);
+  // An applied gift card (code + previewed balance). The balance drives the
+  // breakdown + the card-required gating only; the authoritative draw-down happens
+  // server-side at redeem time inside placeOrder.
+  const [giftCard, setGiftCard] = useState<AppliedGiftCard | null>(null);
   const [tipCents, setTipCents] = useState(0);
   // Chosen add-on quantities, keyed by add-on id (the AddOns component owns the
   // controls; this is the single source of truth the price breakdown, the tip base
@@ -415,6 +421,20 @@ export function CheckoutClient({
     return totalCents;
   }, [selection.rate.priceCents, selection.fees, quantity, addOnItems, promo, tipCents]);
 
+  // Does the applied gift card's balance cover the whole estimated total? This is a
+  // client-side PREVIEW used only to gate the card UI — the API re-derives the real
+  // coverage at redeem time. We require the estimate to show full cover before we
+  // let the guest skip entering a card; if the server's authoritative total turns
+  // out higher, placeOrder returns a recoverable "add a card" error rather than
+  // letting an unpaid order look paid. Conservative by construction.
+  const giftCardFullyCovers =
+    giftCard != null && giftCard.availableCents >= reserveDueCents;
+
+  // When a gift card fully covers the total, no card is needed online — mirror the
+  // reserve-mode skip (don't tokenize, don't require Stripe configured). Any other
+  // case on the card path still needs a card for the remainder.
+  const noCardNeeded = reserveMode || giftCardFullyCovers;
+
   // A failed validation pass is silent to a screen reader unless something moves
   // focus — the guest would otherwise press "Complete booking" and hear nothing.
   // The errors are taken from the argument rather than read back off `formState`
@@ -432,8 +452,9 @@ export function CheckoutClient({
     setErrorSummary(null);
 
     // Reserve mode takes no card online — the balance is collected at the marina —
-    // so the "payments not configured" guard only applies to the card path.
-    if (!reserveMode && !stripe.configured && !stripe.fakeMode) {
+    // and a gift card that fully covers the total needs no card either, so the
+    // "payments not configured" guard only applies when a card is actually needed.
+    if (!noCardNeeded && !stripe.configured && !stripe.fakeMode) {
       fail(
         'Online payments are not configured for this site yet, so this booking cannot be completed online. Please contact us to finish your reservation.',
       );
@@ -443,9 +464,10 @@ export function CheckoutClient({
     setSubmitting(true);
     try {
       // Card path: tokenize first — no order is created if the card is invalid.
-      // Reserve path: no card is entered, so there is nothing to tokenize.
+      // Reserve path, or a gift card that fully covers the total: no card is
+      // entered, so there is nothing to tokenize.
       let paymentSourceId: string | undefined;
-      if (!reserveMode) {
+      if (!noCardNeeded) {
         const tokenResult = await paymentRef.current?.tokenize();
         if (!tokenResult || !tokenResult.ok) {
           fail(tokenResult?.error ?? 'Please enter your card details.');
@@ -494,6 +516,10 @@ export function CheckoutClient({
               }
             : undefined,
         promoCode: promo?.code,
+        // The gift card to draw down. Redeemed server-side AFTER the order exists,
+        // against the created order id, so the API is the authority on how much it
+        // covers and whether a card is still needed for the remainder.
+        giftCardCode: giftCard?.code,
         tipCents: tipCents > 0 ? tipCents : undefined,
         // Add-on selections: id + resolved quantity ONLY (never a price). The API
         // re-reads each from the catalog and re-derives price + quantity, so a
@@ -573,7 +599,17 @@ export function CheckoutClient({
     : reserveMode
       ? 'Reserve my spot'
       : 'Complete booking';
-  const submitDisabled = !reserveMode && !stripe.configured && !stripe.fakeMode;
+  // A card only has to be configured when a card is actually needed. A gift card
+  // that fully covers the total (noCardNeeded) takes no card online, so an
+  // unconfigured Stripe must not block that booking — same as reserve mode.
+  const submitDisabled = !noCardNeeded && !stripe.configured && !stripe.fakeMode;
+  // The amount the mobile submit bar surfaces: the total minus the gift card's
+  // previewed credit (clamped at 0). A PREVIEW — the API re-derives the exact
+  // applied amount at redeem time.
+  const amountDueNowCents = Math.max(
+    0,
+    reserveDueCents - (giftCard?.availableCents ?? 0),
+  );
 
   return (
     <FormProvider {...methods}>
@@ -714,23 +750,53 @@ export function CheckoutClient({
             <Section
               title={reserveMode ? 'Reservation' : 'Payment'}
               description={
-                reserveMode ? 'Pay when you arrive at the marina.' : 'Secure card payment.'
+                reserveMode
+                  ? 'Pay when you arrive at the marina.'
+                  : giftCardFullyCovers
+                    ? 'Your gift card covers this booking in full.'
+                    : 'Secure card payment.'
               }
             >
-              {/* Express-wallet seam (Apple/Google Pay). Renders nothing unless
-                  NEXT_PUBLIC_ENABLE_WALLET_PAY is on; onExpressPay left unwired
-                  until a real PaymentRequest integration is added. Card path only. */}
-              {!reserveMode && wallet.enabled && (
-                <div className="mb-4">
-                  <WalletExpress enabled={wallet.enabled} />
+              {/* Gift card fully covers the total (card mode only): no card is
+                  taken online. A dedicated notice — not the reserve "pay at the
+                  marina" panel — because the order is paid in full here, not owed
+                  on arrival. The parent skips tokenize when noCardNeeded, so no
+                  PaymentSection handle is needed in this state. */}
+              {!reserveMode && giftCardFullyCovers ? (
+                <div className="rounded-lg border border-hairline bg-bg p-4">
+                  <div className="flex items-start gap-3">
+                    <CheckCircle2
+                      className="mt-0.5 h-5 w-5 shrink-0 text-success"
+                      aria-hidden
+                    />
+                    <div className="space-y-1 text-sm">
+                      <p className="font-semibold text-ink">Paid with gift card</p>
+                      <p className="text-muted">
+                        Gift card {giftCard?.code} covers your total of{' '}
+                        {formatUSD(reserveDueCents)}. No card needed — just complete
+                        your booking below.
+                      </p>
+                    </div>
+                  </div>
                 </div>
+              ) : (
+                <>
+                  {/* Express-wallet seam (Apple/Google Pay). Renders nothing unless
+                      NEXT_PUBLIC_ENABLE_WALLET_PAY is on; onExpressPay left unwired
+                      until a real PaymentRequest integration is added. Card path only. */}
+                  {!reserveMode && wallet.enabled && (
+                    <div className="mb-4">
+                      <WalletExpress enabled={wallet.enabled} />
+                    </div>
+                  )}
+                  <PaymentSection
+                    ref={paymentRef}
+                    stripe={stripe}
+                    reserveMode={reserveMode}
+                    dueAtMarinaCents={reserveDueCents}
+                  />
+                </>
               )}
-              <PaymentSection
-                ref={paymentRef}
-                stripe={stripe}
-                reserveMode={reserveMode}
-                dueAtMarinaCents={reserveDueCents}
-              />
             </Section>
           </div>
 
@@ -781,6 +847,14 @@ export function CheckoutClient({
                       />
                     </div>
 
+                    <div className="border-t border-hairline pt-4">
+                      <GiftCardField
+                        applied={giftCard}
+                        onApply={setGiftCard}
+                        onClear={() => setGiftCard(null)}
+                      />
+                    </div>
+
                     {/* The tip presets are a set of related toggles; grouping
                         them under the visible label gives each button context
                         when a screen reader reaches it out of order. */}
@@ -807,6 +881,7 @@ export function CheckoutClient({
                         unitPriceCents={selection.rate.priceCents}
                         quantity={quantity}
                         promo={promo}
+                        giftCard={giftCard}
                         tipCents={tipCents}
                         fees={selection.fees}
                         addOnItems={addOnItems}
@@ -901,7 +976,7 @@ export function CheckoutClient({
               <span>{submitLabel}</span>
               {!submitting && (
                 <span className="tnum font-semibold">
-                  {formatUSD(reserveDueCents)}
+                  {formatUSD(amountDueNowCents)}
                 </span>
               )}
             </span>
