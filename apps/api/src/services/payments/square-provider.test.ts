@@ -19,7 +19,8 @@
  *   - the pieces that do NOT need the SDK (validation, client config, webhook
  *     parse/normalize, money conversion) are really implemented.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { createHmac } from 'node:crypto';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   createSquareProvider,
   envSquareConfig,
@@ -31,11 +32,34 @@ import {
 import { getPaymentProvider, PaymentProviderError } from './index.js';
 import type { PaymentProvider } from './types.js';
 
+// Mock ONLY the low-level Square client factory in ../square.ts so the LIVE calls
+// (payments.create / refunds.refundPayment) hit an in-memory fake — no network, no
+// SDK. The real money/error helpers (toSquareMoney, moneyToCents, toSquareError,
+// SquarePaymentError) are preserved via importActual so mapping behavior is genuine.
+const squareClientMock = vi.hoisted(() => ({
+  paymentsCreate: vi.fn(),
+  refundsRefundPayment: vi.fn(),
+}));
+vi.mock('../square.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../square.js')>();
+  return {
+    ...actual,
+    getSquareClient: () => ({
+      payments: { create: squareClientMock.paymentsCreate },
+      refunds: { refundPayment: squareClientMock.refundsRefundPayment },
+    }),
+  };
+});
+// The mapped-error path uses the SDK's SquareError class; import it lazily for the
+// decline-throws test so ../square.ts's toSquareError recognizes it.
+import { SquareError } from 'square';
+
 const FULL_CONFIG: SquareProviderConfig = {
   accessToken: 'sq0atp-test-token',
   applicationId: 'sq0idp-test-app',
   locationId: 'LHELLOWORLD',
   webhookSignatureKey: null,
+  webhookNotificationUrl: null,
   environment: 'sandbox',
 };
 
@@ -51,6 +75,7 @@ const ENV_KEYS = [
   'SQUARE_LOCATION_ID',
   'NEXT_PUBLIC_SQUARE_LOCATION_ID',
   'SQUARE_WEBHOOK_SIGNATURE_KEY',
+  'SQUARE_WEBHOOK_NOTIFICATION_URL',
   'SQUARE_ENVIRONMENT',
 ] as const;
 const saved: Record<string, string | undefined> = {};
@@ -202,33 +227,16 @@ describe('Square provider — implemented-without-SDK behavior', () => {
   });
 });
 
-describe('Square provider — unimplemented LIVE calls throw, never fake success', () => {
+describe('Square provider — not-applicable / fail-closed paths', () => {
   const provider = createSquareProvider(FULL_CONFIG);
 
-  it('charge (valid amount) throws SquareNotConfiguredError — no silent success', async () => {
-    await expect(
-      provider.charge({
-        orderId: 'o1',
-        tokenizedSource: 'cnon:card-nonce-ok',
-        amountCents: 2500,
-        idempotencyKey: 'k1',
-      }),
-    ).rejects.toBeInstanceOf(SquareNotConfiguredError);
-  });
-
-  it('refund (valid amount) throws SquareNotConfiguredError', async () => {
-    await expect(
-      provider.refund({ paymentRef: 'pay_1', amountCents: 500 }),
-    ).rejects.toBeInstanceOf(SquareNotConfiguredError);
-  });
-
-  it('confirmChallenge complete throws SquareNotConfiguredError', async () => {
+  it('confirmChallenge complete throws SquareNotConfiguredError (Square has no server SCA step)', async () => {
     await expect(
       provider.confirmChallenge({ intentId: 'x', action: 'complete', operatorId: 'op' }),
     ).rejects.toBeInstanceOf(SquareNotConfiguredError);
   });
 
-  it('a signed webhook throws until real verification is wired (never accepts unverified)', () => {
+  it('a signed webhook with NO notification url fails closed (never accepts unverified)', () => {
     const signed = createSquareProvider({ ...FULL_CONFIG, webhookSignatureKey: 'wsk_123' });
     expect(() =>
       signed.verifyAndParseWebhook('{}', (name) =>
@@ -238,7 +246,11 @@ describe('Square provider — unimplemented LIVE calls throw, never fake success
   });
 
   it('a signed webhook with a missing signature header is a 401', () => {
-    const signed = createSquareProvider({ ...FULL_CONFIG, webhookSignatureKey: 'wsk_123' });
+    const signed = createSquareProvider({
+      ...FULL_CONFIG,
+      webhookSignatureKey: 'wsk_123',
+      webhookNotificationUrl: 'https://api.example.com/webhooks/stripe',
+    });
     try {
       signed.verifyAndParseWebhook('{}', () => undefined);
       expect.unreachable('should have thrown');
@@ -253,6 +265,222 @@ describe('Square provider — unimplemented LIVE calls throw, never fake success
     expect(err).toBeInstanceOf(PaymentProviderError);
     expect(err.status).toBe(501);
     expect(err.message).toContain('Square live integration not configured');
+  });
+});
+
+describe('Square provider — LIVE charge (mocked SDK)', () => {
+  beforeEach(() => {
+    squareClientMock.paymentsCreate.mockReset();
+    squareClientMock.refundsRefundPayment.mockReset();
+  });
+
+  it('maps a COMPLETED payment to a succeeded ChargeOutcome with the payment id as the ref', async () => {
+    squareClientMock.paymentsCreate.mockResolvedValue({
+      payment: {
+        id: 'sqpay_123',
+        status: 'COMPLETED',
+        amountMoney: { amount: 2500n, currency: 'USD' },
+        receiptUrl: 'https://squareup.com/receipt/abc',
+        cardDetails: {
+          card: { cardBrand: 'VISA', last4: '1111', cardholderName: 'Ada Lovelace' },
+        },
+      },
+    });
+
+    const provider = createSquareProvider(FULL_CONFIG);
+    const outcome = await provider.charge({
+      orderId: 'o1',
+      tokenizedSource: 'cnon:card-nonce-ok',
+      amountCents: 2500,
+      idempotencyKey: 'k1',
+    });
+
+    expect(outcome.status).toBe('succeeded');
+    if (outcome.status === 'succeeded') {
+      expect(outcome.paymentRef).toBe('sqpay_123');
+      expect(outcome.amountCents).toBe(2500);
+      expect(outcome.cardBrand).toBe('VISA');
+      expect(outcome.cardLastFour).toBe('1111');
+      expect(outcome.cardholderName).toBe('Ada Lovelace');
+      expect(outcome.receiptUrl).toBe('https://squareup.com/receipt/abc');
+    }
+
+    // The SDK was called with the derived money (bigint), source, idempotency, location.
+    const req = squareClientMock.paymentsCreate.mock.calls[0][0];
+    expect(req).toMatchObject({
+      sourceId: 'cnon:card-nonce-ok',
+      idempotencyKey: 'k1',
+      locationId: 'LHELLOWORLD',
+      referenceId: 'o1',
+      amountMoney: { amount: 2500n, currency: 'USD' },
+    });
+  });
+
+  it('maps an APPROVED payment to succeeded as well', async () => {
+    squareClientMock.paymentsCreate.mockResolvedValue({
+      payment: { id: 'sqpay_appr', status: 'APPROVED', amountMoney: { amount: 999n, currency: 'USD' } },
+    });
+    const outcome = await createSquareProvider(FULL_CONFIG).charge({
+      orderId: 'o2',
+      tokenizedSource: 'cnon:ok',
+      amountCents: 999,
+      idempotencyKey: 'k2',
+    });
+    expect(outcome.status).toBe('succeeded');
+  });
+
+  it('maps a declined payment (status FAILED) to a 402 failed outcome — NOT a throw', async () => {
+    squareClientMock.paymentsCreate.mockResolvedValue({
+      payment: { id: 'sqpay_dec', status: 'FAILED', amountMoney: { amount: 2500n, currency: 'USD' } },
+    });
+    const outcome = await createSquareProvider(FULL_CONFIG).charge({
+      orderId: 'o3',
+      tokenizedSource: 'cnon:card-nonce-declined',
+      amountCents: 2500,
+      idempotencyKey: 'k3',
+    });
+    expect(outcome.status).toBe('failed');
+    if (outcome.status === 'failed') {
+      expect(outcome.failure.httpStatus).toBe(402);
+      expect(outcome.failure.code).toBe('FAILED');
+    }
+  });
+
+  it('maps a thrown SquareError card decline to a 402 failed outcome (not a 5xx throw)', async () => {
+    squareClientMock.paymentsCreate.mockRejectedValue(
+      new SquareError({
+        message: 'Card declined.',
+        statusCode: 402,
+        body: { errors: [{ category: 'PAYMENT_METHOD_ERROR', code: 'CARD_DECLINED', detail: 'Card declined.' }] },
+      }),
+    );
+    const outcome = await createSquareProvider(FULL_CONFIG).charge({
+      orderId: 'o4',
+      tokenizedSource: 'cnon:card-nonce-declined',
+      amountCents: 2500,
+      idempotencyKey: 'k4',
+    });
+    expect(outcome.status).toBe('failed');
+    if (outcome.status === 'failed') {
+      expect(outcome.failure.httpStatus).toBe(402);
+    }
+  });
+});
+
+describe('Square provider — LIVE refund (mocked SDK)', () => {
+  beforeEach(() => {
+    squareClientMock.refundsRefundPayment.mockReset();
+  });
+
+  it('maps a COMPLETED refund to a succeeded RefundOutcome (status lower-cased)', async () => {
+    squareClientMock.refundsRefundPayment.mockResolvedValue({
+      refund: { id: 'sqref_1', status: 'COMPLETED', amountMoney: { amount: 500n, currency: 'USD' } },
+    });
+    const outcome = await createSquareProvider(FULL_CONFIG).refund({
+      paymentRef: 'sqpay_123',
+      amountCents: 500,
+      reason: 'customer request',
+    });
+    expect(outcome).toEqual({ refundRef: 'sqref_1', status: 'succeeded', amountCents: 500 });
+
+    const req = squareClientMock.refundsRefundPayment.mock.calls[0][0];
+    expect(req).toMatchObject({
+      paymentId: 'sqpay_123',
+      idempotencyKey: 'refund-sqpay_123-500',
+      amountMoney: { amount: 500n, currency: 'USD' },
+      reason: 'customer request',
+    });
+  });
+
+  it('maps a PENDING refund to a pending RefundOutcome', async () => {
+    squareClientMock.refundsRefundPayment.mockResolvedValue({
+      refund: { id: 'sqref_2', status: 'PENDING', amountMoney: { amount: 250n, currency: 'USD' } },
+    });
+    const outcome = await createSquareProvider(FULL_CONFIG).refund({
+      paymentRef: 'sqpay_123',
+      amountCents: 250,
+    });
+    expect(outcome.status).toBe('pending');
+    expect(outcome.refundRef).toBe('sqref_2');
+  });
+
+  it('throws a mapped PaymentProviderError when Square rejects the refund', async () => {
+    squareClientMock.refundsRefundPayment.mockRejectedValue(
+      new SquareError({ message: 'Already refunded', statusCode: 400 }),
+    );
+    await expect(
+      createSquareProvider(FULL_CONFIG).refund({ paymentRef: 'sqpay_123', amountCents: 500 }),
+    ).rejects.toBeInstanceOf(PaymentProviderError);
+  });
+});
+
+describe('Square provider — webhook signature verification', () => {
+  const SIGNED_CONFIG: SquareProviderConfig = {
+    ...FULL_CONFIG,
+    webhookSignatureKey: 'wsk_test_key',
+    webhookNotificationUrl: 'https://api.example.com/webhooks/stripe',
+  };
+
+  // Compute the signature exactly as Square does: base64(HMAC-SHA256(url + body, key)).
+  function squareSignature(body: string): string {
+    return createHmac('sha256', SIGNED_CONFIG.webhookSignatureKey as string)
+      .update((SIGNED_CONFIG.webhookNotificationUrl as string) + body)
+      .digest('base64');
+  }
+
+  it('ACCEPTS a correctly signed webhook and parses + normalizes it', () => {
+    const body = JSON.stringify({
+      event_id: 'evt_signed',
+      type: 'payment.updated',
+      data: { object: { payment: { id: 'pay_signed', status: 'COMPLETED' } } },
+    });
+    const sig = squareSignature(body);
+    const parsed = createSquareProvider(SIGNED_CONFIG).verifyAndParseWebhook(body, (name) =>
+      name === 'x-square-hmacsha256-signature' ? sig : undefined,
+    );
+    expect(parsed).toEqual({
+      providerEventId: 'evt_signed',
+      providerEventType: 'payment.updated',
+      events: [{ type: 'payment_succeeded', paymentRef: 'pay_signed' }],
+    });
+  });
+
+  it('REJECTS a webhook whose signature does not match (401)', () => {
+    const body = JSON.stringify({ event_id: 'evt_bad', type: 'payment.updated' });
+    try {
+      createSquareProvider(SIGNED_CONFIG).verifyAndParseWebhook(body, (name) =>
+        name === 'x-square-hmacsha256-signature' ? 'not-the-real-signature' : undefined,
+      );
+      expect.unreachable('should have thrown on a bad signature');
+    } catch (err) {
+      expect(err).toBeInstanceOf(PaymentProviderError);
+      expect((err as PaymentProviderError).status).toBe(401);
+    }
+  });
+
+  it('REJECTS a tampered body under a signature computed for a different body (401)', () => {
+    const sig = squareSignature('{"a":1}');
+    expect(() =>
+      createSquareProvider(SIGNED_CONFIG).verifyAndParseWebhook('{"a":2}', (name) =>
+        name === 'x-square-hmacsha256-signature' ? sig : undefined,
+      ),
+    ).toThrow(PaymentProviderError);
+  });
+
+  it('surfaces the CUMULATIVE refunded total from payment.updated refunded_money', () => {
+    expect(
+      normalizeSquareEvent({
+        type: 'payment.updated',
+        data: {
+          object: {
+            payment: { id: 'pay_r', status: 'COMPLETED', refunded_money: { amount: 1500 } },
+          },
+        },
+      }),
+    ).toEqual([
+      { type: 'payment_succeeded', paymentRef: 'pay_r' },
+      { type: 'refund_completed', paymentRef: 'pay_r', refundedTotalCents: 1500 },
+    ]);
   });
 });
 
@@ -272,6 +500,7 @@ describe('Square env config reader', () => {
       applicationId: 'sq0idp-x',
       locationId: 'LXYZ',
       webhookSignatureKey: 'wsk',
+      webhookNotificationUrl: null,
       environment: 'production',
     });
   });

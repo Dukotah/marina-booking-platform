@@ -20,26 +20,39 @@
 import { request } from '@/lib/api';
 import { DEMO_MODE } from '@/lib/demo/config';
 import { getStripeConfig, type StripeConfig } from './stripe-config';
+import { EMPTY_SQUARE_CONFIG, type SquareConfig } from './square-config';
 import { getPaymentMode, type PaymentMode } from './payment-mode';
 
 /** The API's GET /api/payments/config response. */
 interface PaymentsConfigResponse {
-  provider: 'stripe' | 'sandbox' | 'none';
+  provider: 'stripe' | 'square' | 'sandbox' | 'none';
   enabled: boolean;
   paymentMode: PaymentMode;
   client:
     | { kind: 'stripe-elements'; publishableKey: string; testMode: boolean }
+    | {
+        kind: 'square-web-payments';
+        applicationId: string;
+        locationId: string;
+        environment: 'sandbox' | 'production';
+      }
     | { kind: 'sandbox' }
     | { kind: 'none' };
 }
 
 export interface ResolvedPaymentConfig {
   stripe: StripeConfig;
+  /**
+   * The Square Web Payments config when the API's resolved provider is Square;
+   * otherwise the empty (not-configured) config. Mutually exclusive with a live
+   * Stripe config — Stripe stays the default and is untouched by Square.
+   */
+  square: SquareConfig;
   paymentMode: PaymentMode;
 }
 
 /** Map the API's client config onto the StripeConfig the components consume. */
-function fromApi(config: PaymentsConfigResponse, envFallback: StripeConfig): StripeConfig {
+function stripeFromApi(config: PaymentsConfigResponse, envFallback: StripeConfig): StripeConfig {
   switch (config.client.kind) {
     case 'stripe-elements':
       return {
@@ -48,6 +61,10 @@ function fromApi(config: PaymentsConfigResponse, envFallback: StripeConfig): Str
         testMode: config.client.testMode,
         fakeMode: false,
       };
+    case 'square-web-payments':
+      // Square is live — Stripe is NOT the collector. Report Stripe as unconfigured
+      // so PaymentSection falls through to the Square branch (and never loads Stripe.js).
+      return { configured: false, publishableKey: null, testMode: true, fakeMode: false };
     case 'sandbox':
       // The API will simulate the charge — same posture as env fake mode. The env
       // publishable key (if any) is irrelevant: sandbox never loads Stripe.js.
@@ -57,6 +74,17 @@ function fromApi(config: PaymentsConfigResponse, envFallback: StripeConfig): Str
       // still renders exactly what it did before this seam existed.
       return envFallback;
   }
+}
+
+/** Map the API's client config onto the SquareConfig the Square component consumes. */
+function squareFromApi(config: PaymentsConfigResponse): SquareConfig {
+  if (config.client.kind !== 'square-web-payments') return EMPTY_SQUARE_CONFIG;
+  return {
+    configured: Boolean(config.client.applicationId && config.client.locationId),
+    applicationId: config.client.applicationId,
+    locationId: config.client.locationId,
+    environment: config.client.environment,
+  };
 }
 
 /**
@@ -69,7 +97,7 @@ export async function getPaymentConfig(): Promise<ResolvedPaymentConfig> {
 
   // DEMO_MODE has no live API: the cookie-backed demo store simulates payment.
   if (DEMO_MODE) {
-    return { stripe: envConfig, paymentMode: envMode };
+    return { stripe: envConfig, square: EMPTY_SQUARE_CONFIG, paymentMode: envMode };
   }
 
   try {
@@ -78,7 +106,8 @@ export async function getPaymentConfig(): Promise<ResolvedPaymentConfig> {
       cache: 'no-store',
     });
     return {
-      stripe: fromApi(data, envConfig),
+      stripe: stripeFromApi(data, envConfig),
+      square: squareFromApi(data),
       // The deployment's own PAYMENT_MODE (when set) stays authoritative for the
       // UI it renders; the API's answer covers deployments that only set it there.
       paymentMode: process.env.PAYMENT_MODE || process.env.NEXT_PUBLIC_PAYMENT_MODE
@@ -87,6 +116,6 @@ export async function getPaymentConfig(): Promise<ResolvedPaymentConfig> {
     };
   } catch {
     // API unreachable or endpoint missing — behave exactly as pre-seam checkout.
-    return { stripe: envConfig, paymentMode: envMode };
+    return { stripe: envConfig, square: EMPTY_SQUARE_CONFIG, paymentMode: envMode };
   }
 }
