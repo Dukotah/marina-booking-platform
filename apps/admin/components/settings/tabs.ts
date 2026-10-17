@@ -2,6 +2,7 @@ import {
   TrendingUp,
   Palette,
   ShieldCheck,
+  Gavel,
   Receipt,
   Fuel,
   MapPin,
@@ -33,6 +34,7 @@ export interface SettingsTab {
 export const SETTINGS_TABS: SettingsTab[] = [
   { label: 'Branding', href: '/settings/branding', icon: Palette, description: 'Name, logo, brand color' },
   { label: 'Policies', href: '/settings/policies', icon: ShieldCheck, description: 'Adult age, cancellation, check-in' },
+  { label: 'Approvals', href: '/settings/approvals', icon: Gavel, description: 'Manager sign-off on large payments & refunds' },
   { label: 'Waivers', href: '/settings/waivers', icon: FileSignature, description: 'Liability waiver text & clauses' },
   { label: 'Customer Questions', href: '/settings/questions', icon: ListChecks, description: 'Extra checkout fields & details' },
   { label: 'Fees & Taxes', href: '/settings/fees', icon: Receipt, description: 'Taxes, processing, custom fees' },
