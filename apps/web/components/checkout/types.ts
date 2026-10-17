@@ -76,3 +76,15 @@ export interface AppliedPromo {
   /** Percent (10 = 10%) or flat cents, per discountType. */
   discountValue: number;
 }
+
+/**
+ * An applied, server-checked gift card. The balance is a PREVIEW shown to the
+ * guest; the authoritative draw-down happens server-side at redeem time (after the
+ * order exists), so this figure only drives the breakdown + card-required gating —
+ * it never decides the amount charged.
+ */
+export interface AppliedGiftCard {
+  code: string;
+  /** Remaining stored value on the card at check time (integer cents). */
+  availableCents: number;
+}

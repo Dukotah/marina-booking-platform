@@ -21,12 +21,18 @@
  */
 import { calculatePricing, formatUSD } from '@marina/core';
 import type { ActivityFee } from '@/lib/api';
-import type { AppliedPromo } from './types';
+import type { AppliedGiftCard, AppliedPromo } from './types';
 
 interface PriceBreakdownProps {
   unitPriceCents: number;
   quantity: number;
   promo: AppliedPromo | null;
+  /**
+   * An applied gift card. Shown as a credit against the total (the lesser of its
+   * previewed balance and the total), with the remaining balance due below. This
+   * is a PREVIEW — the API re-derives the exact applied amount at redeem time.
+   */
+  giftCard?: AppliedGiftCard | null;
   tipCents: number;
   /**
    * Selected add-ons as pricing line items (unit price × resolved quantity). Folded
@@ -71,6 +77,7 @@ export function PriceBreakdown({
   unitPriceCents,
   quantity,
   promo,
+  giftCard,
   tipCents,
   fees,
   addOnItems = [],
@@ -94,6 +101,13 @@ export function PriceBreakdown({
   // show; only then are the tax/processing lines meaningful. Without them we fall
   // back to the pre-fee "estimated total" and keep the disclaimer.
   const hasFees = fees.length > 0;
+
+  // Gift-card credit PREVIEW: the lesser of the card's balance and the total. The
+  // API re-derives the exact applied amount at redeem time, so this is display-only.
+  const giftCardAppliedCents = giftCard
+    ? Math.min(giftCard.availableCents, pricing.totalCents)
+    : 0;
+  const balanceDueCents = Math.max(0, pricing.totalCents - giftCardAppliedCents);
 
   return (
     <div className="space-y-2">
@@ -125,8 +139,21 @@ export function PriceBreakdown({
       <Row
         label={hasFees ? 'Total' : 'Estimated total'}
         value={formatUSD(pricing.totalCents)}
-        emphasis
+        emphasis={giftCardAppliedCents === 0}
       />
+      {giftCardAppliedCents > 0 && (
+        <>
+          <Row
+            label={`Gift card (${giftCard!.code})`}
+            value={`−${formatUSD(giftCardAppliedCents)}`}
+          />
+          <Row
+            label={balanceDueCents > 0 ? 'Balance due' : 'Balance due (paid in full)'}
+            value={formatUSD(balanceDueCents)}
+            emphasis
+          />
+        </>
+      )}
       {!hasFees && (
         <p className="pt-1 text-xs text-muted">
           Applicable taxes and processing fees are calculated and added at payment.

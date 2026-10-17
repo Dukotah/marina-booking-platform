@@ -188,6 +188,43 @@ export async function cancelBooking(
   return mapApiOrder(data.order);
 }
 
+/** The result of applying a gift card to an order (mirrors the API's `RedeemGiftCardResult`). */
+export interface GiftCardRedemption {
+  giftCardId: string;
+  code: string;
+  /** Cents actually applied to the order by this redemption. */
+  appliedCents: number;
+  /** Remaining balance on the card after this redemption. */
+  cardBalanceCents: number;
+  cardStatus: 'ACTIVE' | 'REDEEMED' | 'EXPIRED' | 'VOID';
+  /** Order totals AFTER the gift card was applied — the authority on what's left to pay. */
+  orderAmountPaidCents: number;
+  orderBalanceDueCents: number;
+}
+
+/**
+ * Apply a gift card to an existing order (PUBLIC `POST /api/gift-cards/redeem`).
+ *
+ * The server is the authority on the math: it applies min(card balance, requested
+ * amount, order balance due) inside a tenant-scoped transaction, writes a
+ * GIFT_CARD Payment, and returns the order's new balance_due. Omit `amountCents`
+ * to draw down the full outstanding balance (the normal checkout case). Throws
+ * ApiError (with the service's GiftCardError `code`, e.g. NOT_FOUND / EXPIRED /
+ * INSUFFICIENT_BALANCE / ORDER_CANCELLED) on any failure, so the order can never
+ * look paid when the redemption did not land. Always hits the real API — gift
+ * cards are live stored value even in the showcase deployment.
+ */
+export async function redeemGiftCard(
+  orderId: string,
+  code: string,
+  amountCents?: number,
+): Promise<GiftCardRedemption> {
+  return request<GiftCardRedemption>('/api/gift-cards/redeem', {
+    method: 'POST',
+    body: { code, orderId, amountCents },
+  });
+}
+
 /**
  * Submit a payment for an order using a tokenized payment source.
  * @param sourceId Stripe PaymentMethod id from Stripe Elements (sent as `sourceId`).

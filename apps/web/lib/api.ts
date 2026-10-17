@@ -688,6 +688,33 @@ export async function getDepartures(date?: string): Promise<DeparturesBoard | nu
   return request<DeparturesBoard>(`/api/departures${qs}`);
 }
 
+/**
+ * Result of a public gift-card balance/validity check (mirrors the API's
+ * `GiftCardCheck`). `balanceCents` is the card's remaining stored value; `valid`
+ * is false (with a `reason`) for a missing, voided, empty, or expired card.
+ */
+export interface GiftCardCheck {
+  valid: boolean;
+  code: string;
+  balanceCents: number;
+  status: 'ACTIVE' | 'REDEEMED' | 'EXPIRED' | 'VOID';
+  /** Present when valid is false — a human-readable reason. */
+  reason?: string;
+}
+
+/**
+ * Check a gift card's remaining balance and validity before applying it at
+ * checkout (PUBLIC `GET /api/gift-cards/:code`). Preview only: the authoritative
+ * draw-down happens server-side at redeem time, so a stale balance here can never
+ * become money. Gift cards are live stored value even in the showcase deployment,
+ * so this always hits the real API (no demo fixture).
+ */
+export async function checkGiftCard(code: string): Promise<GiftCardCheck> {
+  return request<GiftCardCheck>(
+    `/api/gift-cards/${encodeURIComponent(code)}`,
+  );
+}
+
 /** Validate a promo code for a given activity before applying it at checkout. */
 export async function validatePromo(
   code: string,
