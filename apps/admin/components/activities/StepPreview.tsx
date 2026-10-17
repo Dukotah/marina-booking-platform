@@ -31,10 +31,12 @@ export function StepPreview({ form }: { form: UseFormReturn<ActivityFormValues> 
   }).length;
 
   const activeRates = v.rates.filter((r) => r.is_active);
+  // Net visibility per channel: the opt-in flag AND not the opt-out flag.
   const visibility = [
     v.visible_online && 'Online',
-    v.visible_kiosk && 'Kiosk',
-    v.visible_register && 'Register',
+    v.visible_kiosk && !v.hide_from_kiosk && 'Kiosk',
+    v.visible_register && !v.hide_from_register && 'Register',
+    !v.hide_from_display && 'Departures display',
   ].filter(Boolean) as string[];
 
   return (
@@ -67,6 +69,7 @@ export function StepPreview({ form }: { form: UseFormReturn<ActivityFormValues> 
           <Row label="Internal name" value={v.name_internal || '—'} />
           <Row label="Participants" value={`${v.min_participants}–${v.max_participants}`} />
           <Row label="Visible on" value={visibility.length ? visibility.join(', ') : 'Hidden'} />
+          <Row label="Price shown" value={v.hide_price ? 'Call for price' : 'Yes'} />
           <Row label="Waiver required" value={v.waiver_required ? 'Yes' : 'No'} />
           <Row label="Self-reschedule window" value={`${v.self_reschedule_hours} hours`} />
           <Row

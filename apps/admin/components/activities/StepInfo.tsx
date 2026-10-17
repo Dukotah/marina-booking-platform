@@ -1,9 +1,17 @@
 'use client';
 
-import type { UseFormReturn } from 'react-hook-form';
+import type { ChangeEvent } from 'react';
+import type { FieldPath, UseFormReturn } from 'react-hook-form';
 import { ACTIVITY_CATEGORIES } from '@marina/core';
 import { Field, TextInput, TextArea, Select, CheckboxRow } from './fields';
 import { CATEGORY_LABELS, type ActivityFormValues, type LocationOption } from './types';
+
+/**
+ * The hide_from_* flags are opt-OUT (true = suppressed), but the operator thinks in
+ * "show it here" terms. These are the only fields with inverted meaning, so this
+ * subset keeps the helper's prop shape honest without widening it to the whole form.
+ */
+type HideField = 'hide_from_register' | 'hide_from_kiosk' | 'hide_from_display';
 
 /**
  * Step 1 — Info. The core identity of the activity: names, category, location,
@@ -20,10 +28,27 @@ export function StepInfo({
   const {
     register,
     watch,
+    setValue,
     formState: { errors },
   } = form;
 
   const color = watch('color');
+
+  /**
+   * A "Show on <channel>" checkbox backed by an opt-OUT `hide_from_*` field.
+   * Checked means visible, so the box reflects `!hidden` and writes back the inverse.
+   * The field is still registered (so RHF tracks it); we only override checked/onChange.
+   */
+  function registerHide(name: HideField) {
+    const reg = register(name as FieldPath<ActivityFormValues>);
+    return {
+      ...reg,
+      checked: !watch(name),
+      onChange: (e: ChangeEvent<HTMLInputElement>) => {
+        setValue(name, !e.target.checked, { shouldDirty: true, shouldTouch: true });
+      },
+    };
+  }
 
   return (
     <div className="space-y-6">
@@ -154,23 +179,47 @@ export function StepInfo({
         </Field>
       </div>
 
-      <fieldset className="space-y-2">
-        <legend className="mb-1 text-sm font-medium text-slate-700">Visibility & policy</legend>
+      <fieldset className="space-y-3">
+        <legend className="text-sm font-medium text-slate-700">Visibility &amp; channels</legend>
+        <p className="text-xs text-slate-500">
+          Choose where this activity shows up. Tick a channel to list it there; untick to
+          hide it from just that channel. The others are unaffected.
+        </p>
         <div className="grid gap-2 sm:grid-cols-2">
           <CheckboxRow
-            label="Show online"
-            description="Available on the public booking site."
+            label="Show on public booking site (online)"
+            description="Guests can find and book it on your website."
             {...register('visible_online')}
           />
           <CheckboxRow
-            label="Show on kiosk"
-            description="Available at self-serve kiosks."
-            {...register('visible_kiosk')}
+            label="Show on register"
+            description="Staff can sell it at the point of sale."
+            // Register has an opt-in (visible_register) and an opt-out
+            // (hide_from_register). Both must agree for the activity to appear, so the
+            // one checkbox the operator sees drives the opt-out flag (checked = not
+            // hidden) and we keep visible_register ticked for them below.
+            {...registerHide('hide_from_register')}
           />
           <CheckboxRow
-            label="Show on register"
-            description="Bookable by staff at the POS."
-            {...register('visible_register')}
+            label="Show on kiosk"
+            description="Guests can self-serve at a kiosk."
+            {...registerHide('hide_from_kiosk')}
+          />
+          <CheckboxRow
+            label="Show on departures display"
+            description="Appears on the big “what's leaving today” board."
+            {...registerHide('hide_from_display')}
+          />
+        </div>
+        {/* The register/kiosk opt-in flags are implied by the toggles above; keep them
+            on so the opt-out checkbox is the single source of truth the operator reads. */}
+        <input type="hidden" value="true" {...register('visible_register')} />
+        <input type="hidden" value="true" {...register('visible_kiosk')} />
+        <div className="grid gap-2 sm:grid-cols-2">
+          <CheckboxRow
+            label="Hide the price (show “call for price”)"
+            description="Still lists the activity, but no rate is shown to guests."
+            {...register('hide_price')}
           />
           <CheckboxRow
             label="Require waiver"

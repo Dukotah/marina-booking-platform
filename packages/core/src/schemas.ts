@@ -150,6 +150,13 @@ export const activityInputSchema = z.object({
   visible_online: z.boolean().default(true),
   visible_kiosk: z.boolean().default(true),
   visible_register: z.boolean().default(true),
+  // Per-channel opt-OUT flags layered on top of the visible_* opt-in flags: when
+  // true the activity is suppressed from that surface even if otherwise visible.
+  // hide_price still lists the activity but shows "call for price" instead of a rate.
+  hide_from_register: z.boolean().default(false),
+  hide_from_display: z.boolean().default(false),
+  hide_from_kiosk: z.boolean().default(false),
+  hide_price: z.boolean().default(false),
   min_participants: z.number().int().positive().default(1),
   max_participants: z.number().int().positive().default(10),
   // Operator-authored rich text that is injected via dangerouslySetInnerHTML onto

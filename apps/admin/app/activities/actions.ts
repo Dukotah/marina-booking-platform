@@ -44,9 +44,22 @@ const wizardRateSchema = rateInputSchema
     rate_classes: z.array(wizardRateClassSchema).default([]),
   });
 
-/** The full wizard payload: activity fields + its rates. */
+/**
+ * Per-channel opt-OUT visibility flags (and hide_price). These layer on top of the
+ * core `visible_*` opt-in flags: when true the activity is suppressed from that
+ * surface. They live on the Activity model but are added to the input shape here so
+ * the admin wizard can persist them without a core schema bump.
+ */
+const channelFlagsSchema = z.object({
+  hide_from_register: z.boolean().default(false),
+  hide_from_display: z.boolean().default(false),
+  hide_from_kiosk: z.boolean().default(false),
+  hide_price: z.boolean().default(false),
+});
+
+/** The full wizard payload: activity fields (+ channel flags) + its rates. */
 const wizardSchema = z.object({
-  activity: activityInputSchema,
+  activity: activityInputSchema.and(channelFlagsSchema),
   rates: z.array(wizardRateSchema).default([]),
 });
 
@@ -124,6 +137,10 @@ export async function createActivity(input: WizardInput): Promise<ActionResult> 
       visible_online: activity.visible_online,
       visible_kiosk: activity.visible_kiosk,
       visible_register: activity.visible_register,
+      hide_from_register: activity.hide_from_register,
+      hide_from_display: activity.hide_from_display,
+      hide_from_kiosk: activity.hide_from_kiosk,
+      hide_price: activity.hide_price,
       min_participants: activity.min_participants,
       max_participants: activity.max_participants,
       description_html: activity.description_html ?? null,
@@ -229,6 +246,10 @@ export async function updateActivity(
       visible_online: activity.visible_online,
       visible_kiosk: activity.visible_kiosk,
       visible_register: activity.visible_register,
+      hide_from_register: activity.hide_from_register,
+      hide_from_display: activity.hide_from_display,
+      hide_from_kiosk: activity.hide_from_kiosk,
+      hide_price: activity.hide_price,
       min_participants: activity.min_participants,
       max_participants: activity.max_participants,
       description_html: activity.description_html ?? null,
