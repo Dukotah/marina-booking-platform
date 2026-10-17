@@ -54,6 +54,12 @@ export interface ActivityFormValues {
   visible_online: boolean;
   visible_kiosk: boolean;
   visible_register: boolean;
+  /** Opt-OUT suppression flags layered on the visible_* opt-ins (see StepInfo). */
+  hide_from_register: boolean;
+  hide_from_display: boolean;
+  hide_from_kiosk: boolean;
+  /** List the activity but show "call for price" instead of a rate. */
+  hide_price: boolean;
   min_participants: number;
   max_participants: number;
   description_html: string;
@@ -107,6 +113,10 @@ export function emptyActivityForm(): ActivityFormValues {
     visible_online: true,
     visible_kiosk: true,
     visible_register: true,
+    hide_from_register: false,
+    hide_from_display: false,
+    hide_from_kiosk: false,
+    hide_price: false,
     min_participants: 1,
     max_participants: 10,
     description_html: '',
